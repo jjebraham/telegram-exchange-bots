@@ -11,6 +11,9 @@ import aiohttp
 import io
 from datetime import datetime
 import traceback
+from dataclasses import dataclass, field
+import importlib.util
+from typing import Dict
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
@@ -22,6 +25,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
 ###############################################################################
 # CONFIGURATION
@@ -34,6 +39,41 @@ PROXY_URL        = "http://jjebraham-25:Amir1234@p.webshare.io:80"
 # WALLEX CONFIG
 WALLEX_API_KEY  = "15064|7tVDd4NDBYmATAe4lWTUQSTzj0v7ceTELEv6u6zG"
 WALLEX_BASE_URL = "https://api.wallex.ir/v1"
+
+# WEBHOOK CONFIG (optional)
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
+WEBAPP_HOST = os.getenv("WEBAPP_HOST", "0.0.0.0")
+WEBAPP_PORT = int(os.getenv("WEBAPP_PORT", "8080"))
+
+# REDIS CACHE CONFIG (optional)
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+
+if importlib.util.find_spec("tenacity"):
+    import tenacity
+else:
+    class _NoRetry:
+        def __call__(self, fn):
+            return fn
+
+    class tenacity:
+        @staticmethod
+        def retry(*args, **kwargs):
+            return _NoRetry()
+
+        @staticmethod
+        def wait_exponential(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def stop_after_attempt(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def retry_if_exception_type(*args, **kwargs):
+            return None
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -49,6 +89,17 @@ bot       = Bot(token=MAIN_BOT_TOKEN, proxy=PROXY_URL)
 admin_bot = Bot(token=ADMIN_BOT_TOKEN, proxy=PROXY_URL)
 storage   = MemoryStorage()
 dp        = Dispatcher(storage=storage)
+
+redis_client = None
+if importlib.util.find_spec("redis"):
+    import redis
+    try:
+        redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+        redis_client.ping()
+        logging.debug("Redis cache is available.")
+    except Exception as exc:
+        redis_client = None
+        logging.warning(f"Redis cache not available: {exc}")
 
 ###############################################################################
 # ADMIN LOGGING MIDDLEWARE
@@ -133,6 +184,84 @@ async def set_bot_commands():
     )
 
 ###############################################################################
+# NETWORK UTILITIES
+###############################################################################
+@tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=1, min=4, max=10),
+    stop=tenacity.stop_after_attempt(3),
+    retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
+    reraise=True,
+)
+async def fetch_with_retry(url, **kwargs):
+    """Fetch with automatic retry logic."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, **kwargs) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+async def fetch_rate(currency_pair: str) -> float:
+    pair = currency_pair.upper()
+    if pair in {"USDT/IRR"}:
+        return await price_cache.get_usdt_irr()
+    if pair in {"USDT/TRY"}:
+        return await price_cache.get_usdt_try()
+    raise ValueError(f"Unsupported currency pair: {currency_pair}")
+
+async def get_cached_rate(currency_pair: str, ttl: int = 300) -> float:
+    """Get rate from cache or fetch if expired."""
+    cache_key = f"rate:{currency_pair}"
+    if redis_client:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return float(cached)
+    rate = await fetch_rate(currency_pair)
+    if redis_client:
+        redis_client.setex(cache_key, ttl, rate)
+    return rate
+
+###############################################################################
+# RATE LIMITING
+###############################################################################
+@dataclass
+class TokenBucket:
+    rate: float
+    capacity: int
+    tokens: float = field(init=False)
+    last_checked: float = field(default_factory=time.time)
+
+    def __post_init__(self):
+        self.tokens = float(self.capacity)
+
+    async def consume(self, amount: float) -> bool:
+        now = time.time()
+        elapsed = now - self.last_checked
+        self.last_checked = now
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+        if self.tokens >= amount:
+            self.tokens -= amount
+            return True
+        return False
+
+user_buckets: Dict[int, TokenBucket] = {}
+
+async def check_rate_limit(user_id: int) -> bool:
+    if user_id not in user_buckets:
+        user_buckets[user_id] = TokenBucket(rate=10, capacity=15)
+    return await user_buckets[user_id].consume(1)
+
+class RateLimitMiddleware:
+    async def __call__(self, handler, event, data):
+        if isinstance(event, types.Message) and event.from_user:
+            if not await check_rate_limit(event.from_user.id):
+                await event.answer("Too many requests. Please slow down.")
+                return
+        if isinstance(event, types.CallbackQuery) and event.from_user:
+            if not await check_rate_limit(event.from_user.id):
+                await event.answer("Please slow down.", show_alert=True)
+                return
+        return await handler(event, data)
+
+###############################################################################
 # DATABASE FUNCTIONS
 ###############################################################################
 def get_db_connection():
@@ -167,6 +296,78 @@ def init_db():
                 card_number TEXT,
                 UNIQUE(user_id, card_number),
                 FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                transaction_type TEXT,
+                from_currency TEXT,
+                to_currency TEXT,
+                amount REAL,
+                rate REAL,
+                fee REAL,
+                status TEXT,
+                reference_code TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                notes TEXT
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS price_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                currency_pair TEXT,
+                target_price REAL,
+                condition TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS referrals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_id INTEGER,
+                referred_id INTEGER,
+                referral_code TEXT,
+                commission_earned REAL DEFAULT 0,
+                status TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS admin_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id INTEGER,
+                action_type TEXT,
+                target_user_id INTEGER,
+                details TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                category TEXT,
+                subject TEXT,
+                status TEXT,
+                priority TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS user_wallets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                network TEXT,
+                address TEXT,
+                label TEXT,
+                is_verified INTEGER DEFAULT 0,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         conn.commit()
@@ -1336,6 +1537,8 @@ async def contact_us_cmd(message: types.Message):
 async def main():
     init_db()
     logging.debug("Starting MAIN user bot…")
+    dp.message.middleware.register(RateLimitMiddleware())
+    dp.callback_query.middleware.register(RateLimitMiddleware())
     dp.message.middleware.register(AdminLogMiddleware())
     dp.callback_query.middleware.register(AdminLogMiddleware())
     
@@ -1345,14 +1548,31 @@ async def main():
     await set_bot_commands()
     await log_to_admin("🔄 Bot restarted and logging initialized")
     
-    # Start polling
-    try:
-        await dp.start_polling(bot)
-    finally:
-        # This part will be reached on graceful shutdown (e.g., Ctrl+C)
-        kyc_task.cancel()
-        await asyncio.gather(kyc_task, return_exceptions=True)
-        logging.info("Bot and background tasks stopped gracefully.")
+    if WEBHOOK_URL:
+        await bot.set_webhook(f"{WEBHOOK_URL}{WEBHOOK_PATH}")
+        app = web.Application()
+        async def on_shutdown(app):
+            kyc_task.cancel()
+            await asyncio.gather(kyc_task, return_exceptions=True)
+            logging.info("Bot and background tasks stopped gracefully.")
+
+        app.on_shutdown.append(on_shutdown)
+        webhook_requests_handler = SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+        )
+        webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+        setup_application(app, dp, bot=bot)
+        web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT)
+    else:
+        # Start polling
+        try:
+            await dp.start_polling(bot)
+        finally:
+            # This part will be reached on graceful shutdown (e.g., Ctrl+C)
+            kyc_task.cancel()
+            await asyncio.gather(kyc_task, return_exceptions=True)
+            logging.info("Bot and background tasks stopped gracefully.")
 
 if __name__ == "__main__":
     try:
