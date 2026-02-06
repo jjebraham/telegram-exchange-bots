@@ -1,0 +1,18 @@
+# Secrets & sensitive data
+.env
+*.env
+config.py
+
+# Logs
+*.log
+*.err.log
+*.out.log
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual env
+venv/
+.env/
+
