@@ -15,7 +15,8 @@ import traceback
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup,
-    InlineKeyboardButton, ReplyKeyboardRemove, FSInputFile, BufferedInputFile
+    InlineKeyboardButton, ReplyKeyboardRemove, FSInputFile, BufferedInputFile,
+    BotCommand, MenuButtonWebApp, WebAppInfo
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -109,6 +110,27 @@ class AdminLogMiddleware:
             logging.error(f"Error in AdminLogMiddleware: {e}")
             traceback.print_exc()
             return await handler(event, data)
+
+###############################################################################
+# BOT COMMANDS
+###############################################################################
+async def set_bot_commands():
+    commands = [
+        BotCommand(command="start", description="🏠 Main menu"),
+        BotCommand(command="rates", description="💱 Current exchange rates"),
+        BotCommand(command="balance", description="💰 My balance"),
+        BotCommand(command="history", description="📊 Transaction history"),
+        BotCommand(command="support", description="💬 Contact support"),
+    ]
+
+    await bot.set_my_commands(commands)
+
+    await bot.set_chat_menu_button(
+        menu_button=MenuButtonWebApp(
+            text="🚀 Open Dashboard",
+            web_app=WebAppInfo(url="https://your-webapp.com")
+        )
+    )
 
 ###############################################################################
 # DATABASE FUNCTIONS
@@ -1320,6 +1342,7 @@ async def main():
     # Start background tasks
     kyc_task = asyncio.create_task(check_kyc_loop())
     
+    await set_bot_commands()
     await log_to_admin("🔄 Bot restarted and logging initialized")
     
     # Start polling
