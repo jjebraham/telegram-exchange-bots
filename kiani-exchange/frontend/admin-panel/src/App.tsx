@@ -14,9 +14,9 @@ function App() {
 
   useEffect(() => {
     axios
-      .get<Faq[]>('/api/faqs')
+      .get<{faqs: Faq[]}>('/api/faqs')
       .then((res) => {
-        setFaqs(res.data)
+        setFaqs(res.data.faqs)
         setFaqError(null)
       })
       .catch((err) => {

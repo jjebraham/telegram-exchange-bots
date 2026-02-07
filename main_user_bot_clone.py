@@ -15,7 +15,8 @@ import traceback
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup,
-    InlineKeyboardButton, ReplyKeyboardRemove, FSInputFile, BufferedInputFile
+    InlineKeyboardButton, ReplyKeyboardRemove, FSInputFile, BufferedInputFile,
+    MenuButtonWebApp, WebAppInfo
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -1319,6 +1320,18 @@ async def main():
     
     # Start background tasks
     kyc_task = asyncio.create_task(check_kyc_loop())
+    
+    # Set menu button to open the mini app
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="باز کردن داشبورد",  # "Open Dashboard" in Persian
+                web_app=WebAppInfo(url="https://miniapp.peerexo.com")
+            )
+        )
+        logging.debug("Menu button set to https://miniapp.peerexo.com")
+    except Exception as e:
+        logging.error(f"Failed to set menu button: {e}")
     
     await log_to_admin("🔄 Bot restarted and logging initialized")
     

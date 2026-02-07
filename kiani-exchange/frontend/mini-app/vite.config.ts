@@ -20,7 +20,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true
+    sourcemap: true,
+    // ✅ CRITICAL FIX: Add base for subdomain deployment
+    base: '/'
   }
 })
 
