@@ -16,3 +16,18 @@ __pycache__/
 venv/
 .env/
 
+# Node / frontend build artifacts
+node_modules/
+dist/
+dist-ssr/
+package-lock.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db
+

@@ -3,39 +3,54 @@
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo "Testing Kiani Exchange Frontends..."
+echo "Testing Kiani Exchange Production Setup..."
 echo ""
 
-# Test API
-echo -n "Testing API (port 8000)... "
-if curl -s -I http://127.0.0.1:8000/docs | grep -q "200 OK"; then
+# Test API backend
+echo -n "Testing API (localhost:8000)... "
+if curl -s -I http://127.0.0.1:8000/docs | grep -q "200"; then
     echo -e "${GREEN}OK${NC}"
 else
     echo -e "${RED}FAILED${NC}"
 fi
 
-# Test Mini App
-echo -n "Testing Mini App (port 5173)... "
-if curl -s -I http://127.0.0.1:5173/ | grep -q "200 OK"; then
+# Test Mini App via Nginx
+echo -n "Testing miniapp.peerexo.com... "
+if curl -s -I https://miniapp.peerexo.com 2>/dev/null | grep -q "200"; then
+    echo -e "${GREEN}OK${NC}"
+else
+    echo -e "${RED}FAILED (is Nginx running?)${NC}"
+fi
+
+# Test Admin Panel via Nginx
+echo -n "Testing kianiapp.peerexo.com... "
+if curl -s -I https://kianiapp.peerexo.com 2>/dev/null | grep -q "200"; then
+    echo -e "${GREEN}OK${NC}"
+else
+    echo -e "${RED}FAILED (is Nginx running?)${NC}"
+fi
+
+# Test API proxy from miniapp
+echo -n "Testing /api/faqs via miniapp... "
+if curl -s https://miniapp.peerexo.com/api/faqs 2>/dev/null | grep -q "\["; then
     echo -e "${GREEN}OK${NC}"
 else
     echo -e "${RED}FAILED${NC}"
 fi
 
-# Test Admin Panel
-echo -n "Testing Admin Panel (port 5174)... "
-if curl -s -I http://127.0.0.1:5174/ | grep -q "200 OK"; then
+# Test API proxy from admin panel
+echo -n "Testing /api/faqs via kianiapp... "
+if curl -s https://kianiapp.peerexo.com/api/faqs 2>/dev/null | grep -q "\["; then
     echo -e "${GREEN}OK${NC}"
 else
     echo -e "${RED}FAILED${NC}"
 fi
 
 echo ""
-echo "Supervisor Status:"
-sudo supervisorctl status | grep kiani
+echo "Supervisor Status (API only):"
+sudo supervisorctl status kiani_api 2>/dev/null || echo "  supervisorctl not available"
 
 echo ""
-echo "Frontend testing complete!"
+echo "Testing complete!"

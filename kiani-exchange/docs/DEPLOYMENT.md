@@ -1,111 +1,101 @@
 # Deployment Guide
 
-## Frontend Deployment
+## Architecture
 
-### Prerequisites
+| Component | URL / Port | How it runs |
+|-----------|-----------|-------------|
+| Backend API | `http://127.0.0.1:8000` | Supervisor (`kiani_api`) |
+| Mini App | `https://miniapp.peerexo.com` | Nginx serves `mini-app/dist/` |
+| Admin Panel | `https://kianiapp.peerexo.com` | Nginx serves `admin-panel/dist/` |
 
-- Node.js 20+ installed
-- npm or yarn
-- Supervisor installed and configured
+Both frontend subdomains proxy `/api/*` to the FastAPI backend via Nginx.
+SSL is handled by certbot (Let's Encrypt).
 
-### Setup Steps
+## Prerequisites
 
-#### 1. Install Frontend Dependencies
+- Node.js 20+
+- Nginx
+- certbot certificates for both subdomains
+- Supervisor (for the backend API only)
+
+## Quick Deploy
+
+Run the deploy script from the repo root:
+
+```bash
+cd /home/kianirad2020/telegram_bot_repo/kiani-exchange
+sudo bash scripts/deploy_frontend.sh
+```
+
+This will:
+1. `npm install` + `npm run build` for both frontends
+2. Copy Nginx configs to `/etc/nginx/sites-available/`
+3. Symlink to `/etc/nginx/sites-enabled/`
+4. Test and reload Nginx
+
+## Manual Steps
+
+### 1. Build Frontends
 
 ```bash
 # Mini App
-cd /home/kianirad2020/telegram_bot_repo/kiani-exchange/frontend/mini-app
+cd kiani-exchange/frontend/mini-app
 npm install
+npm run build    # Output: dist/
 
 # Admin Panel
-cd /home/kianirad2020/telegram_bot_repo/kiani-exchange/frontend/admin-panel
-npm install
-```
-
-#### 2. Configure Supervisor
-
-```bash
-# Copy configuration files
-sudo cp kiani-exchange/deploy/supervisor/kiani_miniapp.conf /etc/supervisor/conf.d/
-sudo cp kiani-exchange/deploy/supervisor/kiani_adminpanel.conf /etc/supervisor/conf.d/
-
-# Create log files
-sudo touch /var/log/kiani_miniapp.out.log /var/log/kiani_miniapp.err.log
-sudo touch /var/log/kiani_adminpanel.out.log /var/log/kiani_adminpanel.err.log
-sudo chown kianirad2020:kianirad2020 /var/log/kiani_*.log
-
-# Update Supervisor
-sudo supervisorctl reread
-sudo supervisorctl update
-
-# Start services
-sudo supervisorctl start kiani_miniapp kiani_adminpanel
-```
-
-#### 3. Verify Services
-
-```bash
-# Check Supervisor status
-sudo supervisorctl status
-
-# Test endpoints
-curl -I http://127.0.0.1:5173/
-curl -I http://127.0.0.1:5174/
-
-# Check logs
-sudo tail -f /var/log/kiani_miniapp.out.log
-```
-
-### Production Build
-
-For production deployment:
-
-```bash
-# Build Mini App
-cd kiani-exchange/frontend/mini-app
-npm run build
-# Output: dist/
-
-# Build Admin Panel
 cd kiani-exchange/frontend/admin-panel
-npm run build
-# Output: dist/
-
-# Serve with Nginx (see Nginx configuration section)
+npm install
+npm run build    # Output: dist/
 ```
 
-### Port Configuration Summary
+### 2. Install Nginx Configs
 
-| Service | Port | Supervisor Program | Purpose |
-|---------|------|-------------------|---------|
-| Backend API | 8000 | `kiani_api` | FastAPI server |
-| Mini App | 5173 | `kiani_miniapp` | User Telegram Mini App |
-| Admin Panel | 5174 | `kiani_adminpanel` | Admin dashboard |
-
-### Troubleshooting
-
-**Frontend not accessible:**
 ```bash
-# Check if npm is running
-ps aux | grep npm
+sudo cp kiani-exchange/deploy/nginx/miniapp.peerexo.com.conf /etc/nginx/sites-available/
+sudo cp kiani-exchange/deploy/nginx/kianiapp.peerexo.com.conf /etc/nginx/sites-available/
 
-# Check if ports are in use
-sudo netstat -tulpn | grep -E '5173|5174'
+sudo ln -sf /etc/nginx/sites-available/miniapp.peerexo.com.conf /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/kianiapp.peerexo.com.conf /etc/nginx/sites-enabled/
 
-# Restart services
-sudo supervisorctl restart kiani_miniapp kiani_adminpanel
-
-# Check for errors
-sudo tail -100 /var/log/kiani_miniapp.err.log
+sudo nginx -t && sudo systemctl reload nginx
 ```
+
+### 3. Verify
+
+```bash
+curl -I https://miniapp.peerexo.com
+curl -I https://kianiapp.peerexo.com
+curl -s https://miniapp.peerexo.com/api/faqs | head
+curl -s https://kianiapp.peerexo.com/api/faqs | head
+```
+
+## Supervisor
+
+Only the backend API runs under Supervisor. Frontend Supervisor processes
+(`kiani_miniapp`, `kiani_adminpanel`) are **no longer needed** — stop and remove
+them if they are still running:
+
+```bash
+sudo supervisorctl stop kiani_miniapp kiani_adminpanel 2>/dev/null
+sudo rm -f /etc/supervisor/conf.d/kiani_miniapp.conf
+sudo rm -f /etc/supervisor/conf.d/kiani_adminpanel.conf
+sudo supervisorctl reread && sudo supervisorctl update
+```
+
+## Troubleshooting
+
+**Nginx 502 on /api routes:**
+- Check that the FastAPI backend is running: `sudo supervisorctl status kiani_api`
+- Verify port 8000 is listening: `ss -tlnp | grep 8000`
+
+**Stale frontend after deploy:**
+- Hard refresh (Ctrl+Shift+R) — `index.html` is served with `no-cache`
+- Hashed asset filenames ensure browsers fetch new JS/CSS automatically
 
 **Build errors:**
 ```bash
-# Clear node_modules and reinstall
-cd kiani-exchange/frontend/mini-app
-rm -rf node_modules package-lock.json
+rm -rf node_modules
 npm install
-
-# Verify Node version
-node --version  # Should be 20+
+npm run build
 ```
