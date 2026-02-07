@@ -7,6 +7,10 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     strictPort: true,
+
+    // ✅ FIX: allow your domain
+    allowedHosts: ['miniapp.peerexo.com'],
+
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
@@ -19,3 +23,4 @@ export default defineConfig({
     sourcemap: true
   }
 })
+
