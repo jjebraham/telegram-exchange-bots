@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .api import rates, users, transactions
+from .price_cache import price_cache
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +32,7 @@ app.include_router(transactions.router, prefix="/api", tags=["transactions"])
 @app.on_event("startup")
 async def startup():
     init_db()
+    await price_cache.warm_cache()
 
 
 @app.get("/health")

@@ -36,7 +36,7 @@ class NotifyTransactionRequest(BaseModel):
     reference_number: str
     timestamp: str
     expires_at: str
-    # Add user's 3 factors for admin
+    # Optional manual payload (server also backfills from DB)
     national_id: Optional[str] = None
     date_of_birth: Optional[str] = None
     bank_card_number: Optional[str] = None
@@ -114,6 +114,20 @@ async def get_user_transactions(
 
 @router.post("/admin/notify-transaction")
 async def notify_admin_transaction(req: NotifyTransactionRequest):
+    national_id = req.national_id
+    date_of_birth = req.date_of_birth
+    bank_card_number = req.bank_card_number
+
+    with get_db() as conn:
+        user_row = conn.execute(
+            "SELECT national_id, dob, bank_card_number FROM users WHERE phone_number = ?",
+            (req.user_phone,),
+        ).fetchone()
+        if user_row:
+            national_id = user_row["national_id"]
+            date_of_birth = user_row["dob"]
+            bank_card_number = user_row["bank_card_number"]
+
     # Build message with user's 3 factors for admin
     message = (
         "🆕 درخواست معامله جدید\n\n"
@@ -129,16 +143,14 @@ async def notify_admin_transaction(req: NotifyTransactionRequest):
     )
     
     # Add user's 3 factors if available (for admin only)
-    if req.national_id or req.date_of_birth or req.bank_card_number:
+    if national_id or date_of_birth or bank_card_number:
         message += "\n\n🔐 اطلاعات احراز کاربر:\n"
-        if req.national_id:
-            message += f"🆔 کدملی: {req.national_id}\n"
-        if req.date_of_birth:
-            message += f"📅 تاریخ تولد: {req.date_of_birth}\n"
-        if req.bank_card_number:
-            # Mask card number for security (show only last 4 digits)
-            masked_card = "**** **** **** " + req.bank_card_number[-4:] if len(req.bank_card_number) >= 4 else req.bank_card_number
-            message += f"💳 شماره کارت: {masked_card}"
+        if national_id:
+            message += f"🆔 کدملی: {national_id}\n"
+        if date_of_birth:
+            message += f"📅 تاریخ تولد: {date_of_birth}\n"
+        if bank_card_number:
+            message += f"💳 شماره کارت: {bank_card_number}"
 
     admin_url = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendMessage"
     payload = {
@@ -251,3 +263,31 @@ async def update_transaction_status(
     # This would require a separate user notification system
     
     return {"status": "success", "message": f"Transaction status updated to {status}"}
+
+
+@router.get("/admin/transactions")
+async def admin_list_transactions(username: str, password: str):
+    if username != "admin" or password != "admin123":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, user_name, user_phone, exchange_pair, exchange_type, send_amount,
+                      receive_amount, reference_number, status, timestamp, expires_at
+               FROM transactions ORDER BY id DESC LIMIT 500"""
+        ).fetchall()
+    return {"transactions": [dict(row) for row in rows]}
+
+
+@router.get("/admin/reports")
+async def admin_reports(username: str, password: str):
+    if username != "admin" or password != "admin123":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    with get_db() as conn:
+        totals = conn.execute(
+            """SELECT COUNT(*) AS total_orders,
+                      SUM(CASE WHEN status = 'Done' THEN 1 ELSE 0 END) AS done_orders,
+                      SUM(CASE WHEN status LIKE 'Canceled%' THEN 1 ELSE 0 END) AS canceled_orders,
+                      SUM(send_amount) AS total_send_amount
+               FROM transactions"""
+        ).fetchone()
+    return {"report": dict(totals)}

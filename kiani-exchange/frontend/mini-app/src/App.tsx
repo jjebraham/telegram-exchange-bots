@@ -21,6 +21,9 @@ interface User {
   phone_number: string;
   kyc_status: string;
   verification_level: number;
+  national_id?: string;
+  dob?: string;
+  bank_card_number?: string;
 }
 
 interface Transaction {
@@ -33,7 +36,7 @@ interface Transaction {
   timestamp: string;
 }
 
-type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history';
+type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'admin';
 
 type ExchangeType =
   | 'buy_lira'
@@ -112,6 +115,25 @@ const formatNumberWithCommas = (num: string): string => {
 
 const removeCommas = (num: string): string => {
   return num.replace(/,/g, '');
+};
+
+const isPersianText = (text: string): boolean => /^[\u0600-\u06FF\s]+$/.test(text.trim());
+
+const isValidLuhn = (cardNumber: string): boolean => {
+  const cleaned = cardNumber.replace(/\D/g, '');
+  if (cleaned.length !== 16) return false;
+  let sum = 0;
+  let shouldDouble = false;
+  for (let i = cleaned.length - 1; i >= 0; i--) {
+    let digit = parseInt(cleaned.charAt(i), 10);
+    if (shouldDouble) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    shouldDouble = !shouldDouble;
+  }
+  return sum % 10 === 0;
 };
 
 // Format receive amount based on currency
@@ -206,6 +228,7 @@ const EXCHANGE_PERSIAN_LABELS: Record<ExchangeType, string> = {
 // ─── Main App ───────────────────────────────────────────────────────────────
 
 function App() {
+  const isAdminHost = typeof window !== 'undefined' && window.location.hostname.includes('kianiapp');
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [user, setUser] = useState<User | null>(null);
   const [rates, setRates] = useState<Rates>({
@@ -248,7 +271,7 @@ function App() {
   };
 
   const fetchRates = async () => {
-    setLoading(true);
+    if (!rates.buy_lira) setLoading(true);
     try {
       const response = await fetch(`${API_URL}/rates/current`);
       const data = await response.json();
@@ -292,6 +315,10 @@ function App() {
     setUser(null);
     setActiveTab('dashboard');
   };
+
+  if (isAdminHost) {
+    return <AdminPanelPage />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 pb-20">
@@ -526,7 +553,7 @@ function ExchangePage({
   const [transactionRef, setTransactionRef] = useState('');
   const [error, setError] = useState('');
   const [numericAmount, setNumericAmount] = useState(0);
-  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Clean up interval on unmount
   useEffect(() => {
@@ -697,11 +724,9 @@ function ExchangePage({
       reference_number: refNumber,
       timestamp: new Date().toISOString(),
       expires_at: new Date(Date.now() + 3600000).toISOString(),
-      // We need to get user's 3 factors from localStorage or backend
-      // For now, we'll send placeholders - in real app, fetch from user profile
-      national_id: 'USER_NATIONAL_ID', // Should be fetched from user data
-      date_of_birth: 'USER_DOB', // Should be fetched from user data
-      bank_card_number: 'USER_CARD_NUMBER' // Should be fetched from user data
+      national_id: user.national_id,
+      date_of_birth: user.dob,
+      bank_card_number: user.bank_card_number,
     };
 
     try {
@@ -1054,6 +1079,7 @@ function RegistrationPage({
 }) {
   const [attempts, setAttempts] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [showTerms, setShowTerms] = useState(false);
   const [formData, setFormData] = useState<RegistrationFormData>({
     firstName: '',
@@ -1072,12 +1098,6 @@ function RegistrationPage({
     checkAttemptLimit();
   }, []);
 
-  const isPersian = (text: string) => {
-    // Check if text contains only Persian characters and spaces
-    const persianRegex = /^[\u0600-\u06FF\s]+$/;
-    return persianRegex.test(text);
-  };
-
   const isValidNationalId = (nid: string) => {
     // Exactly 10 digits and not all same digits
     const cleaned = nid.replace(/\D/g, '');
@@ -1093,8 +1113,8 @@ function RegistrationPage({
     const month = parseInt(cleaned.substring(4, 6));
     const day = parseInt(cleaned.substring(6, 8));
     
-    // Year: 1300 to 1386
-    if (year < 1300 || year > 1386) return false;
+    // Year: 1300 to 1399, but 1387+ are under 18 and rejected later
+    if (year < 1300 || year > 1399) return false;
     
     // Month: 01 to 12
     if (month < 1 || month > 12) return false;
@@ -1107,7 +1127,7 @@ function RegistrationPage({
 
   const isValidBankCard = (card: string) => {
     const cleaned = card.replace(/\s/g, '').replace(/\D/g, '');
-    return /^\d{16}$/.test(cleaned);
+    return /^\d{16}$/.test(cleaned) && isValidLuhn(cleaned);
   };
 
   const isValidPhone = (phone: string) => {
@@ -1124,23 +1144,28 @@ function RegistrationPage({
   const validateForm = () => {
     const newErrors: Partial<Record<keyof RegistrationFormData, string>> = {};
 
-    if (!formData.firstName || !isPersian(formData.firstName)) {
-      newErrors.firstName = 'نام باید فقط با حروف فارسی باشد';
+    if (!formData.firstName || !isPersianText(formData.firstName)) {
+      newErrors.firstName = 'لطفا نام را با حروف فارسی وارد کنید';
     }
-    if (!formData.lastName || !isPersian(formData.lastName)) {
-      newErrors.lastName = 'نام خانوادگی باید فقط با حروف فارسی باشد';
+    if (!formData.lastName || !isPersianText(formData.lastName)) {
+      newErrors.lastName = 'لطفا نام خانوادگی را با حروف فارسی وارد کنید';
     }
     if (!isValidNationalId(formData.nationalId)) {
       newErrors.nationalId = 'کد ملی نامعتبر است';
     }
     if (!isValidJalaliDate(formData.dateOfBirth)) {
       newErrors.dateOfBirth = 'تاریخ تولد نامعتبر است (مثال: 1370/05/15)';
+    } else {
+      const year = parseInt(formData.dateOfBirth.replace(/\//g, '').slice(0, 4), 10);
+      if (year >= 1387) {
+        newErrors.dateOfBirth = 'برای ثبت نام باید حداقل 18 سال داشته باشید';
+      }
     }
     if (!isValidBankCard(formData.bankCardNumber)) {
-      newErrors.bankCardNumber = 'شماره کارت باید 16 رقم باشد';
+      newErrors.bankCardNumber = 'شماره کارت نامعتبر است (بررسی Luhn انجام نشد)';
     }
     if (!isValidPhone(formData.phoneNumber)) {
-      newErrors.phoneNumber = 'شماره موبایل نامعتبر است';
+      newErrors.phoneNumber = 'لطفا شماره موبایل ایران به نام خودتان مطابق مثال وارد کنید 09121111111';
     }
     if (!isValidPassword(formData.password)) {
       newErrors.password = 'رمز عبور باید حداقل 8 کاراکتر و شامل حروف و اعداد باشد';
@@ -1186,6 +1211,32 @@ function RegistrationPage({
     []
   );
 
+  const validateSingleField = (field: keyof RegistrationFormData, value: string | boolean) => {
+    const nextErrors = { ...errors };
+    const strValue = String(value);
+    if (field === 'firstName' && strValue && !isPersianText(strValue)) {
+      nextErrors.firstName = 'لطفا نام را با حروف فارسی وارد کنید';
+    }
+    if (field === 'lastName' && strValue && !isPersianText(strValue)) {
+      nextErrors.lastName = 'لطفا نام خانوادگی را با حروف فارسی وارد کنید';
+    }
+    if (field === 'phoneNumber' && strValue && !/^09\d{9}$/.test(strValue.replace(/\D/g, ''))) {
+      nextErrors.phoneNumber = 'لطفا شماره موبایل ایران به نام خودتان مطابق مثال وارد کنید 09121111111';
+    }
+    if (field === 'bankCardNumber' && strValue.replace(/\D/g, '').length === 16 && !isValidLuhn(strValue)) {
+      nextErrors.bankCardNumber = 'شماره کارت نامعتبر است (بررسی Luhn انجام نشد)';
+    }
+    if (field === 'dateOfBirth' && strValue.replace(/\D/g, '').length >= 4) {
+      const year = parseInt(strValue.replace(/\D/g, '').slice(0, 4), 10);
+      if (!String(year).startsWith('13')) {
+        nextErrors.dateOfBirth = 'سال تولد باید با 13 شروع شود';
+      } else if (year >= 1387) {
+        nextErrors.dateOfBirth = 'برای ثبت نام باید حداقل 18 سال داشته باشید';
+      }
+    }
+    setErrors(nextErrors);
+  };
+
 
   const handleSubmit = async () => {
     if (!validateForm()) return;
@@ -1196,6 +1247,10 @@ function RegistrationPage({
     }
 
     setSubmitting(true);
+    setProgress(0);
+    const progressTimer = window.setInterval(() => {
+      setProgress((prev) => (prev >= 95 ? prev : prev + 5));
+    }, 1000);
 
     try {
       // Verify with EHRAZ.IO
@@ -1217,6 +1272,26 @@ function RegistrationPage({
               'اطلاعات کارت بانکی شما با کد ملی و تاریخ تولدتان همخوانی ندارد.\n' +
               'لطفا اطلاعات وارد شده رو بررسی و دوباره تلاش کنید.');
         setSubmitting(false);
+        clearInterval(progressTimer);
+        setProgress(0);
+        return;
+      }
+
+      // Verify national ID with phone ownership
+      const mobileMatchResponse = await fetch(`${API_URL}/verify/ehraz-mobile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nationalCode: formData.nationalId,
+          mobileNumber: formData.phoneNumber,
+        }),
+      });
+      const mobileMatchData = await mobileMatchResponse.json();
+      if (!mobileMatchData.matched) {
+        incrementAttempts();
+        alert('شماره موبایل با کد ملی مطابقت ندارد یا به نام شما نیست.');
+        clearInterval(progressTimer);
+        setProgress(0);
         return;
       }
 
@@ -1246,14 +1321,14 @@ function RegistrationPage({
         let errorMessage = 'خطا در ثبت نام. لطفاً دوباره تلاش کنید.';
         
         if (errorData?.detail) {
-          if (errorData.detail.includes('شماره موبایل')) {
-            errorMessage = 'این شماره موبایل قبلاً ثبت شده است. اگر قبلاً ثبت نام کرده‌اید، از قسمت ورود استفاده کنید.';
-          } else if (errorData.detail.includes('کارت')) {
-            errorMessage = 'شماره کارت بانکی وارد شده معتبر نیست. لطفاً شماره کارت خود را بررسی کنید.';
-          } else if (errorData.detail.includes('کدملی')) {
-            errorMessage = 'کد ملی وارد شده معتبر نیست. لطفاً کد ملی خود را بررسی کنید.';
+          if (errorData.detail === 'already_registered_phone') {
+            errorMessage = 'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.';
+          } else if (errorData.detail === 'already_registered_national_id') {
+            errorMessage = 'این کد ملی قبلاً ثبت شده است. لطفاً وارد شوید یا با پشتیبانی تماس بگیرید.';
+          } else if (errorData.detail === 'already_registered_card') {
+            errorMessage = 'این شماره کارت قبلاً ثبت شده است.';
           } else {
-            errorMessage = errorData.detail;
+            errorMessage = 'خطا در ثبت نام، لطفاً مجدد تلاش کنید.';
           }
         }
         
@@ -1264,6 +1339,9 @@ function RegistrationPage({
       console.error('Registration error:', error);
       alert('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.');
     } finally {
+      clearInterval(progressTimer);
+      setProgress(100);
+      setTimeout(() => setProgress(0), 400);
       setSubmitting(false);
     }
   };
@@ -1337,6 +1415,7 @@ function RegistrationPage({
               placeholder="نام خود را وارد کنید"
               value={formData.firstName}
               onChange={(v) => updateField('firstName', v)}
+              onBlur={(v) => validateSingleField('firstName', v)}
               type="text"
               inputMode="text"
               dir="rtl"
@@ -1349,6 +1428,7 @@ function RegistrationPage({
               placeholder="نام خانوادگی خود را وارد کنید"
               value={formData.lastName}
               onChange={(v) => updateField('lastName', v)}
+              onBlur={(v) => validateSingleField('lastName', v)}
               type="text"
               inputMode="text"
               dir="rtl"
@@ -1361,6 +1441,7 @@ function RegistrationPage({
               placeholder="کد ملی 10 رقمی"
               value={formData.nationalId}
               onChange={(v) => updateField('nationalId', v)}
+              onBlur={(v) => validateSingleField('nationalId', v)}
               type="nationalId"
               inputMode="numeric"
               dir="ltr"
@@ -1374,6 +1455,7 @@ function RegistrationPage({
               placeholder="1370/05/15"
               value={formData.dateOfBirth}
               onChange={(v) => updateField('dateOfBirth', v)}
+              onBlur={(v) => validateSingleField('dateOfBirth', v)}
               type="date"
               inputMode="numeric"
               dir="ltr"
@@ -1387,6 +1469,7 @@ function RegistrationPage({
               placeholder="1234 5678 9012 3456"
               value={formData.bankCardNumber}
               onChange={(v) => updateField('bankCardNumber', v)}
+              onBlur={(v) => validateSingleField('bankCardNumber', v)}
               type="card"
               inputMode="numeric"
               dir="ltr"
@@ -1400,6 +1483,7 @@ function RegistrationPage({
               placeholder="09123456789"
               value={formData.phoneNumber}
               onChange={(v) => updateField('phoneNumber', v)}
+              onBlur={(v) => validateSingleField('phoneNumber', v)}
               type="tel"
               inputMode="numeric"
               dir="ltr"
@@ -1463,6 +1547,14 @@ function RegistrationPage({
             >
               {submitting ? 'در حال ثبت نام...' : 'ثبت نام'}
             </button>
+            {submitting && (
+              <div className="w-full mt-2">
+                <div className="text-xs text-gray-600 mb-1">در حال بررسی اطلاعات... {progress}%</div>
+                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} />
+                </div>
+              </div>
+            )}
 
             {/* Login Link */}
             <p className="text-center text-sm text-gray-600">
@@ -1489,6 +1581,7 @@ interface FormFieldProps {
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: (value: string) => void;
   type?: 'text' | 'tel' | 'password' | 'nationalId' | 'date' | 'card';
   maxLength?: number;
   inputMode?: 'text' | 'numeric' | 'tel' | 'email';
@@ -1501,6 +1594,7 @@ function FormField({
   placeholder,
   value,
   onChange,
+  onBlur,
   type = 'text',
   maxLength,
   inputMode = 'text',
@@ -1581,6 +1675,7 @@ function FormField({
         inputMode={htmlInputMode}
         value={value}
         onChange={handleChange}
+        onBlur={() => onBlur?.(value)}
         className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none ${
           error
             ? 'border-red-500'
@@ -1662,7 +1757,7 @@ function LoginPage({
               type="tel"
               maxLength={11}
               value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
+              onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, '').slice(0, 11))}
               className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
               placeholder="09123456789"
             />
@@ -1713,6 +1808,67 @@ function LoginPage({
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AdminPanelPage() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [report, setReport] = useState<any>(null);
+  const [faqs, setFaqs] = useState<any[]>([]);
+  const [statusRef, setStatusRef] = useState('');
+  const [statusValue, setStatusValue] = useState('Under Review');
+  const [faqQuestion, setFaqQuestion] = useState('');
+  const [faqAnswer, setFaqAnswer] = useState('');
+
+  const loadAll = async () => {
+    const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    const [u, t, l, r, f] = await Promise.all([
+      fetch(`${API_URL}/admin/users?${qs}`),
+      fetch(`${API_URL}/admin/transactions?${qs}`),
+      fetch(`${API_URL}/admin/logs?${qs}`),
+      fetch(`${API_URL}/admin/reports?${qs}`),
+      fetch(`${API_URL}/admin/faqs?${qs}`),
+    ]);
+    setUsers((await u.json()).users || []);
+    setTransactions((await t.json()).transactions || []);
+    setLogs((await l.json()).logs || []);
+    setReport((await r.json()).report || null);
+    setFaqs((await f.json()).faqs || []);
+  };
+
+  const login = async () => {
+    const res = await fetch(`${API_URL}/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (res.ok) {
+      setLoggedIn(true);
+      loadAll();
+    } else {
+      alert('نام کاربری یا رمز عبور ادمین اشتباه است');
+    }
+  };
+
+  if (!loggedIn) return <div className="p-6 max-w-md mx-auto"><div className="bg-white p-6 rounded-xl shadow"><h2 className="text-xl font-bold mb-4">ورود ادمین</h2><input className="w-full border p-2 mb-2 rounded" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} /><input type="password" className="w-full border p-2 mb-3 rounded" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} /><button onClick={login} className="w-full bg-blue-600 text-white py-2 rounded">Login</button></div></div>;
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Admin Panel</h2><button onClick={loadAll} className="bg-blue-100 px-3 py-1 rounded">Refresh</button></div>
+      <div className="bg-white p-4 rounded-xl shadow text-sm">{report && <div>Orders: {report.total_orders} | Done: {report.done_orders} | Canceled: {report.canceled_orders}</div>}</div>
+      <div className="bg-white p-4 rounded-xl shadow">
+        <h3 className="font-bold mb-2">کنترل سفارش</h3>
+        <div className="flex gap-2"><input className="border p-2 rounded flex-1" placeholder="Reference Number" value={statusRef} onChange={(e) => setStatusRef(e.target.value)} /><input className="border p-2 rounded" value={statusValue} onChange={(e) => setStatusValue(e.target.value)} /><button onClick={async () => { await fetch(`${API_URL}/admin/transactions/${statusRef}/update-status?status=${encodeURIComponent(statusValue)}&admin_password=admin123`, { method: 'POST' }); loadAll(); }} className="bg-green-600 text-white px-3 rounded">Update</button></div>
+      </div>
+      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Users ({users.length})</h3><div className="max-h-48 overflow-auto text-xs">{users.map((u) => <div key={u.id} className="border-b py-1 flex justify-between"><span>{u.first_name} {u.last_name} - {u.phone_number}</span><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/users/${u.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete test user</button></div>)}</div></div>
+      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Exchange Requests ({transactions.length})</h3><div className="max-h-56 overflow-auto text-xs">{transactions.slice(0, 50).map((t) => <div key={t.id} className="border-b py-1">#{t.reference_number} | {t.exchange_pair} | {t.status}</div>)}</div></div>
+      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">FAQ ({faqs.length})</h3><div className="flex gap-2 mb-2"><input className="border p-2 rounded flex-1 text-xs" placeholder="سوال" value={faqQuestion} onChange={(e)=>setFaqQuestion(e.target.value)} /><input className="border p-2 rounded flex-1 text-xs" placeholder="پاسخ" value={faqAnswer} onChange={(e)=>setFaqAnswer(e.target.value)} /><button className="bg-blue-600 text-white px-2 rounded text-xs" onClick={async ()=>{await fetch(`${API_URL}/admin/faqs`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,question:faqQuestion,answer:faqAnswer})});setFaqQuestion('');setFaqAnswer('');loadAll();}}>Add</button></div><div className="max-h-40 overflow-auto text-xs">{faqs.map((f) => <div key={f.id} className="border-b py-1 flex justify-between"><span>{f.question}</span><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete</button></div>)}</div></div>
+      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Logs ({logs.length})</h3><div className="max-h-40 overflow-auto text-xs">{logs.slice(0, 100).map((l) => <div key={l.id} className="border-b py-1">{l.created_at} - {l.action}</div>)}</div></div>
     </div>
   );
 }

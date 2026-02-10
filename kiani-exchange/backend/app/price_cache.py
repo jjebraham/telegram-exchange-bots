@@ -2,6 +2,7 @@ import time
 import logging
 import aiohttp
 import random
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ class PriceCache:
         self.usdt_try_time = 0
         self.fetch_interval = 600  # seconds
 
-    async def _fetch_with_proxy_retry(self, url, headers=None, is_json=True, max_retries=3):
+    async def _fetch_with_proxy_retry(self, url, headers=None, is_json=True, max_retries=2):
         """Helper method to fetch with proxy retry logic"""
         tried_proxies = set()
         
@@ -146,7 +147,7 @@ class PriceCache:
                         url,
                         headers=headers,
                         proxy=proxy_url,
-                        timeout=aiohttp.ClientTimeout(total=10)
+                        timeout=aiohttp.ClientTimeout(total=4)
                     ) as resp:
                         resp.raise_for_status()
                         if is_json:
@@ -165,7 +166,12 @@ class PriceCache:
         # Primary: flask proxy
         primary_url = "https://flask-9l1dbb.chbk.app/proxy/usdt-to-rls"
         try:
-            data = await self._fetch_with_proxy_retry(primary_url, is_json=True)
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(primary_url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                    else:
+                        data = await self._fetch_with_proxy_retry(primary_url, is_json=True)
             rate = data.get("usdt_to_rls")
             if rate:
                 return float(rate)
@@ -197,7 +203,12 @@ class PriceCache:
     async def fetch_usdt_try(self) -> float:
         url = "https://api.btcturk.com/api/v2/ticker?pairSymbol=USDTTRY"
         try:
-            data = await self._fetch_with_proxy_retry(url, is_json=True)
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                    else:
+                        data = await self._fetch_with_proxy_retry(url, is_json=True)
             items = data.get("data", [])
             if items:
                 return float(items[0].get("last", 0))
@@ -219,6 +230,20 @@ class PriceCache:
             self.usdt_try = await self.fetch_usdt_try()
             self.usdt_try_time = now
         return self.usdt_try
+
+    async def warm_cache(self):
+        try:
+            usdt_irr, usdt_try = await asyncio.gather(
+                self.fetch_usdt_irr(),
+                self.fetch_usdt_try(),
+            )
+            now = time.time()
+            self.usdt_irr = usdt_irr
+            self.usdt_irr_time = now
+            self.usdt_try = usdt_try
+            self.usdt_try_time = now
+        except Exception as e:
+            logger.warning(f"Rate warm-up failed: {e}")
 
 
 price_cache = PriceCache()

@@ -3,6 +3,7 @@ import asyncio
 import random
 import logging
 import os
+import json
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
@@ -177,6 +178,78 @@ class EhrazRequest(BaseModel):
     birthDate: str
 
 
+class EhrazMobileRequest(BaseModel):
+    nationalCode: str
+    mobileNumber: str
+
+
+class AdminCredentials(BaseModel):
+    username: str
+    password: str
+
+
+class FaqRequest(BaseModel):
+    username: str
+    password: str
+    question: str
+    answer: str
+
+
+def _is_admin(username: str, password: str) -> bool:
+    return (
+        username == os.getenv("ADMIN_PANEL_USERNAME", "admin")
+        and password == os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
+    )
+
+
+def _write_admin_log(action: str, details: dict | None = None):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO admin_logs (action, details) VALUES (?, ?)",
+            (action, json.dumps(details or {}, ensure_ascii=False)),
+        )
+
+
+async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 6):
+    headers = {
+        "Authorization": f"Bearer {EHRAZ_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    # Quick direct attempt first to reduce perceived latency.
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+    except Exception:
+        pass
+
+    # Fallback with proxy rotation.
+    for _ in range(2):
+        proxy_url = get_random_proxy()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    proxy=proxy_url,
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+        except Exception:
+            continue
+
+    return {"matched": False}
+
+
 def _user_dict(row):
     return {
         "id": row["id"],
@@ -187,6 +260,9 @@ def _user_dict(row):
         "verification_level": row["verification_level"]
         if "verification_level" in row.keys()
         else 1,
+        "national_id": row["national_id"] if "national_id" in row.keys() else None,
+        "dob": row["dob"] if "dob" in row.keys() else None,
+        "bank_card_number": row["bank_card_number"] if "bank_card_number" in row.keys() else None,
     }
 
 
@@ -195,16 +271,29 @@ async def register_user(req: RegisterRequest):
     hashed = hash_password(req.password)
 
     with get_db() as conn:
-        # Check if phone number already exists
         existing = conn.execute(
             "SELECT id FROM users WHERE phone_number = ?",
             (req.phone_number,),
         ).fetchone()
         if existing:
             raise HTTPException(
-                status_code=400,
-                detail="این شماره موبایل قبلاً ثبت شده است",
+                status_code=409,
+                detail="already_registered_phone",
             )
+
+        existing_nid = conn.execute(
+            "SELECT id FROM users WHERE national_id = ?",
+            (req.national_id,),
+        ).fetchone()
+        if existing_nid:
+            raise HTTPException(status_code=409, detail="already_registered_national_id")
+
+        existing_card = conn.execute(
+            "SELECT id FROM users WHERE bank_card_number = ?",
+            (req.bank_card_number,),
+        ).fetchone()
+        if existing_card:
+            raise HTTPException(status_code=409, detail="already_registered_card")
 
         conn.execute(
             """INSERT INTO users
@@ -299,75 +388,95 @@ async def get_me(user_id: int = Depends(get_current_user_id)):
 
 @router.post("/verify/ehraz")
 async def verify_with_ehraz(req: EhrazRequest):
-    # For testing, you can set USE_MOCK_EHRAZ = True
-    # In production, set USE_MOCK_EHRAZ = False
-    USE_MOCK_EHRAZ = False
-    
-    if USE_MOCK_EHRAZ:
-        # Mock response for testing
-        # In a real scenario, you might want to do some basic validation
-        # For example, check if the national ID is 10 digits, etc.
-        return {"matched": True}
-    
-    # Send verification attempt notification
-    notification_message = (
-        "🔍 <b>تلاش احراز هویت</b>\n"
-        f"🆔 کدملی: {req.nationalCode}\n"
-        f"💳 کارت: {req.cardNumber}\n"
-        f"📅 تاریخ: {req.birthDate}\n"
-        f"⏰ زمان: {asyncio.get_event_loop().time()}"
+    data = await _ehraz_post(
+        "https://ehraz.io/api/v1/match/card-with-national",
+        {
+            "cardNumber": req.cardNumber,
+            "nationalCode": req.nationalCode,
+            "birthDate": req.birthDate,
+        },
+        timeout_seconds=6,
     )
-    await send_telegram_notification(notification_message)
-    
-    # Real EHRAZ API call with proxy rotation
-    url = "https://ehraz.io/api/v1/match/card-with-national"
-    headers = {
-        "Authorization": f"Token {EHRAZ_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    
-    # Try with multiple proxies
-    max_retries = 5  # Increased retries
-    tried_proxies = set()
-    
-    for attempt in range(max_retries):
-        # Get a proxy we haven't tried yet
-        available_proxies = [p for p in PROXY_LIST if p not in tried_proxies]
-        if not available_proxies:
-            # Reset and try all proxies again
-            tried_proxies.clear()
-            available_proxies = PROXY_LIST.copy()
-            
-        proxy = random.choice(available_proxies)
-        proxy_url = f"http://jjebraham:Amir1234@{proxy}"
-        tried_proxies.add(proxy)
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    json={
-                        "cardNumber": req.cardNumber,
-                        "nationalCode": req.nationalCode,
-                        "birthDate": req.birthDate,
-                    },
-                    headers=headers,
-                    proxy=proxy_url,
-                    timeout=aiohttp.ClientTimeout(total=10),  # Reduced timeout
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return {"matched": data.get("matched", False)}
-                    else:
-                        logger.warning(f"EHRAZ API returned status {resp.status} with proxy {proxy}")
-                        continue
-        except asyncio.TimeoutError:
-            logger.warning(f"Timeout with proxy {proxy} (attempt {attempt + 1})")
-            continue
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} with proxy {proxy} failed: {e}")
-            continue
-    
-    # If all retries failed, return False
-    logger.error("All proxy attempts failed for EHRAZ verification")
-    return {"matched": False}
+    return {"matched": bool(data.get("matched", False))}
+
+
+@router.post("/verify/ehraz-mobile")
+async def verify_mobile_with_ehraz(req: EhrazMobileRequest):
+    data = await _ehraz_post(
+        "https://ehraz.io/api/v1/match/national-with-mobile",
+        {
+            "nationalCode": req.nationalCode,
+            "mobileNumber": req.mobileNumber,
+        },
+        timeout_seconds=6,
+    )
+    return {"matched": bool(data.get("matched", False))}
+
+
+@router.post("/admin/login")
+async def admin_login(req: AdminCredentials):
+    if not _is_admin(req.username, req.password):
+        raise HTTPException(status_code=401, detail="invalid_admin_credentials")
+    _write_admin_log("admin_login", {"username": req.username})
+    return {"status": "success"}
+
+
+@router.get("/admin/users")
+async def admin_users(username: str, password: str):
+    if not _is_admin(username, password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, first_name, last_name, phone_number, national_id, dob, bank_card_number, kyc_status, verification_level
+               FROM users ORDER BY id DESC"""
+        ).fetchall()
+    return {"users": [dict(row) for row in rows]}
+
+
+@router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, username: str, password: str):
+    if not _is_admin(username, password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with get_db() as conn:
+        conn.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    _write_admin_log("delete_user", {"user_id": user_id})
+    return {"status": "deleted"}
+
+
+@router.get("/admin/faqs")
+async def admin_get_faqs(username: str, password: str):
+    if not _is_admin(username, password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with get_db() as conn:
+        rows = conn.execute("SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC").fetchall()
+    return {"faqs": [dict(row) for row in rows]}
+
+
+@router.post("/admin/faqs")
+async def admin_add_faq(req: FaqRequest):
+    if not _is_admin(req.username, req.password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with get_db() as conn:
+        conn.execute("INSERT INTO faqs (question, answer) VALUES (?, ?)", (req.question, req.answer))
+    _write_admin_log("add_faq", {"question": req.question})
+    return {"status": "created"}
+
+
+@router.delete("/admin/faqs/{faq_id}")
+async def admin_delete_faq(faq_id: int, username: str, password: str):
+    if not _is_admin(username, password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with get_db() as conn:
+        conn.execute("DELETE FROM faqs WHERE id = ?", (faq_id,))
+    _write_admin_log("delete_faq", {"faq_id": faq_id})
+    return {"status": "deleted"}
+
+
+@router.get("/admin/logs")
+async def admin_logs(username: str, password: str):
+    if not _is_admin(username, password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with get_db() as conn:
+        rows = conn.execute("SELECT id, action, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 300").fetchall()
+    return {"logs": [dict(row) for row in rows]}
