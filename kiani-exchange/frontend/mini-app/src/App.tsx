@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -53,20 +53,25 @@ const RateBox = ({
   label: string;
   rate: number | string;
   loading: boolean;
-}) => (
-  <div className="bg-white rounded-xl p-4 shadow-md mb-3">
-    <div className="flex justify-between items-center">
-      <span className="text-gray-700 font-semibold text-sm">{label}</span>
-      <span className="text-blue-600 font-bold text-lg">
-        {loading
-          ? '...'
-          : typeof rate === 'number'
-            ? `${rate.toLocaleString('fa-IR')} تومان`
-            : `${rate} لیر`}
-      </span>
+}) => {
+  // Check if this is a conversion rate (تبدیل لیر به تتر or تبدیل تتر به لیر)
+  const isConversionRate = label.includes('تبدیل لیر به تتر') || label.includes('تبدیل تتر به لیر');
+  
+  return (
+    <div className="bg-white rounded-xl p-4 shadow-md mb-3">
+      <div className="flex justify-between items-center">
+        <span className="text-gray-700 font-semibold text-sm">{label}</span>
+        <span className="text-blue-600 font-bold text-lg">
+          {loading
+            ? '...'
+            : isConversionRate
+              ? `${rate.toLocaleString('fa-IR')} لیر`
+              : `${rate.toLocaleString('fa-IR')} تومان`}
+        </span>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const ExchangeButton = ({
   label,
@@ -97,15 +102,96 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
+// Helper functions for formatting and validation
+const formatNumberWithCommas = (num: string): string => {
+  // Remove non-digits
+  const cleaned = num.replace(/\D/g, '');
+  // Add commas for every 3 digits
+  return cleaned.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+};
+
+const removeCommas = (num: string): string => {
+  return num.replace(/,/g, '');
+};
+
+// Format receive amount based on currency
+const formatReceiveAmount = (amount: number, exchangeType: ExchangeType, type: 'send' | 'receive'): string => {
+  const unit = getCurrencyUnit(exchangeType, type);
+  
+  if (unit === 'تومان') {
+    // Toman: no decimals, Persian digits
+    return Math.round(amount).toLocaleString('fa-IR');
+  } else if (unit === 'TL') {
+    // TL: 2 decimal places, English digits
+    return amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  } else if (unit === 'USDT') {
+    // USDT: 2 decimal places, English digits with $ sign
+    return `$${amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  }
+  
+  // Default: 2 decimal places, English digits
+  return amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+};
+
+// Helper function to get currency unit (need to declare this earlier)
+const getCurrencyUnit = (exchangeType: ExchangeType, type: 'send' | 'receive'): string => {
+  switch (exchangeType) {
+    case 'buy_lira':
+      return type === 'send' ? 'تومان' : 'TL';
+    case 'sell_lira':
+      return type === 'send' ? 'TL' : 'تومان';
+    case 'buy_usdt':
+      return type === 'send' ? 'تومان' : 'USDT';
+    case 'sell_usdt':
+      return type === 'send' ? 'USDT' : 'تومان';
+    case 'convert_usdt_to_lira':
+      return type === 'send' ? 'USDT' : 'TL';
+    case 'convert_lira_to_usdt':
+      return type === 'send' ? 'TL' : 'USDT';
+    default:
+      return '';
+  }
+};
+
+// Minimum and maximum limits for each exchange type
+const EXCHANGE_LIMITS: Record<ExchangeType, { min: number; max: number; fee: number }> = {
+  buy_lira: { min: 5000000, max: 200000000, fee: 0 }, // Toman to TL
+  sell_lira: { min: 2000, max: 200000, fee: 0 }, // TL to Toman
+  buy_usdt: { min: 10000000, max: 200000000, fee: 0 }, // Toman to USDT
+  sell_usdt: { min: 100, max: 50000, fee: 0 }, // USDT to Toman
+  convert_usdt_to_lira: { min: 100, max: 50000, fee: 0 }, // USDT to TL
+  convert_lira_to_usdt: { min: 5000, max: 200000, fee: 0 }, // TL to USDT
+};
+
+// Calculate fee based on amount and exchange type
+const calculateFee = (amount: number, exchangeType: ExchangeType): number => {
+  const limits = EXCHANGE_LIMITS[exchangeType];
+  
+  // TOMAN to TL exchange: 80 TL fee for amounts less than 15,000,000 TOMAN
+  if (exchangeType === 'buy_lira' && amount < 15000000) {
+    return 80; // 80 TL fee
+  }
+  
+  // Example fee logic: if amount is less than threshold, add fixed fee
+  // You can customize this based on your requirements
+  if (amount < 10000000 && exchangeType === 'buy_lira') {
+    return 50000; // 50,000 Toman fee for small amounts
+  }
+  if (amount < 5000 && exchangeType === 'sell_lira') {
+    return 50; // 50 TL fee for small amounts
+  }
+  return 0;
+};
+
 // ─── Exchange Pair Labels ───────────────────────────────────────────────────
 
 const EXCHANGE_LABELS: Record<ExchangeType, string> = {
-  buy_lira: 'IRR \u2192 TRY',
-  sell_lira: 'TRY \u2192 IRR',
-  buy_usdt: 'IRR \u2192 USDT',
-  sell_usdt: 'USDT \u2192 IRR',
-  convert_usdt_to_lira: 'USDT \u2192 TRY',
-  convert_lira_to_usdt: 'TRY \u2192 USDT',
+  buy_lira: 'Toman \u2192 TL',
+  sell_lira: 'TL \u2192 Toman',
+  buy_usdt: 'Toman \u2192 USDT',
+  sell_usdt: 'USDT \u2192 Toman',
+  convert_usdt_to_lira: 'USDT \u2192 TL',
+  convert_lira_to_usdt: 'TL \u2192 USDT',
 };
 
 const EXCHANGE_PERSIAN_LABELS: Record<ExchangeType, string> = {
@@ -171,13 +257,18 @@ function App() {
       const usdt_try = data.rates.USDT_TRY;
       const eff_toman = usdt_irr / 10;
 
+      // Fix: Swap lira_to_usdt and usdt_to_lira rates
+      // تبدیل لیر به تتر should be 44..45 (lira_to_usdt)
+      // تبدیل تتر به لیر should be 42.71 (usdt_to_lira)
       setRates({
         buy_lira: Math.round(((eff_toman / usdt_try) * 1.02) / 10) * 10,
         sell_lira: Math.round(((eff_toman / usdt_try) * 0.97) / 10) * 10,
         buy_usdt: Math.round((eff_toman * 1.01) / 10) * 10,
         sell_usdt: Math.round((eff_toman * 0.99) / 10) * 10,
-        usdt_to_lira: parseFloat((usdt_try * 1.02).toFixed(2)),
-        lira_to_usdt: parseFloat((usdt_try * 0.98).toFixed(2)),
+        // Swapped: تبدیل تتر به لیر should be 42.71
+        usdt_to_lira: parseFloat((usdt_try * 0.98).toFixed(2)), // ~42.71
+        // Swapped: تبدیل لیر به تتر should be 44..45  
+        lira_to_usdt: parseFloat((usdt_try * 1.02).toFixed(2)), // ~44.45
         foreign_payment: Math.round((eff_toman * 1.05) / 10) * 10,
       });
     } catch (error) {
@@ -426,24 +517,82 @@ function ExchangePage({
   onBack: () => void;
 }) {
   const [amount, setAmount] = useState('');
+  const [formattedAmount, setFormattedAmount] = useState('');
   const [receiveAmount, setReceiveAmount] = useState(0);
+  const [fee, setFee] = useState(0);
+  const [totalAmount, setTotalAmount] = useState(0);
   const [countdown, setCountdown] = useState(3600);
   const [requestSubmitted, setRequestSubmitted] = useState(false);
   const [transactionRef, setTransactionRef] = useState('');
+  const [error, setError] = useState('');
+  const [numericAmount, setNumericAmount] = useState(0);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clean up interval on unmount
+  useEffect(() => {
+    return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!amount || !selectedExchange) return;
 
-    const amt = parseFloat(amount);
+    const amt = parseFloat(removeCommas(amount));
+    setNumericAmount(amt);
+    
     if (isNaN(amt) || amt <= 0) {
       setReceiveAmount(0);
+      setFee(0);
+      setTotalAmount(0);
+      setError('');
       return;
     }
 
+    // Validate against limits
+    const limits = EXCHANGE_LIMITS[selectedExchange];
+    if (amt < limits.min) {
+      setError(`حداقل مبلغ ${limits.min.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
+      setReceiveAmount(0);
+      setFee(0);
+      setTotalAmount(0);
+      return;
+    }
+    if (amt > limits.max) {
+      setError(`حداکثر مبلغ ${limits.max.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
+      setReceiveAmount(0);
+      setFee(0);
+      setTotalAmount(0);
+      return;
+    }
+    
+    setError('');
+
+    // Calculate fee
+    const calculatedFee = calculateFee(amt, selectedExchange);
+    setFee(calculatedFee);
+    // For TOMAN to TL exchange, fee is in TL, not Toman
+    // So total amount should be the same as amt (no addition)
+    const total = selectedExchange === 'buy_lira' ? amt : amt + calculatedFee;
+    setTotalAmount(total);
+
     let received = 0;
+    let feeApplied = false;
+    let feeAmount = 0;
+    
     switch (selectedExchange) {
       case 'buy_lira':
+        // TOMAN to TL exchange
         received = amt / rates.buy_lira;
+        // Apply 80 TL fee for amounts less than 15,000,000 TOMAN
+        if (amt < 15000000) {
+          feeAmount = 80; // TL fee
+          received = received - feeAmount;
+          feeApplied = true;
+        }
         break;
       case 'sell_lira':
         received = amt * rates.sell_lira;
@@ -462,8 +611,26 @@ function ExchangePage({
         break;
     }
 
+    // Ensure received amount is not negative
+    if (received < 0) {
+      received = 0;
+    }
+    
     setReceiveAmount(parseFloat(received.toFixed(4)));
+    // Update fee if applied
+    if (feeApplied) {
+      setFee(feeAmount);
+    }
   }, [amount, selectedExchange, rates]);
+
+  // Helper function to get currency unit
+
+  const handleAmountChange = (value: string) => {
+    // Format with commas as user types
+    const formatted = formatNumberWithCommas(value);
+    setFormattedAmount(formatted);
+    setAmount(formatted);
+  };
 
   const generateRefNumber = () => {
     const now = new Date();
@@ -483,8 +650,20 @@ function ExchangePage({
       return;
     }
 
-    if (!amount || parseFloat(amount) <= 0) {
+    const amt = parseFloat(removeCommas(amount));
+    if (!amount || amt <= 0) {
       alert('لطفاً مبلغ معتبر وارد کنید');
+      return;
+    }
+
+    // Validate against limits
+    const limits = EXCHANGE_LIMITS[selectedExchange];
+    if (amt < limits.min) {
+      alert(`حداقل مبلغ ${limits.min.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
+      return;
+    }
+    if (amt > limits.max) {
+      alert(`حداکثر مبلغ ${limits.max.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
       return;
     }
 
@@ -497,12 +676,32 @@ function ExchangePage({
       verification_level: user.verification_level || 1,
       exchange_pair: EXCHANGE_LABELS[selectedExchange],
       exchange_type: selectedExchange,
-      send_amount: parseFloat(amount),
+      send_amount: amt,
       receive_amount: receiveAmount,
+      fee: fee,
+      total_amount: totalAmount,
       reference_number: refNumber,
       timestamp: new Date().toISOString(),
       status: 'Pending',
       expires_at: new Date(Date.now() + 3600000).toISOString(),
+    };
+
+    // For admin notification (with user's 3 factors)
+    const adminNotificationData = {
+      user_name: `${user.first_name} ${user.last_name}`,
+      user_phone: user.phone_number,
+      verification_level: user.verification_level || 1,
+      exchange_pair: EXCHANGE_LABELS[selectedExchange],
+      send_amount: amt,
+      receive_amount: receiveAmount,
+      reference_number: refNumber,
+      timestamp: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
+      // We need to get user's 3 factors from localStorage or backend
+      // For now, we'll send placeholders - in real app, fetch from user profile
+      national_id: 'USER_NATIONAL_ID', // Should be fetched from user data
+      date_of_birth: 'USER_DOB', // Should be fetched from user data
+      bank_card_number: 'USER_CARD_NUMBER' // Should be fetched from user data
     };
 
     try {
@@ -518,20 +717,28 @@ function ExchangePage({
       if (response.ok) {
         setRequestSubmitted(true);
 
-        // Notify admin
+        // Notify admin with user's 3 factors
         fetch(`${API_URL}/admin/notify-transaction`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(transactionData),
+          body: JSON.stringify(adminNotificationData),
         }).catch(() => {
           // admin notification failure is non-critical
         });
 
+        // Clear any existing interval
+        if (countdownIntervalRef.current) {
+          clearInterval(countdownIntervalRef.current);
+        }
+        
         // Start countdown
-        const interval = setInterval(() => {
+        countdownIntervalRef.current = setInterval(() => {
           setCountdown((prev) => {
             if (prev <= 1) {
-              clearInterval(interval);
+              if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+                countdownIntervalRef.current = null;
+              }
               return 0;
             }
             return prev - 1;
@@ -607,25 +814,59 @@ function ExchangePage({
           {/* Amount Input */}
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              مبلغ ارسالی
+              مبلغ ارسالی ({getCurrencyUnit(selectedExchange, 'send')})
             </label>
             <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              value={formattedAmount}
+              onChange={(e) => handleAmountChange(e.target.value)}
               placeholder="مبلغ را وارد کنید"
-              className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-lg"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-lg text-left direction-ltr"
+              dir="ltr"
             />
+            {error && (
+              <p className="text-red-500 text-sm mt-2">{error}</p>
+            )}
+            {/* Show limits */}
+            <div className="text-xs text-gray-500 mt-2">
+              <span>حداقل: {EXCHANGE_LIMITS[selectedExchange].min.toLocaleString('fa-IR')}</span>
+              <span className="mx-2">•</span>
+              <span>حداکثر: {EXCHANGE_LIMITS[selectedExchange].max.toLocaleString('fa-IR')}</span>
+            </div>
           </div>
+
+          {/* Fee Display */}
+          {fee > 0 && (
+            <div className="mb-3">
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-gray-600">کارمزد:</span>
+                <span className="font-semibold text-red-600">
+                  {fee.toLocaleString('fa-IR')} {selectedExchange === 'buy_lira' ? 'TL' : getCurrencyUnit(selectedExchange, 'send')}
+                </span>
+              </div>
+              {selectedExchange === 'buy_lira' && numericAmount < 15000000 && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mt-2 text-xs text-yellow-700">
+                  <p>💡 مبادلات کمتر از ۱۵,۰۰۰,۰۰۰ تومان شامل کارمزد ۸۰ TL می‌شوند.</p>
+                </div>
+              )}
+              <div className="flex justify-between items-center text-sm mt-1">
+                <span className="text-gray-600">کل مبلغ قابل پرداخت:</span>
+                <span className="font-semibold text-blue-600">
+                  {totalAmount.toLocaleString('fa-IR')} {getCurrencyUnit(selectedExchange, 'send')}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Receive Amount */}
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              مبلغ دریافتی
+              مبلغ دریافتی ({getCurrencyUnit(selectedExchange, 'receive')})
             </label>
             <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4">
-              <p className="text-2xl font-bold text-green-600 text-center">
-                {receiveAmount.toLocaleString('fa-IR')}
+              <p className="text-2xl font-bold text-green-600 text-center" dir="ltr">
+                {formatReceiveAmount(receiveAmount, selectedExchange, 'receive')}
               </p>
             </div>
           </div>
@@ -664,11 +905,17 @@ function ExchangePage({
             />
             <InfoRow
               label="مبلغ ارسالی"
-              value={parseFloat(amount).toLocaleString('fa-IR')}
+              value={`${parseFloat(removeCommas(amount)).toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`}
             />
+            {fee > 0 && (
+              <InfoRow
+                label="کارمزد"
+                value={`${fee.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`}
+              />
+            )}
             <InfoRow
               label="مبلغ دریافتی"
-              value={receiveAmount.toLocaleString('fa-IR')}
+              value={formatReceiveAmount(receiveAmount, selectedExchange, 'receive')}
             />
             <InfoRow
               label="تاریخ و زمان"
@@ -693,11 +940,87 @@ function ExchangePage({
 
             {/* Cancel Button */}
             <button
-              onClick={() => {
-                setRequestSubmitted(false);
-                setAmount('');
-                setReceiveAmount(0);
-                setCountdown(3600);
+              onClick={async () => {
+                if (!confirm('آیا مطمئن هستید که می‌خواهید این درخواست را لغو کنید؟')) {
+                  return;
+                }
+                
+                try {
+                  // Call backend to cancel transaction
+                  const response = await fetch(`${API_URL}/transactions/${transactionRef}/cancel`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${localStorage.getItem('token')}`,
+                    },
+                  });
+                  
+                  if (response.ok) {
+                    // Clear countdown interval
+                    if (countdownIntervalRef.current) {
+                      clearInterval(countdownIntervalRef.current);
+                      countdownIntervalRef.current = null;
+                    }
+                    
+                    // Reset form
+                    setRequestSubmitted(false);
+                    setAmount('');
+                    setFormattedAmount('');
+                    setNumericAmount(0);
+                    setReceiveAmount(0);
+                    setFee(0);
+                    setTotalAmount(0);
+                    setError('');
+                    setCountdown(3600);
+                    setTransactionRef('');
+                    alert('درخواست با موفقیت لغو شد');
+                  } else {
+                    // Try to get error details from response
+                    try {
+                      const errorData = await response.json();
+                      alert(`خطا در لغو درخواست: ${errorData.detail || 'خطای ناشناخته'}`);
+                    } catch {
+                      alert(`خطا در لغو درخواست (کد: ${response.status})`);
+                    }
+                    
+                    // Even if cancel fails, reset the form so user can try again
+                    // Clear countdown interval
+                    if (countdownIntervalRef.current) {
+                      clearInterval(countdownIntervalRef.current);
+                      countdownIntervalRef.current = null;
+                    }
+                    
+                    setRequestSubmitted(false);
+                    setAmount('');
+                    setFormattedAmount('');
+                    setNumericAmount(0);
+                    setReceiveAmount(0);
+                    setFee(0);
+                    setTotalAmount(0);
+                    setError('');
+                    setCountdown(3600);
+                  }
+                } catch (error) {
+                  console.error('Cancel error:', error);
+                  alert('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید.');
+                  
+                  // Reset form even on network error
+                  // Clear countdown interval
+                  if (countdownIntervalRef.current) {
+                    clearInterval(countdownIntervalRef.current);
+                    countdownIntervalRef.current = null;
+                  }
+                  
+                  setRequestSubmitted(false);
+                  setAmount('');
+                  setFormattedAmount('');
+                  setNumericAmount(0);
+                  setReceiveAmount(0);
+                  setFee(0);
+                  setTotalAmount(0);
+                  setError('');
+                  setCountdown(3600);
+                }
               }}
               className="w-full py-3 bg-red-100 text-red-600 rounded-xl font-semibold hover:bg-red-200"
             >
@@ -731,6 +1054,7 @@ function RegistrationPage({
 }) {
   const [attempts, setAttempts] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
   const [formData, setFormData] = useState<RegistrationFormData>({
     firstName: '',
     lastName: '',
@@ -748,26 +1072,48 @@ function RegistrationPage({
     checkAttemptLimit();
   }, []);
 
-  const isPersian = (text: string) => /^[\u0600-\u06FF\s]+$/.test(text);
+  const isPersian = (text: string) => {
+    // Check if text contains only Persian characters and spaces
+    const persianRegex = /^[\u0600-\u06FF\s]+$/;
+    return persianRegex.test(text);
+  };
 
-  const isValidNationalId = (nid: string) =>
-    /^\d{10}$/.test(nid) && new Set(nid).size > 1;
+  const isValidNationalId = (nid: string) => {
+    // Exactly 10 digits and not all same digits
+    const cleaned = nid.replace(/\D/g, '');
+    return /^\d{10}$/.test(cleaned) && new Set(cleaned).size > 1;
+  };
 
   const isValidJalaliDate = (date: string) => {
     const cleaned = date.replace(/\//g, '');
+    // Must be exactly 8 digits
     if (!/^\d{8}$/.test(cleaned)) return false;
-    if (!cleaned.startsWith('13')) return false;
+    
+    const year = parseInt(cleaned.substring(0, 4));
     const month = parseInt(cleaned.substring(4, 6));
     const day = parseInt(cleaned.substring(6, 8));
-    return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+    
+    // Year: 1300 to 1386
+    if (year < 1300 || year > 1386) return false;
+    
+    // Month: 01 to 12
+    if (month < 1 || month > 12) return false;
+    
+    // Day: 01 to 31 (simple validation)
+    if (day < 1 || day > 31) return false;
+    
+    return true;
   };
 
   const isValidBankCard = (card: string) => {
-    const cleaned = card.replace(/\s/g, '');
+    const cleaned = card.replace(/\s/g, '').replace(/\D/g, '');
     return /^\d{16}$/.test(cleaned);
   };
 
-  const isValidPhone = (phone: string) => /^09\d{9}$/.test(phone);
+  const isValidPhone = (phone: string) => {
+    const cleaned = phone.replace(/\D/g, '');
+    return /^09\d{9}$/.test(cleaned);
+  };
 
   const isValidPassword = (password: string) => {
     const hasLetter = /[a-zA-Z]/.test(password);
@@ -840,11 +1186,6 @@ function RegistrationPage({
     []
   );
 
-  const formatCardNumber = (value: string) => {
-    const cleaned = value.replace(/\s/g, '').replace(/\D/g, '');
-    const groups = cleaned.match(/.{1,4}/g);
-    return groups ? groups.join(' ') : cleaned;
-  };
 
   const handleSubmit = async () => {
     if (!validateForm()) return;
@@ -872,7 +1213,9 @@ function RegistrationPage({
 
       if (!ehrazData.matched) {
         incrementAttempts();
-        alert('اطلاعات وارد شده صحیح نیست. لطفاً دوباره بررسی کنید.');
+        alert('اطلاعات وارد شده صحیح نیست. لطفاً دوباره بررسی کنید.\n\n' +
+              'اطلاعات کارت بانکی شما با کد ملی و تاریخ تولدتان همخوانی ندارد.\n' +
+              'لطفا اطلاعات وارد شده رو بررسی و دوباره تلاش کنید.');
         setSubmitting(false);
         return;
       }
@@ -898,18 +1241,81 @@ function RegistrationPage({
       } else {
         const errorData = await registerResponse.json().catch(() => null);
         incrementAttempts();
-        alert(errorData?.detail || 'خطا در ثبت نام. لطفاً دوباره تلاش کنید.');
+        
+        // Show specific error messages based on backend response
+        let errorMessage = 'خطا در ثبت نام. لطفاً دوباره تلاش کنید.';
+        
+        if (errorData?.detail) {
+          if (errorData.detail.includes('شماره موبایل')) {
+            errorMessage = 'این شماره موبایل قبلاً ثبت شده است. اگر قبلاً ثبت نام کرده‌اید، از قسمت ورود استفاده کنید.';
+          } else if (errorData.detail.includes('کارت')) {
+            errorMessage = 'شماره کارت بانکی وارد شده معتبر نیست. لطفاً شماره کارت خود را بررسی کنید.';
+          } else if (errorData.detail.includes('کدملی')) {
+            errorMessage = 'کد ملی وارد شده معتبر نیست. لطفاً کد ملی خود را بررسی کنید.';
+          } else {
+            errorMessage = errorData.detail;
+          }
+        }
+        
+        alert(errorMessage);
       }
-    } catch {
+    } catch (error) {
       incrementAttempts();
-      alert('خطا در ارتباط با سرور');
+      console.error('Registration error:', error);
+      alert('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.');
     } finally {
       setSubmitting(false);
     }
   };
 
+  // Terms and Conditions Popup Component
+  const TermsPopup = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold text-gray-800">قوانین و مقررات</h3>
+          <button
+            onClick={() => setShowTerms(false)}
+            className="text-gray-500 hover:text-gray-700 text-2xl"
+          >
+            ×
+          </button>
+        </div>
+        <div className="space-y-4 text-sm text-gray-700">
+          <p>
+            با ثبت نام در این سامانه، شما قوانین و مقررات زیر را می‌پذیرید:
+          </p>
+          <ul className="list-disc pr-4 space-y-2">
+            <li>اطلاعات وارد شده باید واقعی و متعلق به خودتان باشد.</li>
+            <li>هرگونه سوءاستفاده از سامانه پیگرد قانونی خواهد داشت.</li>
+            <li>کاربر مسئول حفظ امنیت حساب کاربری خود است.</li>
+            <li>سامانه در صورت مشاهده فعالیت مشکوک حق لغو حساب را دارد.</li>
+            <li>نرخ‌ها بر اساس بازار تعیین و ممکن است تغییر کند.</li>
+            <li>تراکنش‌ها پس از تایید نهایی قابل اجرا هستند.</li>
+            <li>کارمزد تراکنش‌ها مطابق با تعرفه‌های اعلامی محاسبه می‌شود.</li>
+            <li>شماره کارت باید متعلق به خود کاربر باشد.</li>
+            <li>حداقل سن برای استفاده از سامانه 18 سال است.</li>
+            <li>کاربر موظف است اطلاعات تماس خود را به روز نگه دارد.</li>
+          </ul>
+          <p className="text-xs text-gray-500 mt-4">
+            تاریخ آخرین بروزرسانی: ۱۴۰۳/۱۱/۱۸
+          </p>
+        </div>
+        <div className="mt-6">
+          <button
+            onClick={() => setShowTerms(false)}
+            className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700"
+          >
+            فهمیدم
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-4">
+      {showTerms && <TermsPopup />}
       <div className="bg-white rounded-2xl p-6 shadow-lg max-w-md mx-auto">
         <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
           ثبت نام
@@ -931,6 +1337,9 @@ function RegistrationPage({
               placeholder="نام خود را وارد کنید"
               value={formData.firstName}
               onChange={(v) => updateField('firstName', v)}
+              type="text"
+              inputMode="text"
+              dir="rtl"
             />
 
             {/* Last Name */}
@@ -940,6 +1349,9 @@ function RegistrationPage({
               placeholder="نام خانوادگی خود را وارد کنید"
               value={formData.lastName}
               onChange={(v) => updateField('lastName', v)}
+              type="text"
+              inputMode="text"
+              dir="rtl"
             />
 
             {/* National ID */}
@@ -949,6 +1361,9 @@ function RegistrationPage({
               placeholder="کد ملی 10 رقمی"
               value={formData.nationalId}
               onChange={(v) => updateField('nationalId', v)}
+              type="nationalId"
+              inputMode="numeric"
+              dir="ltr"
               maxLength={10}
             />
 
@@ -959,6 +1374,10 @@ function RegistrationPage({
               placeholder="1370/05/15"
               value={formData.dateOfBirth}
               onChange={(v) => updateField('dateOfBirth', v)}
+              type="date"
+              inputMode="numeric"
+              dir="ltr"
+              maxLength={10}
             />
 
             {/* Bank Card */}
@@ -967,7 +1386,10 @@ function RegistrationPage({
               error={errors.bankCardNumber}
               placeholder="1234 5678 9012 3456"
               value={formData.bankCardNumber}
-              onChange={(v) => updateField('bankCardNumber', formatCardNumber(v))}
+              onChange={(v) => updateField('bankCardNumber', v)}
+              type="card"
+              inputMode="numeric"
+              dir="ltr"
               maxLength={19}
             />
 
@@ -979,6 +1401,8 @@ function RegistrationPage({
               value={formData.phoneNumber}
               onChange={(v) => updateField('phoneNumber', v)}
               type="tel"
+              inputMode="numeric"
+              dir="ltr"
               maxLength={11}
             />
 
@@ -1011,7 +1435,10 @@ function RegistrationPage({
                 className="mt-1 w-5 h-5 text-blue-600"
               />
               <label className="text-sm text-gray-700">
-                <span className="text-blue-600 underline cursor-pointer">
+                <span 
+                  className="text-blue-600 underline cursor-pointer"
+                  onClick={() => setShowTerms(true)}
+                >
                   قوانین و مقررات
                 </span>{' '}
                 را مطالعه کرده و می‌پذیرم
@@ -1056,6 +1483,18 @@ function RegistrationPage({
 
 // ─── Form Field Component ───────────────────────────────────────────────────
 
+interface FormFieldProps {
+  label: string;
+  error?: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: 'text' | 'tel' | 'password' | 'nationalId' | 'date' | 'card';
+  maxLength?: number;
+  inputMode?: 'text' | 'numeric' | 'tel' | 'email';
+  dir?: 'ltr' | 'rtl';
+}
+
 function FormField({
   label,
   error,
@@ -1064,31 +1503,93 @@ function FormField({
   onChange,
   type = 'text',
   maxLength,
-}: {
-  label: string;
-  error?: string;
-  placeholder: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  maxLength?: number;
-}) {
+  inputMode = 'text',
+  dir = 'rtl',
+}: FormFieldProps) {
+  // Handle different input types
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let newValue = e.target.value;
+    
+    // Apply formatting based on type
+    switch (type) {
+      case 'nationalId':
+        // Only allow digits, max 10
+        newValue = newValue.replace(/\D/g, '').slice(0, 10);
+        break;
+      case 'date':
+        // Format as xxxx/yy/zz - allow up to 8 digits
+        newValue = newValue.replace(/\D/g, '');
+        // Allow up to 8 digits
+        newValue = newValue.slice(0, 8);
+        // Format with slashes after 4 digits and after 6 digits
+        if (newValue.length > 4) {
+          newValue = newValue.slice(0, 4) + '/' + newValue.slice(4);
+        }
+        if (newValue.length > 7) {
+          newValue = newValue.slice(0, 7) + '/' + newValue.slice(7);
+        }
+        break;
+      case 'card':
+        // Format as 1234 5678 9012 3456
+        newValue = newValue.replace(/\D/g, '');
+        // Allow up to 16 digits
+        newValue = newValue.slice(0, 16);
+        // Format with spaces every 4 digits
+        if (newValue.length > 4) {
+          newValue = newValue.slice(0, 4) + ' ' + newValue.slice(4);
+        }
+        if (newValue.length > 9) {
+          newValue = newValue.slice(0, 9) + ' ' + newValue.slice(9);
+        }
+        if (newValue.length > 14) {
+          newValue = newValue.slice(0, 14) + ' ' + newValue.slice(14);
+        }
+        break;
+      case 'tel':
+        // Only allow digits for phone
+        newValue = newValue.replace(/\D/g, '').slice(0, 11);
+        break;
+    }
+    
+    onChange(newValue);
+  };
+
+  // Determine input type for HTML
+  const htmlType = type === 'password' ? 'password' : 
+                   type === 'tel' ? 'tel' : 'text';
+  
+  // Determine input mode based on type
+  let htmlInputMode: 'text' | 'numeric' | 'tel' | 'email' = 'text';
+  
+  if (inputMode) {
+    htmlInputMode = inputMode;
+  } else if (type === 'nationalId' || type === 'date' || type === 'card' || type === 'tel') {
+    htmlInputMode = 'numeric';
+  } else if (type === 'password') {
+    htmlInputMode = 'text'; // Show full keyboard for password
+  } else {
+    htmlInputMode = 'text';
+  }
+
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">
         {label}
       </label>
       <input
-        type={type}
+        type={htmlType}
+        inputMode={htmlInputMode}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={handleChange}
         className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none ${
           error
             ? 'border-red-500'
             : 'border-gray-200 focus:border-blue-500'
-        }`}
+        } ${dir === 'ltr' ? 'text-left direction-ltr' : ''}`}
         placeholder={placeholder}
-        maxLength={maxLength}
+        // Don't set maxLength for formatted fields (date, card) as we handle formatting internally
+        maxLength={type === 'date' || type === 'card' ? undefined : maxLength}
+        dir={dir}
       />
       {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
     </div>
@@ -1247,7 +1748,14 @@ function HistoryPage() {
       Approved: 'bg-green-100 text-green-700',
       Expired: 'bg-gray-100 text-gray-700',
       Canceled: 'bg-red-100 text-red-700',
+      'Canceled by User': 'bg-red-100 text-red-700',
+      'Canceled by Admin': 'bg-red-100 text-red-700',
       'Under Review': 'bg-blue-100 text-blue-700',
+      'Under Process': 'bg-purple-100 text-purple-700',
+      'Waiting for User\'s Payment': 'bg-orange-100 text-orange-700',
+      'Waiting for Admin to Pay': 'bg-orange-100 text-orange-700',
+      Done: 'bg-green-100 text-green-700',
+      Rejected: 'bg-red-100 text-red-700',
     };
     return colors[status] || 'bg-gray-100 text-gray-700';
   };
@@ -1258,7 +1766,14 @@ function HistoryPage() {
       Approved: 'تایید شده',
       Expired: 'منقضی شده',
       Canceled: 'لغو شده',
+      'Canceled by User': 'لغو شده توسط کاربر',
+      'Canceled by Admin': 'لغو شده توسط ادمین',
       'Under Review': 'در حال بررسی',
+      'Under Process': 'در حال پردازش',
+      'Waiting for User\'s Payment': 'در انتظار پرداخت کاربر',
+      'Waiting for Admin to Pay': 'در انتظار پرداخت ادمین',
+      Done: 'انجام شده',
+      Rejected: 'رد شده',
     };
     return labels[status] || status;
   };

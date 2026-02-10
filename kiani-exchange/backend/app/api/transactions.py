@@ -36,6 +36,10 @@ class NotifyTransactionRequest(BaseModel):
     reference_number: str
     timestamp: str
     expires_at: str
+    # Add user's 3 factors for admin
+    national_id: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    bank_card_number: Optional[str] = None
 
 
 @router.post("/transactions")
@@ -110,6 +114,7 @@ async def get_user_transactions(
 
 @router.post("/admin/notify-transaction")
 async def notify_admin_transaction(req: NotifyTransactionRequest):
+    # Build message with user's 3 factors for admin
     message = (
         "🆕 درخواست معامله جدید\n\n"
         f"👤 نام: {req.user_name}\n"
@@ -122,6 +127,18 @@ async def notify_admin_transaction(req: NotifyTransactionRequest):
         f"📅 تاریخ: {req.timestamp}\n"
         f"⏰ انقضا: {req.expires_at}"
     )
+    
+    # Add user's 3 factors if available (for admin only)
+    if req.national_id or req.date_of_birth or req.bank_card_number:
+        message += "\n\n🔐 اطلاعات احراز کاربر:\n"
+        if req.national_id:
+            message += f"🆔 کدملی: {req.national_id}\n"
+        if req.date_of_birth:
+            message += f"📅 تاریخ تولد: {req.date_of_birth}\n"
+        if req.bank_card_number:
+            # Mask card number for security (show only last 4 digits)
+            masked_card = "**** **** **** " + req.bank_card_number[-4:] if len(req.bank_card_number) >= 4 else req.bank_card_number
+            message += f"💳 شماره کارت: {masked_card}"
 
     admin_url = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendMessage"
     payload = {
@@ -150,3 +167,87 @@ async def notify_admin_transaction(req: NotifyTransactionRequest):
         )
 
     return {"status": "sent"}
+
+
+@router.post("/transactions/{reference_number}/cancel")
+async def cancel_transaction(
+    reference_number: str,
+    user_id: int = Depends(get_current_user_id),
+):
+    with get_db() as conn:
+        # Check if transaction exists and belongs to user
+        transaction = conn.execute(
+            """SELECT id, status FROM transactions 
+               WHERE reference_number = ? AND user_id = ?""",
+            (reference_number, user_id),
+        ).fetchone()
+        
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        
+        # Update status to "Canceled by User"
+        conn.execute(
+            """UPDATE transactions 
+               SET status = 'Canceled by User'
+               WHERE reference_number = ? AND user_id = ?""",
+            (reference_number, user_id),
+        )
+        conn.commit()
+    
+    return {"status": "success", "message": "Transaction canceled"}
+
+
+@router.post("/admin/transactions/{reference_number}/update-status")
+async def update_transaction_status(
+    reference_number: str,
+    status: str,
+    admin_password: str,  # Simple admin auth
+):
+    # Simple admin authentication
+    if admin_password != "admin123":  # Change this to a secure password
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    valid_statuses = [
+        "Pending",
+        "Under Review",
+        "Waiting for User's Payment",
+        "Waiting for Admin to Pay",
+        "Under Process",
+        "Done",
+        "Rejected",
+        "Canceled by Admin"
+    ]
+    
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    
+    with get_db() as conn:
+        # Check if transaction exists
+        transaction = conn.execute(
+            """SELECT id, user_id FROM transactions 
+               WHERE reference_number = ?""",
+            (reference_number,),
+        ).fetchone()
+        
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        
+        # Update status
+        conn.execute(
+            """UPDATE transactions 
+               SET status = ?
+               WHERE reference_number = ?""",
+            (status, reference_number),
+        )
+        conn.commit()
+        
+        # Get user info for notification
+        user = conn.execute(
+            """SELECT phone_number FROM users WHERE id = ?""",
+            (transaction["user_id"],),
+        ).fetchone()
+    
+    # TODO: Send notification to user about status change
+    # This would require a separate user notification system
+    
+    return {"status": "success", "message": f"Transaction status updated to {status}"}
