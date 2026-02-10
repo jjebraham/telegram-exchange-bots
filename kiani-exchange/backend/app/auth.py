@@ -8,7 +8,7 @@ SECRET_KEY = "kiani-exchange-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 72
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["sha256_crypt", "bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 
