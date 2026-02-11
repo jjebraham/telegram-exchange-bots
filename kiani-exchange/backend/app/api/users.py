@@ -4,6 +4,7 @@ import random
 import logging
 import os
 import json
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
@@ -195,6 +196,30 @@ class FaqRequest(BaseModel):
     answer: str
 
 
+class AdminResetPasswordRequest(BaseModel):
+    username: str
+    password: str
+    new_password: str
+
+
+class PasswordResetStartRequest(BaseModel):
+    phone_number: str
+    channel: str  # bot | sms
+
+
+class PasswordResetCompleteRequest(BaseModel):
+    phone_number: str
+    code: str
+    new_password: str
+
+
+class AdminSendMessageRequest(BaseModel):
+    username: str
+    password: str
+    message: str
+    user_id: int | None = None
+
+
 def _is_admin(username: str, password: str) -> bool:
     return (
         username == os.getenv("ADMIN_PANEL_USERNAME", "admin")
@@ -208,6 +233,12 @@ def _write_admin_log(action: str, details: dict | None = None):
             "INSERT INTO admin_logs (action, details) VALUES (?, ?)",
             (action, json.dumps(details or {}, ensure_ascii=False)),
         )
+
+
+async def _send_text(chat_id: int, text: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    async with aiohttp.ClientSession() as session:
+        await session.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
 
 
 async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 6):
@@ -480,3 +511,90 @@ async def admin_logs(username: str, password: str):
     with get_db() as conn:
         rows = conn.execute("SELECT id, action, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 300").fetchall()
     return {"logs": [dict(row) for row in rows]}
+
+
+@router.post("/admin/users/{user_id}/reset-password")
+async def admin_reset_user_password(user_id: int, req: AdminResetPasswordRequest):
+    if not _is_admin(req.username, req.password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="user_not_found")
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(req.new_password), user_id))
+    _write_admin_log("reset_user_password", {"user_id": user_id})
+    return {"status": "success"}
+
+
+@router.post("/users/password-reset/start")
+async def start_password_reset(req: PasswordResetStartRequest):
+    if req.channel not in {"bot", "sms"}:
+        raise HTTPException(status_code=400, detail="invalid_channel")
+
+    with get_db() as conn:
+        user = conn.execute("SELECT id, phone_number FROM users WHERE phone_number = ?", (req.phone_number,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="user_not_found")
+
+        code = str(random.randint(100000, 999999))
+        expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+        conn.execute(
+            "INSERT INTO password_reset_tokens (phone_number, channel, code, expires_at) VALUES (?, ?, ?, ?)",
+            (req.phone_number, req.channel, code, expires_at),
+        )
+
+    if req.channel == "bot":
+        try:
+            await _send_text(user["id"], f"کد بازیابی رمز عبور شما: {code}\nاین کد ۱۰ دقیقه اعتبار دارد.")
+        except Exception as exc:
+            logger.error("failed to send bot reset code: %s", exc)
+    else:
+        logger.info("SMS reset code for %s: %s", req.phone_number, code)
+
+    return {"status": "sent"}
+
+
+@router.post("/users/password-reset/complete")
+async def complete_password_reset(req: PasswordResetCompleteRequest):
+    with get_db() as conn:
+        token = conn.execute(
+            """SELECT id, expires_at FROM password_reset_tokens
+               WHERE phone_number = ? AND code = ? AND used = 0
+               ORDER BY id DESC LIMIT 1""",
+            (req.phone_number, req.code),
+        ).fetchone()
+        if not token:
+            raise HTTPException(status_code=400, detail="invalid_code")
+        if datetime.fromisoformat(token["expires_at"]) < datetime.utcnow():
+            raise HTTPException(status_code=400, detail="expired_code")
+
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE phone_number = ?",
+            (hash_password(req.new_password), req.phone_number),
+        )
+        conn.execute("UPDATE password_reset_tokens SET used = 1 WHERE id = ?", (token["id"],))
+
+    return {"status": "success"}
+
+
+@router.post("/admin/messages/send")
+async def admin_send_message(req: AdminSendMessageRequest):
+    if not _is_admin(req.username, req.password):
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    with get_db() as conn:
+        if req.user_id:
+            rows = conn.execute("SELECT id FROM users WHERE id = ?", (req.user_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT id FROM users ORDER BY id DESC").fetchall()
+
+    sent = 0
+    for row in rows:
+        try:
+            await _send_text(row["id"], req.message)
+            sent += 1
+        except Exception:
+            continue
+
+    _write_admin_log("admin_send_message", {"user_id": req.user_id, "sent": sent})
+    return {"status": "success", "sent": sent}

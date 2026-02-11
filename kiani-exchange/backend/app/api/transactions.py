@@ -1,4 +1,5 @@
 import aiohttp
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
@@ -40,6 +41,39 @@ class NotifyTransactionRequest(BaseModel):
     national_id: Optional[str] = None
     date_of_birth: Optional[str] = None
     bank_card_number: Optional[str] = None
+
+
+
+
+class StatusUpdateRequest(BaseModel):
+    username: str
+    password: str
+    status: str
+    receipt_photo_url: Optional[str] = None
+    receipt_description: Optional[str] = None
+    payment_link: Optional[str] = None
+
+async def _send_telegram_message(chat_id: int, message: str):
+    admin_url = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    async with aiohttp.ClientSession() as session:
+        await session.post(admin_url, json=payload, proxy=PROXY_URL, timeout=aiohttp.ClientTimeout(total=10))
+
+
+async def _notify_status_change(user_id: int, reference_number: str, status: str):
+    msg = f"📌 وضعیت سفارش #{reference_number} تغییر کرد:\n{status}"
+    try:
+        await _send_telegram_message(user_id, msg)
+    except Exception:
+        pass
+    try:
+        await _send_telegram_message(ADMIN_CHAT_ID, f"🔔 وضعیت سفارش {reference_number} => {status}")
+    except Exception:
+        pass
+
+
+def _is_admin(username: str, password: str) -> bool:
+    return username == "admin" and password == "admin123"
 
 
 @router.post("/transactions")
@@ -89,7 +123,7 @@ async def get_user_transactions(
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, exchange_pair, exchange_type, send_amount,
-                      receive_amount, reference_number, status, timestamp
+                      receive_amount, reference_number, status, timestamp, receipt_photo_url, receipt_description, payment_link
                FROM transactions
                WHERE user_id = ?
                ORDER BY id DESC""",
@@ -105,6 +139,9 @@ async def get_user_transactions(
             "reference_number": row["reference_number"],
             "status": row["status"],
             "timestamp": row["timestamp"],
+            "receipt_photo_url": row["receipt_photo_url"] if "receipt_photo_url" in row.keys() else None,
+            "receipt_description": row["receipt_description"] if "receipt_description" in row.keys() else None,
+            "payment_link": row["payment_link"] if "payment_link" in row.keys() else None,
         }
         for row in rows
     ]
@@ -206,19 +243,15 @@ async def cancel_transaction(
         )
         conn.commit()
     
+    await _notify_status_change(user_id, reference_number, "Canceled by User")
     return {"status": "success", "message": "Transaction canceled"}
 
 
 @router.post("/admin/transactions/{reference_number}/update-status")
-async def update_transaction_status(
-    reference_number: str,
-    status: str,
-    admin_password: str,  # Simple admin auth
-):
-    # Simple admin authentication
-    if admin_password != "admin123":  # Change this to a secure password
+async def update_transaction_status(reference_number: str, req: StatusUpdateRequest):
+    if not _is_admin(req.username, req.password):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    
+
     valid_statuses = [
         "Pending",
         "Under Review",
@@ -227,42 +260,33 @@ async def update_transaction_status(
         "Under Process",
         "Done",
         "Rejected",
-        "Canceled by Admin"
+        "Canceled by Admin",
+        "Canceled by User",
+        "Expired",
     ]
-    
-    if status not in valid_statuses:
+
+    if req.status not in valid_statuses:
         raise HTTPException(status_code=400, detail="Invalid status")
-    
+
     with get_db() as conn:
-        # Check if transaction exists
         transaction = conn.execute(
-            """SELECT id, user_id FROM transactions 
+            """SELECT id, user_id FROM transactions
                WHERE reference_number = ?""",
             (reference_number,),
         ).fetchone()
-        
         if not transaction:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        
-        # Update status
+
         conn.execute(
-            """UPDATE transactions 
-               SET status = ?
+            """UPDATE transactions
+               SET status = ?, receipt_photo_url = ?, receipt_description = ?, payment_link = ?, status_updated_at = ?
                WHERE reference_number = ?""",
-            (status, reference_number),
+            (req.status, req.receipt_photo_url, req.receipt_description, req.payment_link, datetime.utcnow().isoformat(), reference_number),
         )
         conn.commit()
-        
-        # Get user info for notification
-        user = conn.execute(
-            """SELECT phone_number FROM users WHERE id = ?""",
-            (transaction["user_id"],),
-        ).fetchone()
-    
-    # TODO: Send notification to user about status change
-    # This would require a separate user notification system
-    
-    return {"status": "success", "message": f"Transaction status updated to {status}"}
+
+    await _notify_status_change(transaction["user_id"], reference_number, req.status)
+    return {"status": "success", "message": f"Transaction status updated to {req.status}"}
 
 
 @router.get("/admin/transactions")
@@ -272,7 +296,7 @@ async def admin_list_transactions(username: str, password: str):
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, user_name, user_phone, exchange_pair, exchange_type, send_amount,
-                      receive_amount, reference_number, status, timestamp, expires_at
+                      receive_amount, reference_number, status, timestamp, receipt_photo_url, receipt_description, payment_link, expires_at
                FROM transactions ORDER BY id DESC LIMIT 500"""
         ).fetchall()
     return {"transactions": [dict(row) for row in rows]}
