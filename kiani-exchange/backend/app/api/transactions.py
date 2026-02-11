@@ -1,10 +1,13 @@
 import aiohttp
+import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from ..database import get_db
 from ..auth import get_current_user_id
+from ..price_cache import price_cache
+from ..exchange_math import calculate_order, derive_rates
 
 ADMIN_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
 ADMIN_CHAT_ID = 2043363119
@@ -25,6 +28,8 @@ class TransactionRequest(BaseModel):
     timestamp: str
     status: str
     expires_at: str
+    fee: Optional[float] = None
+    total_amount: Optional[float] = None
 
 
 class NotifyTransactionRequest(BaseModel):
@@ -37,6 +42,8 @@ class NotifyTransactionRequest(BaseModel):
     reference_number: str
     timestamp: str
     expires_at: str
+    fee: Optional[float] = None
+    total_amount: Optional[float] = None
     # Optional manual payload (server also backfills from DB)
     national_id: Optional[str] = None
     date_of_birth: Optional[str] = None
@@ -72,8 +79,28 @@ async def _notify_status_change(user_id: int, reference_number: str, status: str
         pass
 
 
-def _is_admin(username: str, password: str) -> bool:
-    return username == "admin" and password == "admin123"
+def _admin_role(username: str, password: str) -> str | None:
+    admin_user = os.getenv("ADMIN_PANEL_USERNAME", "admin")
+    admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
+    support_user = os.getenv("SUPPORT_PANEL_USERNAME", "support")
+    support_pass = os.getenv("SUPPORT_PANEL_PASSWORD", "support123")
+    viewer_user = os.getenv("VIEWER_PANEL_USERNAME", "viewer")
+    viewer_pass = os.getenv("VIEWER_PANEL_PASSWORD", "viewer123")
+
+    if username == admin_user and password == admin_pass:
+        return "admin"
+    if username == support_user and password == support_pass:
+        return "support"
+    if username == viewer_user and password == viewer_pass:
+        return "viewer"
+    return None
+
+
+def _require_roles(username: str, password: str, allowed: set[str]) -> str:
+    role = _admin_role(username, password)
+    if role not in allowed:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return role
 
 
 @router.post("/transactions")
@@ -81,6 +108,15 @@ async def create_transaction(
     req: TransactionRequest,
     user_id: int = Depends(get_current_user_id),
 ):
+    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    rates = derive_rates(usdt_irr, usdt_try)
+    calculated = calculate_order(req.exchange_type, req.send_amount, rates)
+
+    # Prevent negative-net USDT sends
+    if req.exchange_type in {"sell_usdt", "convert_usdt_to_lira"} and calculated.net_send_amount <= 0:
+        raise HTTPException(status_code=400, detail="send_amount_too_low_for_fee")
+
     with get_db() as conn:
         # Check for duplicate reference number
         existing = conn.execute(
@@ -104,7 +140,7 @@ async def create_transaction(
                 req.exchange_pair,
                 req.exchange_type,
                 req.send_amount,
-                req.receive_amount,
+                calculated.receive_amount,
                 req.reference_number,
                 req.status,
                 req.timestamp,
@@ -113,7 +149,7 @@ async def create_transaction(
         )
         conn.commit()
 
-    return {"status": "success", "reference_number": req.reference_number}
+    return {"status": "success", "reference_number": req.reference_number, "receive_amount": calculated.receive_amount, "fee": calculated.fee_amount, "fee_currency": calculated.fee_currency, "net_send_amount": calculated.net_send_amount}
 
 
 @router.get("/user/transactions")
@@ -249,8 +285,7 @@ async def cancel_transaction(
 
 @router.post("/admin/transactions/{reference_number}/update-status")
 async def update_transaction_status(reference_number: str, req: StatusUpdateRequest):
-    if not _is_admin(req.username, req.password):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_roles(req.username, req.password, {"admin", "support"})
 
     valid_statuses = [
         "Pending",
@@ -291,8 +326,7 @@ async def update_transaction_status(reference_number: str, req: StatusUpdateRequ
 
 @router.get("/admin/transactions")
 async def admin_list_transactions(username: str, password: str):
-    if username != "admin" or password != "admin123":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, user_name, user_phone, exchange_pair, exchange_type, send_amount,
@@ -304,8 +338,7 @@ async def admin_list_transactions(username: str, password: str):
 
 @router.get("/admin/reports")
 async def admin_reports(username: str, password: str):
-    if username != "admin" or password != "admin123":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         totals = conn.execute(
             """SELECT COUNT(*) AS total_orders,

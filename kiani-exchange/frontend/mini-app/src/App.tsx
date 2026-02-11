@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { calculateFee, calculateReceiveAmount, deriveRates } from './exchangeMath';
+import type { ExchangeType, Rates } from './exchangeMath';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -12,16 +14,6 @@ const notifyMessage = (message: string, title = 'KIANI Exchange') => {
 };
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-
-interface Rates {
-  buy_lira: number;
-  sell_lira: number;
-  buy_usdt: number;
-  sell_usdt: number;
-  usdt_to_lira: number;
-  lira_to_usdt: number;
-  foreign_payment: number;
-}
 
 interface User {
   id: number;
@@ -46,14 +38,6 @@ interface Transaction {
 }
 
 type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'admin';
-
-type ExchangeType =
-  | 'buy_lira'
-  | 'sell_lira'
-  | 'buy_usdt'
-  | 'sell_usdt'
-  | 'convert_usdt_to_lira'
-  | 'convert_lira_to_usdt';
 
 // ─── Helper Components ──────────────────────────────────────────────────────
 
@@ -194,22 +178,6 @@ const EXCHANGE_LIMITS: Record<ExchangeType, { min: number; max: number; fee: num
   convert_lira_to_usdt: { min: 5000, max: 200000, fee: 0 }, // TL to USDT
 };
 
-// Calculate fee based on amount and exchange type
-const calculateFee = (_amount: number, exchangeType: ExchangeType): number => {
-  if (exchangeType === 'sell_lira') return 80;
-
-  if (
-    exchangeType === 'buy_usdt' ||
-    exchangeType === 'sell_usdt' ||
-    exchangeType === 'convert_usdt_to_lira' ||
-    exchangeType === 'convert_lira_to_usdt'
-  ) {
-    return 5;
-  }
-
-  return 0;
-};
-
 // ─── Exchange Pair Labels ───────────────────────────────────────────────────
 
 const EXCHANGE_LABELS: Record<ExchangeType, string> = {
@@ -283,22 +251,7 @@ function App() {
 
       const usdt_irr = data.rates.USDT_IRR;
       const usdt_try = data.rates.USDT_TRY;
-      const eff_toman = usdt_irr / 10;
-
-      // Fix: Swap lira_to_usdt and usdt_to_lira rates
-      // تبدیل لیر به تتر should be 44..45 (lira_to_usdt)
-      // تبدیل تتر به لیر should be 42.71 (usdt_to_lira)
-      setRates({
-        buy_lira: Math.round(((eff_toman / usdt_try) * 1.02) / 10) * 10,
-        sell_lira: Math.round(((eff_toman / usdt_try) * 0.97) / 10) * 10,
-        buy_usdt: Math.round((eff_toman * 1.01) / 10) * 10,
-        sell_usdt: Math.round((eff_toman * 0.99) / 10) * 10,
-        // Swapped: تبدیل تتر به لیر should be 42.71
-        usdt_to_lira: parseFloat((usdt_try * 0.98).toFixed(2)), // ~42.71
-        // Swapped: تبدیل لیر به تتر should be 44..45  
-        lira_to_usdt: parseFloat((usdt_try * 1.02).toFixed(2)), // ~44.45
-        foreign_payment: Math.round((eff_toman * 1.05) / 10) * 10,
-      });
+      setRates(deriveRates(usdt_irr, usdt_try));
     } catch (error) {
       console.error('Rate fetch error:', error);
     } finally {
@@ -603,42 +556,17 @@ function ExchangePage({
     
     setError('');
 
-    const calculatedFee = calculateFee(amt, selectedExchange);
-    setFee(calculatedFee);
+    const calculation = calculateReceiveAmount(selectedExchange, amt, rates);
+    setFee(calculation.fee);
     setTotalAmount(amt);
+    setReceiveAmount(parseFloat(calculation.receiveAmount.toFixed(4)));
 
-    let received = 0;
-
-    switch (selectedExchange) {
-      case 'buy_lira':
-        received = amt / rates.buy_lira;
-        break;
-      case 'sell_lira':
-        received = amt * rates.sell_lira;
-        break;
-      case 'buy_usdt':
-        received = amt / rates.buy_usdt;
-        break;
-      case 'sell_usdt':
-        received = amt * rates.sell_usdt;
-        break;
-      case 'convert_usdt_to_lira':
-        received = amt * rates.usdt_to_lira;
-        break;
-      case 'convert_lira_to_usdt':
-        received = amt / rates.lira_to_usdt;
-        break;
+    if (
+      (selectedExchange === 'convert_usdt_to_lira' || selectedExchange === 'sell_usdt') &&
+      calculation.netSendAmount <= 0
+    ) {
+      setError('مبلغ ارسال باید بیشتر از کارمزد باشد');
     }
-
-    if (calculatedFee > 0) {
-      received -= calculatedFee;
-    }
-
-    if (received < 0) {
-      received = 0;
-    }
-
-    setReceiveAmount(parseFloat(received.toFixed(4)));
   }, [amount, selectedExchange, rates]);
 
   // Helper function to get currency unit
@@ -863,7 +791,20 @@ function ExchangePage({
               </div>
               {selectedExchange === 'sell_lira' && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mt-2 text-xs text-yellow-700">
-                  <p>💡 در این جفت‌ارز، کارمزد ثابت ۸۰ TL از مبلغ دریافتی کسر می‌شود.</p>
+                  <p>✅ برای تراکنش های زیر 5000 لیر کارمزد ثابت ۸۰ TL از مبلغ دریافتی کسر می‌شود.</p>
+                </div>
+              )}
+              {selectedExchange === 'buy_lira' && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mt-2 text-xs text-yellow-700">
+                  <p>✅ برای تراکنش های زیر 15,000,000 تومان کارمزد ثابت ۸۰ TL از مبلغ دریافتی کسر می‌شود.</p>
+                </div>
+              )}
+              {(selectedExchange === 'convert_usdt_to_lira' || selectedExchange === 'sell_usdt') && (
+                <div className="flex justify-between items-center text-sm mt-1">
+                  <span className="text-gray-600">مبلغ خالص پس از کارمزد:</span>
+                  <span className="font-semibold text-purple-600">
+                    {(Math.max(numericAmount - fee, 0)).toLocaleString('fa-IR')} USDT
+                  </span>
                 </div>
               )}
               <div className="flex justify-between items-center text-sm mt-1">
@@ -1717,14 +1658,23 @@ function LoginPage({
       return;
     }
 
-    await fetch(`${API_URL}/users/password-reset/start`, {
+    if (channel === 'bot') {
+      notifyMessage('در تلگرام به ربات پیام /resetpassword بدهید و شماره خود را با Share Contact ارسال کنید.');
+      return;
+    }
+
+    const response = await fetch(`${API_URL}/users/password-reset/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone_number: phoneNumber, channel }),
     });
 
-    setResetMode(channel);
-    notifyMessage(channel === 'bot' ? 'کد بازیابی در ربات ارسال شد.' : 'کد بازیابی پیامک شد.');
+    if (response.ok) {
+      setResetMode(channel);
+      notifyMessage('در صورت معتبر بودن شماره، کد بازیابی پیامک شد.');
+    } else {
+      setError('در ارسال درخواست بازیابی خطا رخ داد');
+    }
   };
 
   const completeReset = async () => {

@@ -220,11 +220,32 @@ class AdminSendMessageRequest(BaseModel):
     user_id: int | None = None
 
 
+def _admin_role(username: str, password: str) -> str | None:
+    admin_user = os.getenv("ADMIN_PANEL_USERNAME", "admin")
+    admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
+    support_user = os.getenv("SUPPORT_PANEL_USERNAME", "support")
+    support_pass = os.getenv("SUPPORT_PANEL_PASSWORD", "support123")
+    viewer_user = os.getenv("VIEWER_PANEL_USERNAME", "viewer")
+    viewer_pass = os.getenv("VIEWER_PANEL_PASSWORD", "viewer123")
+
+    if username == admin_user and password == admin_pass:
+        return "admin"
+    if username == support_user and password == support_pass:
+        return "support"
+    if username == viewer_user and password == viewer_pass:
+        return "viewer"
+    return None
+
+
+def _require_roles(username: str, password: str, allowed: set[str]) -> str:
+    role = _admin_role(username, password)
+    if role not in allowed:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return role
+
+
 def _is_admin(username: str, password: str) -> bool:
-    return (
-        username == os.getenv("ADMIN_PANEL_USERNAME", "admin")
-        and password == os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
-    )
+    return _admin_role(username, password) == "admin"
 
 
 def _write_admin_log(action: str, details: dict | None = None):
@@ -240,6 +261,50 @@ async def _send_text(chat_id: int, text: str):
     async with aiohttp.ClientSession() as session:
         await session.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
 
+
+
+
+def _normalize_iran_phone(phone: str) -> str:
+    digits = ''.join(ch for ch in phone if ch.isdigit())
+    if digits.startswith('98'):
+        return '0' + digits[2:]
+    if digits.startswith('0098'):
+        return '0' + digits[4:]
+    return digits
+
+
+async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str]:
+    api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
+    line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
+    if not api_key:
+        return (False, "missing_ghasedak_api_key")
+
+    payload = {
+        "receptor": phone_number,
+        "message": message,
+    }
+    if line_number:
+        payload["linenumber"] = line_number
+
+    headers = {
+        "apikey": api_key,
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.ghasedak.me/v2/sms/send/simple",
+                data=payload,
+                headers=headers,
+                timeout=10,
+            ) as resp:
+                body = await resp.text()
+                logger.info("Ghasedak response status=%s body=%s", resp.status, body[:500])
+                return (resp.status == 200, body)
+    except Exception as exc:
+        logger.error("Ghasedak send failed: %s", exc)
+        return (False, str(exc))
 
 async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 6):
     headers = {
@@ -446,16 +511,16 @@ async def verify_mobile_with_ehraz(req: EhrazMobileRequest):
 
 @router.post("/admin/login")
 async def admin_login(req: AdminCredentials):
-    if not _is_admin(req.username, req.password):
+    role = _admin_role(req.username, req.password)
+    if not role:
         raise HTTPException(status_code=401, detail="invalid_admin_credentials")
-    _write_admin_log("admin_login", {"username": req.username})
-    return {"status": "success"}
+    _write_admin_log("admin_login", {"username": req.username, "role": role})
+    return {"status": "success", "role": role}
 
 
 @router.get("/admin/users")
 async def admin_users(username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, first_name, last_name, phone_number, national_id, dob, bank_card_number, kyc_status, verification_level
@@ -466,8 +531,7 @@ async def admin_users(username: str, password: str):
 
 @router.delete("/admin/users/{user_id}")
 async def admin_delete_user(user_id: int, username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin"})
     with get_db() as conn:
         conn.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -477,8 +541,7 @@ async def admin_delete_user(user_id: int, username: str, password: str):
 
 @router.get("/admin/faqs")
 async def admin_get_faqs(username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         rows = conn.execute("SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC").fetchall()
     return {"faqs": [dict(row) for row in rows]}
@@ -486,8 +549,7 @@ async def admin_get_faqs(username: str, password: str):
 
 @router.post("/admin/faqs")
 async def admin_add_faq(req: FaqRequest):
-    if not _is_admin(req.username, req.password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(req.username, req.password, {"admin", "support"})
     with get_db() as conn:
         conn.execute("INSERT INTO faqs (question, answer) VALUES (?, ?)", (req.question, req.answer))
     _write_admin_log("add_faq", {"question": req.question})
@@ -496,8 +558,7 @@ async def admin_add_faq(req: FaqRequest):
 
 @router.delete("/admin/faqs/{faq_id}")
 async def admin_delete_faq(faq_id: int, username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support"})
     with get_db() as conn:
         conn.execute("DELETE FROM faqs WHERE id = ?", (faq_id,))
     _write_admin_log("delete_faq", {"faq_id": faq_id})
@@ -506,8 +567,7 @@ async def admin_delete_faq(faq_id: int, username: str, password: str):
 
 @router.get("/admin/logs")
 async def admin_logs(username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         rows = conn.execute("SELECT id, action, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 300").fetchall()
     return {"logs": [dict(row) for row in rows]}
@@ -515,8 +575,7 @@ async def admin_logs(username: str, password: str):
 
 @router.post("/admin/users/{user_id}/reset-password")
 async def admin_reset_user_password(user_id: int, req: AdminResetPasswordRequest):
-    if not _is_admin(req.username, req.password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(req.username, req.password, {"admin", "support"})
     with get_db() as conn:
         row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row:
@@ -531,26 +590,42 @@ async def start_password_reset(req: PasswordResetStartRequest):
     if req.channel not in {"bot", "sms"}:
         raise HTTPException(status_code=400, detail="invalid_channel")
 
-    with get_db() as conn:
-        user = conn.execute("SELECT id, phone_number FROM users WHERE phone_number = ?", (req.phone_number,)).fetchone()
-        if not user:
-            raise HTTPException(status_code=404, detail="user_not_found")
+    normalized_phone = _normalize_iran_phone(req.phone_number)
 
-        code = str(random.randint(100000, 999999))
-        expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
-        conn.execute(
-            "INSERT INTO password_reset_tokens (phone_number, channel, code, expires_at) VALUES (?, ?, ?, ?)",
-            (req.phone_number, req.channel, code, expires_at),
+    with get_db() as conn:
+        # generic behavior: do not leak user existence
+        user = conn.execute("SELECT id, phone_number FROM users WHERE phone_number = ?", (normalized_phone,)).fetchone()
+
+        if user:
+            recent_count = conn.execute(
+                """SELECT COUNT(*) AS cnt FROM password_reset_tokens
+                   WHERE phone_number = ? AND created_at >= datetime('now', '-5 minutes')""",
+                (normalized_phone,),
+            ).fetchone()["cnt"]
+            if recent_count >= 5:
+                logger.warning("password reset rate limited for %s", normalized_phone)
+                return {"status": "sent"}
+
+            code = str(random.randint(100000, 999999))
+            expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+            conn.execute(
+                "INSERT INTO password_reset_tokens (phone_number, channel, code, expires_at) VALUES (?, ?, ?, ?)",
+                (normalized_phone, req.channel, code, expires_at),
+            )
+        else:
+            code = None
+
+    if req.channel == "sms" and user and code:
+        ok, response_text = await _send_ghasedak_sms(
+            normalized_phone,
+            f"کد بازیابی رمز عبور: {code} (اعتبار: 10 دقیقه)",
+        )
+        _write_admin_log(
+            "password_reset_sms",
+            {"phone": normalized_phone, "success": ok, "provider_response": response_text[:300]},
         )
 
-    if req.channel == "bot":
-        try:
-            await _send_text(user["id"], f"کد بازیابی رمز عبور شما: {code}\nاین کد ۱۰ دقیقه اعتبار دارد.")
-        except Exception as exc:
-            logger.error("failed to send bot reset code: %s", exc)
-    else:
-        logger.info("SMS reset code for %s: %s", req.phone_number, code)
-
+    # For bot channel the reset is handled inside Telegram bot conversation (/resetpassword)
     return {"status": "sent"}
 
 
@@ -579,8 +654,7 @@ async def complete_password_reset(req: PasswordResetCompleteRequest):
 
 @router.post("/admin/messages/send")
 async def admin_send_message(req: AdminSendMessageRequest):
-    if not _is_admin(req.username, req.password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(req.username, req.password, {"admin", "support"})
 
     with get_db() as conn:
         if req.user_id:
