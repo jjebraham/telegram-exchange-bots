@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Fee Calculation</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            direction: rtl;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .test-case {
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f9f9f9;
+        }
+        .passed {
+            border-color: #4CAF50;
+            background: #f0fff0;
+        }
+        .failed {
+            border-color: #f44336;
+            background: #fff0f0;
+        }
+        .result {
+            font-weight: bold;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 تست محاسبه کارمزد</h1>
+    <p>این صفحه محاسبه کارمزد ۸۰ TL برای مبادلات کمتر از ۱۵,۰۰۰,۰۰۰ تومان را تست می‌کند.</p>
+    
+    <div id="tests"></div>
+    
+    <script>
+        // Test cases
+        const testCases = [
+            {
+                amount: 10000000, // 10,000,000 TOMAN
+                rate: 3820, // TOMAN to TL rate
+                expected: 2537, // Expected TL after 80 TL fee
+                description: "۱۰,۰۰۰,۰۰۰ تومان با نرخ ۳۸۲۰"
+            },
+            {
+                amount: 5000000, // 5,000,000 TOMAN
+                rate: 3820,
+                expected: 1229, // (5,000,000 / 3820) - 80 = 1309 - 80 = 1229
+                description: "۵,۰۰۰,۰۰۰ تومان با نرخ ۳۸۲۰"
+            },
+            {
+                amount: 20000000, // 20,000,000 TOMAN (above threshold)
+                rate: 3820,
+                expected: 5236, // 20,000,000 / 3820 = 5236 (no fee)
+                description: "۲۰,۰۰۰,۰۰۰ تومان با نرخ ۳۸۲۰ (بدون کارمزد)"
+            },
+            {
+                amount: 14999999, // 14,999,999 TOMAN (just below threshold)
+                rate: 3820,
+                expected: 3845, // (14,999,999 / 3820) - 80 = 3925 - 80 = 3845
+                description: "۱۴,۹۹۹,۹۹۹ تومان با نرخ ۳۸۲۰ (کمتر از آستانه)"
+            },
+            {
+                amount: 15000000, // 15,000,000 TOMAN (at threshold)
+                rate: 3820,
+                expected: 3927, // 15,000,000 / 3820 = 3927 (no fee)
+                description: "۱۵,۰۰۰,۰۰۰ تومان با نرخ ۳۸۲۰ (در آستانه)"
+            }
+        ];
+
+        function calculateReceived(amount, rate) {
+            let received = amount / rate;
+            if (amount < 15000000) {
+                received = received - 80; // Apply 80 TL fee
+            }
+            return Math.round(received);
+        }
+
+        function runTests() {
+            const testsContainer = document.getElementById('tests');
+            let passed = 0;
+            let total = testCases.length;
+
+            testCases.forEach((test, index) => {
+                const result = calculateReceived(test.amount, test.rate);
+                const isPassed = result === test.expected;
+                
+                if (isPassed) passed++;
+
+                const testDiv = document.createElement('div');
+                testDiv.className = `test-case ${isPassed ? 'passed' : 'failed'}`;
+                
+                testDiv.innerHTML = `
+                    <h3>تست ${index + 1}: ${test.description}</h3>
+                    <p>مبلغ: ${test.amount.toLocaleString('fa-IR')} تومان</p>
+                    <p>نرخ: ${test.rate.toLocaleString('fa-IR')}</p>
+                    <p>محاسبه: ${test.amount.toLocaleString('fa-IR')} ÷ ${test.rate.toLocaleString('fa-IR')} ${test.amount < 15000000 ? '- 80 TL' : ''}</p>
+                    <p>نتیجه انتظاری: ${test.expected.toLocaleString('fa-IR')} TL</p>
+                    <p>نتیجه محاسبه شده: ${result.toLocaleString('fa-IR')} TL</p>
+                    <div class="result">${isPassed ? '✅ موفق' : '❌ ناموفق'}</div>
+                `;
+
+                testsContainer.appendChild(testDiv);
+            });
+
+            // Summary
+            const summary = document.createElement('div');
+            summary.className = 'test-case';
+            summary.style.backgroundColor = passed === total ? '#f0fff0' : '#fff0f0';
+            summary.innerHTML = `
+                <h2>نتیجه کلی</h2>
+                <p>${passed} از ${total} تست موفق بودند (${Math.round(passed/total*100)}%)</p>
+                ${passed === total ? '🎉 همه تست‌ها موفق بودند!' : '⚠️ برخی تست‌ها ناموفق بودند.'}
+            `;
+            testsContainer.appendChild(summary);
+        }
+
+        // Run tests when page loads
+        document.addEventListener('DOMContentLoaded', runTests);
+    </script>
+</body>
+</html>
