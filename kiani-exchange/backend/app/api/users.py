@@ -596,7 +596,7 @@ async def verify_with_ehraz(req: EhrazRequest):
     logger.info(f"EHRAZ verification request: {req.nationalCode}, {req.cardNumber[:6]}...")
     
     # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
+    USE_MOCK_EHRAZ = os.getenv("USE_MOCK_EHRAZ", "false").lower() == "true"
     
     if USE_MOCK_EHRAZ:
         logger.info("Using mock EHRAZ mode for testing")
@@ -631,7 +631,7 @@ async def verify_mobile_with_ehraz(req: EhrazMobileRequest):
     logger.info(f"EHRAZ mobile verification request: {req.nationalCode}, {req.mobileNumber}")
     
     # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
+    USE_MOCK_EHRAZ = os.getenv("USE_MOCK_EHRAZ", "false").lower() == "true"
     
     if USE_MOCK_EHRAZ:
         logger.info("Using mock EHRAZ mode for mobile verification testing")
@@ -706,6 +706,13 @@ async def admin_delete_user(user_id: int, username: str, password: str):
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     _write_admin_log("delete_user", {"user_id": user_id})
     return {"status": "deleted"}
+
+
+@router.get("/faqs")
+async def get_public_faqs():
+    with get_db() as conn:
+        rows = conn.execute("SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC").fetchall()
+    return {"faqs": [dict(row) for row in rows]}
 
 
 @router.get("/admin/faqs")

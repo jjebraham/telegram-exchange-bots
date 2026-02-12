@@ -35,9 +35,12 @@ interface Transaction {
   receive_amount: number;
   status: string;
   timestamp: string;
+  receipt_photo_url?: string;
+  receipt_description?: string;
+  payment_link?: string;
 }
 
-type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'admin';
+type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'faq' | 'admin';
 
 // ─── Helper Components ──────────────────────────────────────────────────────
 
@@ -251,7 +254,11 @@ function App() {
 
       const usdt_irr = data.rates.USDT_IRR;
       const usdt_try = data.rates.USDT_TRY;
-      setRates(deriveRates(usdt_irr, usdt_try));
+      if (data.derived_rates) {
+        setRates(data.derived_rates);
+      } else {
+        setRates(deriveRates(usdt_irr, usdt_try));
+      }
     } catch (error) {
       console.error('Rate fetch error:', error);
     } finally {
@@ -338,6 +345,7 @@ function App() {
           />
         )}
         {activeTab === 'history' && <HistoryPage />}
+        {activeTab === 'faq' && <FaqPage />}
       </main>
 
       {/* Bottom Navigation */}
@@ -360,6 +368,12 @@ function App() {
                 setActiveTab('history');
               }
             }}
+          />
+          <NavButton
+            label="FAQ"
+            icon="❓"
+            active={activeTab === 'faq'}
+            onClick={() => setActiveTab('faq')}
           />
           <NavButton
             label={user ? 'پروفایل' : 'ورود'}
@@ -1232,7 +1246,8 @@ function RegistrationPage({
       const mobileMatchData = await mobileMatchResponse.json();
       if (!mobileMatchData.matched) {
         incrementAttempts();
-        notifyMessage('شماره موبایل با کد ملی مطابقت ندارد یا به نام شما نیست.');
+        setErrors((prev) => ({ ...prev, phoneNumber: 'اطلاعات شماره موبایل با کد ملی شما همخوانی ندارد لطفا فقط شماره موبایل ثبت شده به نام خودتان را وارد کنید' }));
+        notifyMessage('اطلاعات شماره موبایل با کد ملی شما همخوانی ندارد لطفا فقط شماره موبایل ثبت شده به نام خودتان را وارد کنید');
         setSubmitting(false);
         clearInterval(progressTimer);
         setProgress(0);
@@ -1847,6 +1862,7 @@ function AdminPanelPage() {
   const [messageText, setMessageText] = useState('');
   const [targetUserId, setTargetUserId] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
+  const [rateAdjustments, setRateAdjustments] = useState<Record<string, number>>({ buy_lira: 0, sell_lira: 0, buy_usdt: 0, sell_usdt: 0, usdt_to_lira: 0, lira_to_usdt: 0 });
 
   const loadAll = async () => {
     const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
@@ -1862,6 +1878,11 @@ function AdminPanelPage() {
     setLogs((await l.json()).logs || []);
     setReport((await r.json()).report || null);
     setFaqs((await f.json()).faqs || []);
+    const ra = await fetch(`${API_URL}/admin/rates/adjustments?${qs}`);
+    if (ra.ok) {
+      const raData = await ra.json();
+      setRateAdjustments(raData.adjustments || {});
+    }
   };
 
   const login = async () => {
@@ -1890,6 +1911,21 @@ function AdminPanelPage() {
       <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Users ({users.length})</h3><div className="max-h-56 overflow-auto text-xs">{users.map((u) => <div key={u.id} className="border-b py-2"><div>#{u.id} | {u.first_name} {u.last_name} - {u.phone_number}</div><div>National ID: {u.national_id} | DOB: {u.dob} | Card: {u.bank_card_number}</div><div className="flex gap-2 mt-1"><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/users/${u.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete</button><button className="text-blue-600" onClick={async ()=>{ if(!newUserPassword){notifyMessage('رمز جدید را در کادر پایین وارد کنید');return;} await fetch(`${API_URL}/admin/users/${u.id}/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,new_password:newUserPassword})}); notifyMessage('رمز عبور کاربر تغییر کرد'); }}>Reset Password</button></div></div>)}</div><input className="border p-2 rounded w-full mt-2" placeholder="New password for reset action" value={newUserPassword} onChange={(e)=>setNewUserPassword(e.target.value)} /></div>
       <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Exchange Requests ({transactions.length})</h3><div className="max-h-56 overflow-auto text-xs">{transactions.slice(0, 100).map((t) => <div key={t.id} className="border-b py-1">#{t.reference_number} | {t.exchange_pair} | {t.status} | {t.user_name} ({t.user_phone})<div>Receipt: {t.receipt_photo_url || '-'} | Link: {t.payment_link || '-'}</div><div>{t.receipt_description || ''}</div></div>)}</div></div><div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">ارسال پیام دستی</h3><div className="flex gap-2"><input className="border p-2 rounded flex-1" placeholder="User ID (خالی = ارسال همگانی)" value={targetUserId} onChange={(e)=>setTargetUserId(e.target.value)} /><input className="border p-2 rounded flex-[2]" placeholder="متن پیام" value={messageText} onChange={(e)=>setMessageText(e.target.value)} /><button className="bg-purple-600 text-white px-3 rounded" onClick={async ()=>{const res=await fetch(`${API_URL}/admin/messages/send`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,message:messageText,user_id:targetUserId?Number(targetUserId):null})});const data=await res.json();notifyMessage(`ارسال شد: ${data.sent ?? 0}`);}}>Send</button></div></div>
       <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">FAQ ({faqs.length})</h3><div className="flex gap-2 mb-2"><input className="border p-2 rounded flex-1 text-xs" placeholder="سوال" value={faqQuestion} onChange={(e)=>setFaqQuestion(e.target.value)} /><input className="border p-2 rounded flex-1 text-xs" placeholder="پاسخ" value={faqAnswer} onChange={(e)=>setFaqAnswer(e.target.value)} /><button className="bg-blue-600 text-white px-2 rounded text-xs" onClick={async ()=>{await fetch(`${API_URL}/admin/faqs`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,question:faqQuestion,answer:faqAnswer})});setFaqQuestion('');setFaqAnswer('');loadAll();}}>Add</button></div><div className="max-h-40 overflow-auto text-xs">{faqs.map((f) => <div key={f.id} className="border-b py-1 flex justify-between"><span>{f.question}</span><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete</button></div>)}</div></div>
+      <div className="bg-white p-4 rounded-xl shadow">
+        <h3 className="font-bold mb-2">Rate adjustments (%)</h3>
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          {Object.keys(rateAdjustments).map((k) => (
+            <label key={k} className="flex items-center gap-2">
+              <span className="w-28">{k}</span>
+              <input type="number" className="border p-1 rounded w-full" value={rateAdjustments[k] ?? 0} onChange={(e) => setRateAdjustments((prev) => ({ ...prev, [k]: Number(e.target.value) }))} />
+            </label>
+          ))}
+        </div>
+        <button className="mt-3 bg-indigo-600 text-white px-3 py-1 rounded" onClick={async () => {
+          const res = await fetch(`${API_URL}/admin/rates/adjustments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, adjustments: rateAdjustments }) });
+          if (res.ok) notifyMessage('نرخ ها ذخیره شد'); else notifyMessage('خطا در ذخیره نرخ ها');
+        }}>Save rates</button>
+      </div>
       <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Logs ({logs.length})</h3><div className="max-h-40 overflow-auto text-xs">{logs.slice(0, 100).map((l) => <div key={l.id} className="border-b py-1">{l.created_at} - {l.action}</div>)}</div></div>
     </div>
   );
@@ -1900,6 +1936,9 @@ function AdminPanelPage() {
 function HistoryPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedRef, setExpandedRef] = useState<string | null>(null);
+  const [receiptDescription, setReceiptDescription] = useState('');
+  const [receiptDataUrl, setReceiptDataUrl] = useState('');
 
   useEffect(() => {
     fetchTransactions();
@@ -1920,102 +1959,67 @@ function HistoryPage() {
     }
   };
 
+  const uploadReceipt = async (reference: string) => {
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API_URL}/transactions/${reference}/receipt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ receipt_photo_url: receiptDataUrl || null, receipt_description: receiptDescription || null }),
+    });
+    if (res.ok) {
+      notifyMessage('رسید با موفقیت ثبت شد');
+      setReceiptDataUrl('');
+      setReceiptDescription('');
+      fetchTransactions();
+    } else {
+      notifyMessage('ثبت رسید ناموفق بود');
+    }
+  };
+
+  const cancelTx = async (reference: string) => {
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API_URL}/transactions/${reference}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      notifyMessage('سفارش لغو شد');
+      fetchTransactions();
+    } else {
+      notifyMessage('لغو سفارش انجام نشد');
+    }
+  };
+
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
       Pending: 'bg-yellow-100 text-yellow-700',
-      Approved: 'bg-green-100 text-green-700',
-      Expired: 'bg-gray-100 text-gray-700',
-      Canceled: 'bg-red-100 text-red-700',
-      'Canceled by User': 'bg-red-100 text-red-700',
-      'Canceled by Admin': 'bg-red-100 text-red-700',
-      'Under Review': 'bg-blue-100 text-blue-700',
-      'Under Process': 'bg-purple-100 text-purple-700',
-      'Waiting for User\'s Payment': 'bg-orange-100 text-orange-700',
-      'Waiting for Admin to Pay': 'bg-orange-100 text-orange-700',
       Done: 'bg-green-100 text-green-700',
       Rejected: 'bg-red-100 text-red-700',
+      'Canceled by User': 'bg-red-100 text-red-700',
+      'Canceled by Admin': 'bg-red-100 text-red-700',
     };
     return colors[status] || 'bg-gray-100 text-gray-700';
   };
 
-  const getStatusLabel = (status: string) => {
-    const labels: Record<string, string> = {
-      Pending: 'در انتظار',
-      Approved: 'تایید شده',
-      Expired: 'منقضی شده',
-      Canceled: 'لغو شده',
-      'Canceled by User': 'لغو شده توسط کاربر',
-      'Canceled by Admin': 'لغو شده توسط ادمین',
-      'Under Review': 'در حال بررسی',
-      'Under Process': 'در حال پردازش',
-      'Waiting for User\'s Payment': 'در انتظار پرداخت کاربر',
-      'Waiting for Admin to Pay': 'در انتظار پرداخت ادمین',
-      Done: 'انجام شده',
-      Rejected: 'رد شده',
-    };
-    return labels[status] || status;
-  };
+  return <div className="p-4"><h2 className="text-2xl font-bold text-gray-800 mb-4">تاریخچه تراکنش‌ها</h2>{loading ? <div className="text-center py-10">...</div> : <div className="space-y-3">{transactions.map((tx) => (<div key={tx.id} className="bg-white rounded-xl p-4 shadow-md"><button className="w-full text-right" onClick={() => setExpandedRef(expandedRef === tx.reference_number ? null : tx.reference_number)}><div className="flex justify-between items-start mb-3"><div><p className="font-semibold text-gray-800">{tx.exchange_pair}</p><p className="text-xs text-gray-500 mt-1">شماره پیگیری: {tx.reference_number}</p></div><span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(tx.status)}`}>{tx.status}</span></div></button>{expandedRef === tx.reference_number && <div className="border-t pt-3 mt-3 space-y-2"><button className="bg-red-600 text-white px-3 py-2 rounded text-sm" onClick={() => cancelTx(tx.reference_number)}>لغو سفارش</button><input type="file" accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setReceiptDataUrl(String(reader.result || '')); reader.readAsDataURL(file); }} /><input className="w-full border p-2 rounded text-sm" placeholder="توضیح رسید" value={receiptDescription} onChange={(e) => setReceiptDescription(e.target.value)} /><button className="bg-blue-600 text-white px-3 py-2 rounded text-sm" onClick={() => uploadReceipt(tx.reference_number)}>ثبت رسید</button></div>}<p className="text-xs text-gray-500 mt-3">{new Date(tx.timestamp).toLocaleString('fa-IR')}</p></div>))}</div>}</div>;
+}
+
+function FaqPage() {
+  const [faqs, setFaqs] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/faqs`).then((r) => r.json()).then((d) => setFaqs(d.faqs || [])).catch(() => setFaqs([]));
+  }, []);
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold text-gray-800 mb-4">
-        تاریخچه تراکنش‌ها
-      </h2>
-
-      {loading ? (
-        <div className="text-center py-10">
-          <div className="animate-spin w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full mx-auto"></div>
+    <div className="p-4 space-y-3">
+      <h2 className="text-2xl font-bold text-gray-800">FAQ</h2>
+      {faqs.map((f) => (
+        <div key={f.id} className="bg-white rounded-xl p-4 shadow">
+          <p className="font-bold text-sm mb-2">{f.question}</p>
+          <p className="text-sm text-gray-700">{f.answer}</p>
         </div>
-      ) : transactions.length === 0 ? (
-        <div className="bg-white rounded-2xl p-8 text-center shadow-lg">
-          <p className="text-gray-500">هنوز تراکنشی ثبت نشده است</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {transactions.map((tx) => (
-            <div key={tx.id} className="bg-white rounded-xl p-4 shadow-md">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <p className="font-semibold text-gray-800">
-                    {tx.exchange_pair}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    شماره پیگیری: {tx.reference_number}
-                  </p>
-                </div>
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(
-                    tx.status
-                  )}`}
-                >
-                  {getStatusLabel(tx.status)}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div>
-                  <span className="text-gray-600">مبلغ ارسال:</span>
-                  <p className="font-semibold">
-                    {tx.send_amount.toLocaleString('fa-IR')}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-gray-600">مبلغ دریافت:</span>
-                  <p className="font-semibold">
-                    {tx.receive_amount.toLocaleString('fa-IR')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <p className="text-xs text-gray-500">
-                  {new Date(tx.timestamp).toLocaleString('fa-IR')}
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      ))}
     </div>
   );
 }

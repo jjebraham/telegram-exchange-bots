@@ -52,6 +52,12 @@ class NotifyTransactionRequest(BaseModel):
 
 
 
+
+
+class UserReceiptUpdateRequest(BaseModel):
+    receipt_photo_url: Optional[str] = None
+    receipt_description: Optional[str] = None
+
 class StatusUpdateRequest(BaseModel):
     username: str
     password: str
@@ -348,3 +354,30 @@ async def admin_reports(username: str, password: str):
                FROM transactions"""
         ).fetchone()
     return {"report": dict(totals)}
+
+
+@router.post("/transactions/{reference_number}/receipt")
+async def update_transaction_receipt(
+    reference_number: str,
+    req: UserReceiptUpdateRequest,
+    user_id: int = Depends(get_current_user_id),
+):
+    with get_db() as conn:
+        transaction = conn.execute(
+            "SELECT id, status FROM transactions WHERE reference_number = ? AND user_id = ?",
+            (reference_number, user_id),
+        ).fetchone()
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+        conn.execute(
+            """UPDATE transactions
+               SET receipt_photo_url = COALESCE(?, receipt_photo_url),
+                   receipt_description = COALESCE(?, receipt_description),
+                   status_updated_at = ?
+               WHERE reference_number = ? AND user_id = ?""",
+            (req.receipt_photo_url, req.receipt_description, datetime.utcnow().isoformat(), reference_number, user_id),
+        )
+
+    await _notify_status_change(user_id, reference_number, "Receipt Uploaded by User")
+    return {"status": "success", "message": "Receipt updated"}

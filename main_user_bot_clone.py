@@ -76,6 +76,17 @@ async def log_to_admin(message: str):
         logging.error(f"Failed to log to admin: {e}")
         traceback.print_exc()
 
+
+
+def write_admin_panel_log(action: str, details: str):
+    try:
+        with get_db_connection() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS admin_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, details TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("INSERT INTO admin_logs(action, details) VALUES (?, ?)", (action, details[:1000]))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"failed admin panel log: {e}")
+
 class AdminLogMiddleware:
     async def __call__(self, handler, event, data):
         try:
@@ -95,6 +106,7 @@ class AdminLogMiddleware:
                 else:
                     action = "performed an interaction"
                 await log_to_admin(f"👤 User: {uid} ({uname})\n🔍 Action: {action}")
+                write_admin_panel_log("bot_user_interaction", f"uid={uid}; action={action}")
                 result = await handler(event, data)
                 if isinstance(result, types.Message) and result.text:
                     await log_to_admin(f"🤖 Bot response: {result.text}")
@@ -159,6 +171,28 @@ def init_db():
         ''')
         conn.commit()
     logging.debug("Database initialized for main bot.")
+
+
+
+def _get_rate_adjustments():
+    defaults = {"buy_lira":0.0,"sell_lira":0.0,"buy_usdt":0.0,"sell_usdt":0.0,"usdt_to_lira":0.0,"lira_to_usdt":0.0}
+    try:
+        with get_db_connection() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS rate_adjustments (pair_key TEXT PRIMARY KEY, percent REAL NOT NULL DEFAULT 0, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+            rows = conn.execute("SELECT pair_key, percent FROM rate_adjustments").fetchall()
+            for row in rows:
+                if row['pair_key'] in defaults:
+                    defaults[row['pair_key']] = float(row['percent'])
+    except Exception:
+        pass
+    return defaults
+
+def adjusted_rate(base: float, key: str, decimals: int = 0):
+    percent = _get_rate_adjustments().get(key, 0.0)
+    value = base * (1 + percent/100)
+    if decimals == 0:
+        return round_to_nearest_10(value)
+    return round(value, decimals)
 
 ###############################################################################
 # PRICE CACHE CLASS (with Wallex fallback)
@@ -395,7 +429,7 @@ class ResetPasswordState(StatesGroup):
 ###############################################################################
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="ثبت نام ✍️"), KeyboardButton(text="🚪 ورود")],
+        [KeyboardButton(text="🌐 مینی اپ"), KeyboardButton(text="ℹ️ راهنما")],
         [KeyboardButton(text="نرخ خرید لیر از ما\n🇮🇷 ➡️ 🇹🇷"), KeyboardButton(text="نرخ فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")],
         [KeyboardButton(text="نرخ خرید تتر از ما\n🇮🇷 ➡️ 💰"), KeyboardButton(text="نرخ فروش تتر به ما\n💰 ➡️ 🇮🇷")],
         [KeyboardButton(text="نرخ تبدیل لیر به تتر\n🇹🇷 ➡️ 💰"), KeyboardButton(text="نرخ تبدیل تتر به لیر\n💰 ➡️ 🇹🇷")],
@@ -655,7 +689,9 @@ async def finish_registration_info(message: types.Message, state: FSMContext):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("به صرافی کیانی خوش آمدید.\nبرای شروع ثبت نام کنید یا وارد حساب کاربری شوید.", reply_markup=main_menu)
+    await message.answer("به صرافی کیانی خوش آمدید.\nبرای ثبت‌نام و ورود فقط از مینی‌اپ استفاده کنید.", reply_markup=main_menu)
+    await log_to_admin("🤖 Bot response: به صرافی کیانی خوش آمدید. برای ثبت‌نام و ورود فقط از مینی‌اپ استفاده کنید.")
+    write_admin_panel_log("bot_response", "/start response sent")
 
 
 @dp.message(Command("cancel"))
@@ -680,12 +716,12 @@ async def cmd_rates(message: types.Message):
     eff_toman = usdt_irr / 10
     
     # Calculate all rates
-    buy_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
-    sell_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
-    buy_usdt_rate = round_to_nearest_10(eff_toman * 1.01)
-    sell_usdt_rate = round_to_nearest_10(eff_toman * 0.99)
-    lira_to_usdt_rate = round(usdt_try * 1.02, 2)
-    usdt_to_lira_rate = round(usdt_try * 0.98, 2)
+    buy_lira_rate = adjusted_rate((eff_toman / usdt_try) * 1.02, "buy_lira")
+    sell_lira_rate = adjusted_rate((eff_toman / usdt_try) * 0.97, "sell_lira")
+    buy_usdt_rate = adjusted_rate(eff_toman * 1.01, "buy_usdt")
+    sell_usdt_rate = adjusted_rate(eff_toman * 0.99, "sell_usdt")
+    lira_to_usdt_rate = adjusted_rate(usdt_try * 1.02, "lira_to_usdt", 2)
+    usdt_to_lira_rate = adjusted_rate(usdt_try * 0.98, "usdt_to_lira", 2)
     
     rates_text = (
         "💰 **نرخ‌های فعلی صرافی کیانی:**\n\n"
@@ -791,6 +827,8 @@ async def cmd_reset_password(message: types.Message, state: FSMContext):
         "برای بازیابی رمز عبور، شماره موبایل ثبت‌شده را با دکمه Share Contact ارسال کنید.",
         reply_markup=kb,
     )
+    await log_to_admin("🤖 Bot response: برای بازیابی رمز عبور، شماره موبایل ثبت‌شده را با دکمه Share Contact ارسال کنید.")
+    write_admin_panel_log("bot_response", "/resetpassword response sent")
 
 
 @dp.message(ResetPasswordState.wait_contact, F.contact)
@@ -874,6 +912,16 @@ async def reset_password_pass2(message: types.Message, state: FSMContext):
 ###############################################################################
 # REGISTRATION FLOW
 ###############################################################################
+
+
+@dp.message(F.text=="🌐 مینی اپ")
+async def mini_app_redirect(message: types.Message):
+    await message.answer("برای ثبت‌نام و ورود، مینی‌اپ را از منوی تلگرام باز کنید.")
+
+
+@dp.message(F.text=="ℹ️ راهنما")
+async def help_redirect(message: types.Message):
+    await message.answer("برای مشاهده نرخ‌ها /rates و برای بازیابی رمز /resetpassword را ارسال کنید.")
 @dp.message(F.text=="ثبت نام ✍️")
 async def register_start(message: types.Message, state: FSMContext):
     await state.set_state(RegisterState.first_name)
@@ -1159,7 +1207,7 @@ async def buy_lira_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
+    rate = adjusted_rate((eff_toman / usdt_try) * 1.02, "buy_lira")
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "buy_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1175,7 +1223,7 @@ async def main_menu_buy_lira_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
+    rate = adjusted_rate((eff_toman / usdt_try) * 1.02, "buy_lira")
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
@@ -1188,7 +1236,7 @@ async def sell_lira_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+    rate = adjusted_rate((eff_toman / usdt_try) * 0.97, "sell_lira")
     await message.answer(f"هر واحد لیر ترکیه ��🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "sell_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1204,7 +1252,7 @@ async def main_menu_sell_lira_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+    rate = adjusted_rate((eff_toman / usdt_try) * 0.97, "sell_lira")
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 
@@ -1218,7 +1266,7 @@ async def buy_tether_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10(eff_toman * 1.01)
+    rate = adjusted_rate(eff_toman * 1.01, "buy_usdt")
     await message.answer(f"هر واحد تتر 💰 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     await message.answer("لطفاً وجه را از حساب خودتان واریز کنید و قبل از واریز هماهنگ کنید.")
     await message.answer(
@@ -1240,7 +1288,7 @@ async def main_menu_buy_tether_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10(eff_toman * 1.01)
+    rate = adjusted_rate(eff_toman * 1.01, "buy_usdt")
     await message.answer(f"هر واحد تتر 💰 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش تتر به ما\n💰 ➡️ 🇮🇷")
@@ -1252,7 +1300,7 @@ async def sell_tether_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10(eff_toman * 0.99)
+    rate = adjusted_rate(eff_toman * 0.99, "sell_usdt")
     await message.answer(f"هر واحد تتر 💰 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="TRC20", callback_data="trc20_selltether"),
@@ -1269,7 +1317,7 @@ async def main_menu_sell_tether_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10(eff_toman * 0.99)
+    rate = adjusted_rate(eff_toman * 0.99, "sell_usdt")
     await message.answer(f"هر واحد تتر 💰 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 
@@ -1293,7 +1341,7 @@ async def lira_to_tether_user(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = usdt_try * 1.02
+    rate = adjusted_rate(usdt_try * 1.02, "lira_to_usdt", 2)
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل لیر به تتر)", parse_mode="Markdown")
     await message.answer("لطفاً قبل از واریز هماهنگ کنید.")
     await message.answer(
@@ -1312,7 +1360,7 @@ async def main_menu_lira_to_tether_rate(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = usdt_try * 1.02
+    rate = adjusted_rate(usdt_try * 1.02, "lira_to_usdt", 2)
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل لیر به تتر)", parse_mode="Markdown")
 
 
@@ -1324,7 +1372,7 @@ async def tether_to_lira_user(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = usdt_try * 0.98
+    rate = adjusted_rate(usdt_try * 0.98, "usdt_to_lira", 2)
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل تتر به لیر)", parse_mode="Markdown")
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="TRC20", callback_data="trc20_tether2lira"),
@@ -1340,7 +1388,7 @@ async def main_menu_tether_to_lira_rate(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = usdt_try * 0.98
+    rate = adjusted_rate(usdt_try * 0.98, "usdt_to_lira", 2)
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل تتر به لیر)", parse_mode="Markdown")
 
 
