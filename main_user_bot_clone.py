@@ -31,6 +31,9 @@ ADMIN_BOT_TOKEN  = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
 ADMIN_CHAT_ID    = 2043363119
 PROXY_URL        = "http://jjebraham-25:Amir1234@p.webshare.io:80"
 
+# Import BotCommand for command registration
+from aiogram.types import BotCommand
+
 # WALLEX CONFIG
 WALLEX_API_KEY  = "15064|7tVDd4NDBYmATAe4lWTUQSTzj0v7ceTELEv6u6zG"
 WALLEX_BASE_URL = "https://api.wallex.ir/v1"
@@ -116,7 +119,9 @@ class AdminLogMiddleware:
 # DATABASE FUNCTIONS
 ###############################################################################
 def get_db_connection():
-    conn = sqlite3.connect("users.db", check_same_thread=False)
+    # Use the same database as the backend
+    db_path = "/home/kianirad2020/telegram_bot_repo/kiani-exchange/backend/users.db"
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -657,6 +662,121 @@ async def cmd_start(message: types.Message, state: FSMContext):
 async def cmd_cancel_any(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("عملیات لغو شد.", reply_markup=main_menu)
+
+@dp.message(Command("rates"))
+async def cmd_rates(message: types.Message):
+    """Show current exchange rates"""
+    wait_msg = await message.answer("در حال دریافت آخرین نرخ‌ها... ⏳")
+    
+    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    
+    await wait_msg.delete()
+    
+    if not usdt_irr or not usdt_try:
+        await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
+        return
+    
+    eff_toman = usdt_irr / 10
+    
+    # Calculate all rates
+    buy_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
+    sell_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+    buy_usdt_rate = round_to_nearest_10(eff_toman * 1.01)
+    sell_usdt_rate = round_to_nearest_10(eff_toman * 0.99)
+    lira_to_usdt_rate = round(usdt_try * 1.02, 2)
+    usdt_to_lira_rate = round(usdt_try * 0.98, 2)
+    
+    rates_text = (
+        "💰 **نرخ‌های فعلی صرافی کیانی:**\n\n"
+        f"🇮🇷 ➡️ 🇹🇷 خرید لیر: **{buy_lira_rate:,}** تومان\n"
+        f"🇹🇷 ➡️ 🇮🇷 فروش لیر: **{sell_lira_rate:,}** تومان\n"
+        f"🇮🇷 ➡️ 💰 خرید تتر: **{buy_usdt_rate:,}** تومان\n"
+        f"💰 ➡️ 🇮🇷 فروش تتر: **{sell_usdt_rate:,}** تومان\n"
+        f"🇹🇷 ➡️ 💰 تبدیل لیر به تتر: **{lira_to_usdt_rate}** لیر\n"
+        f"💰 ➡️ 🇹🇷 تبدیل تتر به لیر: **{usdt_to_lira_rate}** لیر\n\n"
+        "📊 *آخرین بروزرسانی: همین لحظه*"
+    )
+    
+    await message.answer(rates_text, parse_mode="Markdown")
+
+@dp.message(Command("balance"))
+async def cmd_balance(message: types.Message):
+    """Show user balance"""
+    user_id = message.from_user.id
+    
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        # Check if user exists
+        user = c.execute("SELECT id, first_name, last_name FROM users WHERE id=?", (user_id,)).fetchone()
+        
+        if not user:
+            await message.answer("شما ثبت نام نکرده‌اید. لطفاً ابتدا ثبت نام کنید.")
+            return
+        
+        # Get user balances (placeholder - need transactions table)
+        # For now, show user info
+        full_name = f"{user['first_name']} {user['last_name']}"
+        
+        balance_text = (
+            f"👤 **اطلاعات حساب:** {full_name}\n"
+            f"🆔 **کد کاربری:** {user_id}\n\n"
+            "💰 **موجودی‌ها:**\n"
+            "💎 تتر: 0.00 USDT\n"
+            "🇹🇷 لیر: 0.00 TRY\n"
+            "🇮🇷 تومان: 0 تومان\n\n"
+            "📝 *سیستم تراکنش در حال توسعه است*"
+        )
+        
+        await message.answer(balance_text, parse_mode="Markdown")
+
+@dp.message(Command("history"))
+async def cmd_history(message: types.Message):
+    """Show transaction history"""
+    user_id = message.from_user.id
+    
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        user = c.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
+        
+        if not user:
+            await message.answer("شما ثبت نام نکرده‌اید. لطفاً ابتدا ثبت نام کنید.")
+            return
+    
+    history_text = (
+        "📜 **تاریخچه تراکنش‌ها**\n\n"
+        "🕒 **آخرین تراکنش‌ها:**\n"
+        "• در حال حاضر تراکنشی ثبت نشده است.\n\n"
+        "📊 **آمار کلی:**\n"
+        "✅ تراکنش‌های موفق: 0\n"
+        "❌ تراکنش‌های ناموفق: 0\n"
+        "💰 مجموع مبادلات: 0 تومان\n\n"
+        "📝 *سیستم تراکنش در حال توسعه است*"
+    )
+    
+    await message.answer(history_text, parse_mode="Markdown")
+
+@dp.message(Command("support"))
+async def cmd_support(message: types.Message):
+    """Show support contact information"""
+    support_text = (
+        "📞 **تماس با پشتیبانی**\n\n"
+        "🕒 **ساعات کاری:**\n"
+        "شنبه تا پنجشنبه: ۹ صبح تا ۹ شب\n"
+        "جمعه: ۱۰ صبح تا ۶ عصر\n\n"
+        "📱 **روش‌های ارتباطی:**\n"
+        "• تلگرام: @TL905411603664\n"
+        "• تلفن: ۰۹۱۲۱۹۵۸۲۹۶\n"
+        "• ایمیل: support@kiani-exchange.com\n\n"
+        "📍 **آدرس دفتر:**\n"
+        "تهران، خیابان ولیعصر\n\n"
+        "⚠️ **توجه:**\n"
+        "• برای امنیت بیشتر، از ارسال اطلاعات حساس در چت عمومی خودداری کنید.\n"
+        "• پشتیبانی فقط از طریق کانال‌های رسمی پاسخگو است.\n"
+        "• زمان پاسخگویی معمولاً کمتر از ۱ ساعت است."
+    )
+    
+    await message.answer(support_text, parse_mode="Markdown")
 
 
 @dp.message(Command("resetpassword"))
@@ -1420,11 +1540,26 @@ async def contact_us_cmd(message: types.Message):
 ###############################################################################
 # BOT STARTUP
 ###############################################################################
+async def set_bot_commands():
+    """Set the bot commands menu in Telegram"""
+    commands = [
+        BotCommand(command="start", description="منوی اصلی"),
+        BotCommand(command="resetpassword", description="بازیابی رمز عبور"),
+        BotCommand(command="rates", description="نرخ‌های فعلی"),
+        BotCommand(command="balance", description="موجودی حساب"),
+        BotCommand(command="history", description="تاریخچه تراکنش‌ها"),
+        BotCommand(command="support", description="تماس با پشتیبانی"),
+    ]
+    await bot.set_my_commands(commands)
+
 async def main():
     init_db()
     logging.debug("Starting MAIN user bot…")
     dp.message.middleware.register(AdminLogMiddleware())
     dp.callback_query.middleware.register(AdminLogMiddleware())
+    
+    # Set bot commands
+    await set_bot_commands()
     
     # Start background tasks
     kyc_task = asyncio.create_task(check_kyc_loop())

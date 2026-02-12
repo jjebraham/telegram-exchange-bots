@@ -4,6 +4,7 @@ import random
 import logging
 import os
 import json
+import time
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -272,37 +273,135 @@ def _normalize_iran_phone(phone: str) -> str:
 
 
 async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str]:
+    """
+    Send SMS via Ghasedak API using proxy rotation.
+    First tries template API, falls back to simple SMS.
+    """
     api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
+    template_name = os.getenv("GHASEDAK_TEMPLATE_NAME", "").strip()
     line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
+    
     if not api_key:
         return (False, "missing_ghasedak_api_key")
-
-    payload = {
+    
+    # Try template API first (with template name now configured)
+    if template_name:
+        # Extract OTP code from message (looking for 6-digit code)
+        import re
+        otp_match = re.search(r'\b(\d{6})\b', message)
+        otp_code = otp_match.group(1) if otp_match else "000000"
+        
+        # Create payload for template API
+        payload = {
+            "receptors": [{
+                "mobile": phone_number,
+                "clientReferenceId": f"reset_{int(time.time())}_{phone_number[-4:]}"
+            }],
+            "templateName": template_name,
+            "param1": otp_code,
+            "param2": "",
+            "param3": "",
+            "param4": "",
+            "param5": "",
+            "param6": "",
+            "param7": "",
+            "param8": "",
+            "param9": "",
+            "param10": "",
+            "isVoice": False,
+            "udh": False
+        }
+        
+        headers = {
+            "accept": "text/plain",
+            "ApiKey": api_key,
+            "Content-Type": "application/json",
+        }
+        
+        # Try template API with proxy rotation (3 attempts like EHRAZ)
+        for attempt in range(3):
+            proxy_url = get_random_proxy()
+            try:
+                logger.info(f"Ghasedak template attempt {attempt + 1} with proxy: {proxy_url}")
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "https://gateway.ghasedak.me/rest/api/v1/WebService/SendOtpWithParams",
+                        json=payload,
+                        headers=headers,
+                        proxy=proxy_url,
+                        timeout=10,
+                    ) as resp:
+                        body = await resp.text()
+                        logger.info("Ghasedak template response status=%s body=%s", resp.status, body[:500])
+                        
+                        # Parse JSON response
+                        try:
+                            response_json = json.loads(body)
+                            # Check for success (different response formats possible)
+                            is_success = (
+                                response_json.get("isSuccess") == True or
+                                response_json.get("IsSuccess") == True or
+                                response_json.get("statusCode") == 200 or
+                                response_json.get("StatusCode") == 200
+                            )
+                            if is_success:
+                                return (True, body)
+                            else:
+                                logger.warning(f"Ghasedak template API failed (attempt {attempt + 1}): {body}")
+                                continue  # Try next proxy
+                        except json.JSONDecodeError:
+                            # If not JSON, check HTTP status
+                            if resp.status == 200:
+                                return (True, body)
+                            else:
+                                logger.warning(f"Ghasedak template API non-JSON response (attempt {attempt + 1}): {body}")
+                                continue  # Try next proxy
+            except Exception as exc:
+                logger.warning(f"Ghasedak template attempt {attempt + 1} exception: {exc}")
+                continue  # Try next proxy
+        
+        logger.warning("All Ghasedak template attempts failed, falling back to simple SMS")
+    
+    # Fallback to simple SMS method (either template not configured or all template attempts failed)
+    # Simple SMS payload
+    simple_payload = {
         "receptor": phone_number,
         "message": message,
     }
     if line_number:
-        payload["linenumber"] = line_number
-
-    headers = {
+        simple_payload["linenumber"] = line_number
+    
+    simple_headers = {
         "apikey": api_key,
         "Content-Type": "application/x-www-form-urlencoded",
     }
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.ghasedak.me/v2/sms/send/simple",
-                data=payload,
-                headers=headers,
-                timeout=10,
-            ) as resp:
-                body = await resp.text()
-                logger.info("Ghasedak response status=%s body=%s", resp.status, body[:500])
-                return (resp.status == 200, body)
-    except Exception as exc:
-        logger.error("Ghasedak send failed: %s", exc)
-        return (False, str(exc))
+    
+    # Try simple SMS with proxy rotation (3 attempts)
+    for attempt in range(3):
+        proxy_url = get_random_proxy()
+        try:
+            logger.info(f"Ghasedak simple SMS attempt {attempt + 1} with proxy: {proxy_url}")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.ghasedak.me/v2/sms/send/simple",
+                    data=simple_payload,
+                    headers=simple_headers,
+                    proxy=proxy_url,
+                    timeout=10,
+                ) as resp:
+                    body = await resp.text()
+                    logger.info("Ghasedak simple SMS response status=%s body=%s", resp.status, body[:500])
+                    if resp.status == 200:
+                        return (True, body)
+                    else:
+                        logger.warning(f"Ghasedak simple SMS failed with status {resp.status} (attempt {attempt + 1}): {body}")
+                        continue  # Try next proxy
+        except Exception as exc:
+            logger.warning(f"Ghasedak simple SMS attempt {attempt + 1} exception: {exc}")
+            continue  # Try next proxy
+    
+    logger.error("All Ghasedak SMS attempts failed")
+    return (False, "all_attempts_failed")
 
 async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
     headers = {
@@ -686,10 +785,12 @@ async def start_password_reset(req: PasswordResetStartRequest):
             code = None
 
     if req.channel == "sms" and user and code:
+        # Send real SMS via Ghasedak API
         ok, response_text = await _send_ghasedak_sms(
             normalized_phone,
             f"کد بازیابی رمز عبور: {code} (اعتبار: 10 دقیقه)",
         )
+        
         _write_admin_log(
             "password_reset_sms",
             {"phone": normalized_phone, "success": ok, "provider_response": response_text[:300]},
