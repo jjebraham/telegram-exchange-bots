@@ -219,18 +219,44 @@ class PriceCache:
 
     async def fetch_usdt_try(self) -> float:
         btcturk_url = "https://api.btcturk.com/api/v2/ticker?pairSymbol=USDTTRY"
-        logging.debug(f"Fetching USDT-TRY: {btcturk_url}")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://www.btcturk.com",
+            "Referer": "https://www.btcturk.com/",
+        }
+        
+        # Try with proxy first
+        logging.debug(f"Fetching USDT-TRY (with proxy): {btcturk_url}")
         try:
             async with aiohttp.ClientSession() as sess:
-                async with sess.get(btcturk_url, proxy=PROXY_URL, timeout=10) as resp:
+                async with sess.get(btcturk_url, headers=headers, proxy=PROXY_URL, timeout=10) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
                     arr = data.get("data", [])
                     if arr:
                         lastp = arr[0].get("last")
+                        logging.debug(f"USDT-TRY rate (via proxy): {lastp}")
                         return float(lastp)
         except Exception as e:
-            logging.error(f"Exception fetching USDT-TRY: {e}")
+            logging.warning(f"Failed to fetch USDT-TRY via proxy: {e}")
+            
+            # Try direct connection as fallback
+            logging.debug(f"Fetching USDT-TRY (direct): {btcturk_url}")
+            try:
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(btcturk_url, headers=headers, timeout=10) as resp:
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        arr = data.get("data", [])
+                        if arr:
+                            lastp = arr[0].get("last")
+                            logging.debug(f"USDT-TRY rate (direct): {lastp}")
+                            return float(lastp)
+            except Exception as e2:
+                logging.error(f"Failed to fetch USDT-TRY direct: {e2}")
+                
         return None
 
     async def get_usdt_irr(self) -> float:
@@ -306,9 +332,69 @@ async def match_card_with_national(card_number: str, national_id: str, dob: str)
                 if resp.status != 200:
                     return False
                 data = await resp.json()
-                return bool(data.get("matched", False))
+                
+                # Handle different EHRAZ response formats
+                # Format 1: {"matched": true/false}
+                if "matched" in data:
+                    return bool(data.get("matched", False))
+                # Format 2: {"code": "0", "MessageFromCore": {...}}
+                elif "code" in data and "MessageFromCore" in data:
+                    message_core = data.get("MessageFromCore", {})
+                    if message_core.get("code") == "card.not_valid":
+                        logging.warning(f"EHRAZ card validation failed: {message_core.get('message')}")
+                        return False
+                    else:
+                        # Other MessageFromCore codes might indicate success
+                        logging.info(f"EHRAZ MessageFromCore: {message_core}")
+                        return True
+                # Unknown format
+                else:
+                    logging.warning(f"EHRAZ unknown response format: {data}")
+                    return False
     except Exception as e:
         logging.error(f"Error calling EHRAZ: {e}")
+        return False
+
+async def match_mobile_with_national(mobile_number: str, national_id: str) -> bool:
+    """Verify if mobile number matches national ID using EHRAZ API"""
+    url = "https://ehraz.io/api/v1/match/national-with-mobile"
+    headers = {
+        "Authorization": "Token 5942b9d62abc20405dadfb2c0f546b669cf1471c",
+        "Content-Type": "application/json"
+    }
+    proxy_url_for_sync = PROXY_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={
+                "nationalCode": national_id,
+                "mobileNumber": mobile_number
+            }, headers=headers, proxy=proxy_url_for_sync, timeout=20) as resp:
+                text = await resp.text()
+                logging.debug(f"EHRAZ mobile verification response (status {resp.status}): {text}")
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
+                
+                # Handle different EHRAZ response formats
+                # Format 1: {"matched": true/false}
+                if "matched" in data:
+                    return bool(data.get("matched", False))
+                # Format 2: {"code": "0", "MessageFromCore": {...}}
+                elif "code" in data and "MessageFromCore" in data:
+                    message_core = data.get("MessageFromCore", {})
+                    if message_core.get("code") == "card.not_valid" or message_core.get("code") == "national.not_valid":
+                        logging.warning(f"EHRAZ mobile validation failed: {message_core.get('message')}")
+                        return False
+                    else:
+                        # Other MessageFromCore codes might indicate success
+                        logging.info(f"EHRAZ MessageFromCore: {message_core}")
+                        return True
+                # Unknown format
+                else:
+                    logging.warning(f"EHRAZ unknown response format: {data}")
+                    return False
+    except Exception as e:
+        logging.error(f"Error calling EHRAZ for mobile verification: {e}")
         return False
 
 ###############################################################################
@@ -817,6 +903,16 @@ async def register_nid(message: types.Message, state: FSMContext):
     if not is_valid_national_id(nid):
         await message.answer("شماره ملی نامعتبر است.")
         return
+    
+    # Check if national ID already exists in database
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        r = c.execute("SELECT id FROM users WHERE national_id=?", (nid,)).fetchone()
+        if r:
+            await message.answer("کد ملی وارد شده قبلاً در سیستم ثبت شده است. لطفاً وارد شوید یا اگر شماره تلفن خود را فراموش کرده‌اید با پشتیبانی تماس بگیرید.", reply_markup=main_menu)
+            await state.clear()
+            return
+    
     await state.update_data(national_id=nid)
     await state.set_state(RegisterState.dob)
     await message.answer("لطفاً تاریخ تولدتان را به شمسی وارد کنید (مثال: 1365/06/26 یا 13650626):")
@@ -840,11 +936,20 @@ async def register_card(message: types.Message, state: FSMContext):
 
     await state.update_data(bank_card_number=cnum)
     data = await state.get_data()
-    nid, dob = data.get("national_id"), data.get("dob")
+    nid, dob, phone = data.get("national_id"), data.get("dob"), data.get("phone_number")
     user_id = message.from_user.id
 
+    # First verify phone matches national ID using EHRAZ API
+    if phone and nid:
+        logging.info(f"Verifying phone {phone} matches national ID {nid}")
+        phone_matched = await match_mobile_with_national(phone, nid)
+        if not phone_matched:
+            await message.answer("شماره تلفن با کد ملی مطابقت ندارد. لطفاً فقط با شماره تلفنی که به نام خودتان است ثبت نام کنید.")
+            await state.clear()
+            return
+    
     if not check_ehraz_attempts(user_id):
-        await message.answer("بیش از 10 بار تلاش کرده‌اید. لطفاً با پشتیبانی تماس بگیرید:\nhttps://t.me/TL905411603664")
+        await message.answer("بیش از 10 بار تلاس کرده‌اید. لطفاً با پشتیبانی تماس بگیرید:\nhttps://t.me/TL905411603664")
         await state.clear()
         return
 
@@ -1039,7 +1144,7 @@ async def buy_lira_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.995)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "buy_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1055,7 +1160,7 @@ async def main_menu_buy_lira_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.995)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
@@ -1068,7 +1173,7 @@ async def sell_lira_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.94)
     await message.answer(f"هر واحد لیر ترکیه ��🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "sell_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1084,7 +1189,7 @@ async def main_menu_sell_lira_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.94)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 
