@@ -72,6 +72,10 @@ def init_db():
                 status TEXT DEFAULT 'Pending',
                 timestamp TEXT,
                 expires_at TEXT,
+                receipt_photo_url TEXT,
+                receipt_description TEXT,
+                payment_link TEXT,
+                status_updated_at TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         ''')
@@ -91,5 +95,29 @@ def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone_number TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                code TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Backward-compatible migrations for existing DBs
+        existing_transaction_columns = {
+            row["name"] for row in c.execute("PRAGMA table_info(transactions)").fetchall()
+        }
+        if "receipt_photo_url" not in existing_transaction_columns:
+            c.execute("ALTER TABLE transactions ADD COLUMN receipt_photo_url TEXT")
+        if "receipt_description" not in existing_transaction_columns:
+            c.execute("ALTER TABLE transactions ADD COLUMN receipt_description TEXT")
+        if "payment_link" not in existing_transaction_columns:
+            c.execute("ALTER TABLE transactions ADD COLUMN payment_link TEXT")
+        if "status_updated_at" not in existing_transaction_columns:
+            c.execute("ALTER TABLE transactions ADD COLUMN status_updated_at TEXT")
         conn.commit()
     logger.info("Database initialized.")
