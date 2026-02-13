@@ -87,19 +87,32 @@ def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS rate_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                toman_to_tl_factor REAL DEFAULT 0.995,
+                tl_to_toman_factor REAL DEFAULT 0.94,
+                buy_usdt_factor REAL DEFAULT 1.01,
+                sell_usdt_factor REAL DEFAULT 0.99,
+                usdt_to_lira_factor REAL DEFAULT 0.98,
+                lira_to_usdt_factor REAL DEFAULT 1.02,
+                foreign_payment_factor REAL DEFAULT 1.05,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            INSERT OR IGNORE INTO rate_settings
+            (id, toman_to_tl_factor, tl_to_toman_factor, buy_usdt_factor, sell_usdt_factor, usdt_to_lira_factor, lira_to_usdt_factor, foreign_payment_factor)
+            VALUES (1, 0.995, 0.94, 1.01, 0.99, 0.98, 1.02, 1.05)
+        ''')
+
         c.execute('''
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 action TEXT NOT NULL,
                 details TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS rate_adjustments (
-                pair_key TEXT PRIMARY KEY,
-                percent REAL NOT NULL DEFAULT 0,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         c.execute('''
@@ -110,6 +123,52 @@ def init_db():
                 code TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 used INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS ehraz_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone_number TEXT,
+                national_id TEXT,
+                endpoint TEXT NOT NULL,
+                request_payload TEXT,
+                response_payload TEXT,
+                success INTEGER DEFAULT 0,
+                error_message TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS sms_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone_number TEXT,
+                provider TEXT DEFAULT 'ghasedak',
+                request_payload TEXT,
+                response_payload TEXT,
+                success INTEGER DEFAULT 0,
+                error_message TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS user_activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                phone_number TEXT,
+                action TEXT NOT NULL,
+                source TEXT DEFAULT 'miniapp',
+                details TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS kyc_verification_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone_number TEXT NOT NULL,
+                national_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')

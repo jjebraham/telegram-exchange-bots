@@ -54,13 +54,20 @@ def calculate_order(exchange_type: str, send_amount: float, rates: dict[str, flo
     )
 
 
-def derive_rates(usdt_irr: float, usdt_try: float) -> dict[str, float]:
+def derive_rates(usdt_irr: float, usdt_try: float, settings: dict[str, float] | None = None) -> dict[str, float]:
     eff_toman = usdt_irr / 10
+    s = settings or {}
+    toman_to_tl = float(s.get("toman_to_tl_factor", 0.995))
+    tl_to_toman = float(s.get("tl_to_toman_factor", 0.94))
+    buy_usdt_factor = float(s.get("buy_usdt_factor", 1.01))
+    sell_usdt_factor = float(s.get("sell_usdt_factor", 0.99))
+    usdt_to_lira_factor = float(s.get("usdt_to_lira_factor", 0.98))
+    lira_to_usdt_factor = float(s.get("lira_to_usdt_factor", 1.02))
     return {
-        "buy_lira": round(((eff_toman / usdt_try) * 1.02) / 10) * 10,
-        "sell_lira": round(((eff_toman / usdt_try) * 0.97) / 10) * 10,
-        "buy_usdt": round((eff_toman * 1.01) / 10) * 10,
-        "sell_usdt": round((eff_toman * 0.99) / 10) * 10,
-        "usdt_to_lira": round(usdt_try * 0.98, 2),
-        "lira_to_usdt": round(usdt_try * 1.02, 2),
+        "buy_lira": round(((eff_toman / usdt_try) * toman_to_tl) / 10) * 10,
+        "sell_lira": round(((eff_toman / usdt_try) * tl_to_toman) / 10) * 10,
+        "buy_usdt": round((eff_toman * buy_usdt_factor) / 10) * 10,
+        "sell_usdt": round((eff_toman * sell_usdt_factor) / 10) * 10,
+        "usdt_to_lira": round(usdt_try * usdt_to_lira_factor, 2),
+        "lira_to_usdt": round(usdt_try * lira_to_usdt_factor, 2),
     }
