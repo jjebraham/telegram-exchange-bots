@@ -255,7 +255,17 @@ function App() {
       const usdt_irr = data.rates.USDT_IRR;
       const usdt_try = data.rates.USDT_TRY;
       if (data.derived_rates) {
-        setRates(data.derived_rates);
+        // Ensure all rate properties are present, defaulting to 0 for missing ones
+        const defaultRates = {
+          buy_lira: 0,
+          sell_lira: 0,
+          buy_usdt: 0,
+          sell_usdt: 0,
+          usdt_to_lira: 0,
+          lira_to_usdt: 0,
+          foreign_payment: 0,
+        };
+        setRates({ ...defaultRates, ...data.derived_rates });
       } else {
         setRates(deriveRates(usdt_irr, usdt_try));
       }
