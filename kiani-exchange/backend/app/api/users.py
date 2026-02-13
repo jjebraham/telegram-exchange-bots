@@ -4,11 +4,13 @@ import random
 import logging
 import os
 import json
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 from ..database import get_db
+from ..rate_settings import get_rate_settings, update_rate_settings
 from ..auth import (
     hash_password,
     verify_password,
@@ -195,11 +197,73 @@ class FaqRequest(BaseModel):
     answer: str
 
 
+class AdminResetPasswordRequest(BaseModel):
+    username: str
+    password: str
+    new_password: str
+
+
+class PasswordResetStartRequest(BaseModel):
+    phone_number: str
+    channel: str  # bot | sms
+
+
+class PasswordResetCompleteRequest(BaseModel):
+    phone_number: str
+    code: str
+    new_password: str
+
+
+class AdminSendMessageRequest(BaseModel):
+    username: str
+    password: str
+    message: str
+    user_id: int | None = None
+
+
+class RegisterCheckRequest(BaseModel):
+    phone_number: str
+    national_id: str
+
+
+class AdminRateSettingsUpdateRequest(BaseModel):
+    username: str
+    password: str
+    toman_to_tl_factor: float
+    tl_to_toman_factor: float
+    buy_usdt_factor: float
+    sell_usdt_factor: float
+    usdt_to_lira_factor: float
+    lira_to_usdt_factor: float
+    foreign_payment_factor: float
+
+
+def _admin_role(username: str, password: str) -> str | None:
+    admin_user = os.getenv("ADMIN_PANEL_USERNAME", "admin")
+    admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
+    support_user = os.getenv("SUPPORT_PANEL_USERNAME", "support")
+    support_pass = os.getenv("SUPPORT_PANEL_PASSWORD", "support123")
+    viewer_user = os.getenv("VIEWER_PANEL_USERNAME", "viewer")
+    viewer_pass = os.getenv("VIEWER_PANEL_PASSWORD", "viewer123")
+
+    if username == admin_user and password == admin_pass:
+        return "admin"
+    if username == support_user and password == support_pass:
+        return "support"
+    if username == viewer_user and password == viewer_pass:
+        return "viewer"
+    return None
+
+
+def _require_roles(username: str, password: str, allowed: set[str]) -> str:
+    role = _admin_role(username, password)
+    if role not in allowed:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return role
+
+
 def _is_admin(username: str, password: str) -> bool:
-    return (
-        username == os.getenv("ADMIN_PANEL_USERNAME", "admin")
-        and password == os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
-    )
+    return _admin_role(username, password) == "admin"
 
 
 def _write_admin_log(action: str, details: dict | None = None):
@@ -209,6 +273,56 @@ def _write_admin_log(action: str, details: dict | None = None):
             (action, json.dumps(details or {}, ensure_ascii=False)),
         )
 
+
+async def _send_text(chat_id: int, text: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    async with aiohttp.ClientSession() as session:
+        await session.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
+
+
+
+
+def _normalize_iran_phone(phone: str) -> str:
+    digits = ''.join(ch for ch in phone if ch.isdigit())
+    if digits.startswith('98'):
+        return '0' + digits[2:]
+    if digits.startswith('0098'):
+        return '0' + digits[4:]
+    return digits
+
+
+async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str]:
+    api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
+    line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
+    if not api_key:
+        return (False, "missing_ghasedak_api_key")
+
+    payload = {
+        "receptor": phone_number,
+        "message": message,
+    }
+    if line_number:
+        payload["linenumber"] = line_number
+
+    headers = {
+        "apikey": api_key,
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.ghasedak.me/v2/sms/send/simple",
+                data=payload,
+                headers=headers,
+                timeout=10,
+            ) as resp:
+                body = await resp.text()
+                logger.info("Ghasedak response status=%s body=%s", resp.status, body[:500])
+                return (resp.status == 200, body)
+    except Exception as exc:
+        logger.error("Ghasedak send failed: %s", exc)
+        return (False, str(exc))
 
 async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 6):
     headers = {
@@ -266,8 +380,21 @@ def _user_dict(row):
     }
 
 
+@router.post("/users/register/check")
+async def check_register_conflicts(req: RegisterCheckRequest):
+    phone = _normalize_iran_phone(req.phone_number)
+    with get_db() as conn:
+        existing_phone = conn.execute("SELECT id FROM users WHERE phone_number = ?", (phone,)).fetchone()
+        existing_nid = conn.execute("SELECT id FROM users WHERE national_id = ?", (req.national_id,)).fetchone()
+    return {
+        "exists_phone": bool(existing_phone),
+        "exists_national_id": bool(existing_nid),
+    }
+
+
 @router.post("/users/register")
 async def register_user(req: RegisterRequest):
+    req.phone_number = _normalize_iran_phone(req.phone_number)
     hashed = hash_password(req.password)
 
     with get_db() as conn:
@@ -330,6 +457,7 @@ async def register_user(req: RegisterRequest):
 
 @router.post("/users/login")
 async def login_user(req: LoginRequest):
+    req.phone_number = _normalize_iran_phone(req.phone_number)
     with get_db() as conn:
         user = conn.execute(
             "SELECT * FROM users WHERE phone_number = ?",
@@ -415,16 +543,16 @@ async def verify_mobile_with_ehraz(req: EhrazMobileRequest):
 
 @router.post("/admin/login")
 async def admin_login(req: AdminCredentials):
-    if not _is_admin(req.username, req.password):
+    role = _admin_role(req.username, req.password)
+    if not role:
         raise HTTPException(status_code=401, detail="invalid_admin_credentials")
-    _write_admin_log("admin_login", {"username": req.username})
-    return {"status": "success"}
+    _write_admin_log("admin_login", {"username": req.username, "role": role})
+    return {"status": "success", "role": role}
 
 
 @router.get("/admin/users")
 async def admin_users(username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, first_name, last_name, phone_number, national_id, dob, bank_card_number, kyc_status, verification_level
@@ -435,8 +563,7 @@ async def admin_users(username: str, password: str):
 
 @router.delete("/admin/users/{user_id}")
 async def admin_delete_user(user_id: int, username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin"})
     with get_db() as conn:
         conn.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -446,8 +573,7 @@ async def admin_delete_user(user_id: int, username: str, password: str):
 
 @router.get("/admin/faqs")
 async def admin_get_faqs(username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         rows = conn.execute("SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC").fetchall()
     return {"faqs": [dict(row) for row in rows]}
@@ -455,8 +581,7 @@ async def admin_get_faqs(username: str, password: str):
 
 @router.post("/admin/faqs")
 async def admin_add_faq(req: FaqRequest):
-    if not _is_admin(req.username, req.password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(req.username, req.password, {"admin", "support"})
     with get_db() as conn:
         conn.execute("INSERT INTO faqs (question, answer) VALUES (?, ?)", (req.question, req.answer))
     _write_admin_log("add_faq", {"question": req.question})
@@ -465,8 +590,7 @@ async def admin_add_faq(req: FaqRequest):
 
 @router.delete("/admin/faqs/{faq_id}")
 async def admin_delete_faq(faq_id: int, username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support"})
     with get_db() as conn:
         conn.execute("DELETE FROM faqs WHERE id = ?", (faq_id,))
     _write_admin_log("delete_faq", {"faq_id": faq_id})
@@ -475,8 +599,130 @@ async def admin_delete_faq(faq_id: int, username: str, password: str):
 
 @router.get("/admin/logs")
 async def admin_logs(username: str, password: str):
-    if not _is_admin(username, password):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    _require_roles(username, password, {"admin", "support", "viewer"})
     with get_db() as conn:
         rows = conn.execute("SELECT id, action, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 300").fetchall()
     return {"logs": [dict(row) for row in rows]}
+
+
+@router.post("/admin/users/{user_id}/reset-password")
+async def admin_reset_user_password(user_id: int, req: AdminResetPasswordRequest):
+    _require_roles(req.username, req.password, {"admin", "support"})
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="user_not_found")
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(req.new_password), user_id))
+    _write_admin_log("reset_user_password", {"user_id": user_id})
+    return {"status": "success"}
+
+
+@router.post("/users/password-reset/start")
+async def start_password_reset(req: PasswordResetStartRequest):
+    if req.channel not in {"bot", "sms"}:
+        raise HTTPException(status_code=400, detail="invalid_channel")
+
+    normalized_phone = _normalize_iran_phone(req.phone_number)
+
+    with get_db() as conn:
+        # generic behavior: do not leak user existence
+        user = conn.execute("SELECT id, phone_number FROM users WHERE phone_number = ?", (normalized_phone,)).fetchone()
+
+        if user:
+            recent_count = conn.execute(
+                """SELECT COUNT(*) AS cnt FROM password_reset_tokens
+                   WHERE phone_number = ? AND created_at >= datetime('now', '-5 minutes')""",
+                (normalized_phone,),
+            ).fetchone()["cnt"]
+            if recent_count >= 5:
+                logger.warning("password reset rate limited for %s", normalized_phone)
+                return {"status": "sent"}
+
+            code = str(random.randint(100000, 999999))
+            expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+            conn.execute(
+                "INSERT INTO password_reset_tokens (phone_number, channel, code, expires_at) VALUES (?, ?, ?, ?)",
+                (normalized_phone, req.channel, code, expires_at),
+            )
+        else:
+            code = None
+
+    if req.channel == "sms" and user and code:
+        ok, response_text = await _send_ghasedak_sms(
+            normalized_phone,
+            f"کد بازیابی رمز عبور: {code} (اعتبار: 10 دقیقه)",
+        )
+        _write_admin_log(
+            "password_reset_sms",
+            {"phone": normalized_phone, "success": ok, "provider_response": response_text[:300]},
+        )
+
+    # For bot channel the reset is handled inside Telegram bot conversation (/resetpassword)
+    return {"status": "sent"}
+
+
+@router.post("/users/password-reset/complete")
+async def complete_password_reset(req: PasswordResetCompleteRequest):
+    with get_db() as conn:
+        token = conn.execute(
+            """SELECT id, expires_at FROM password_reset_tokens
+               WHERE phone_number = ? AND code = ? AND used = 0
+               ORDER BY id DESC LIMIT 1""",
+            (req.phone_number, req.code),
+        ).fetchone()
+        if not token:
+            raise HTTPException(status_code=400, detail="invalid_code")
+        if datetime.fromisoformat(token["expires_at"]) < datetime.utcnow():
+            raise HTTPException(status_code=400, detail="expired_code")
+
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE phone_number = ?",
+            (hash_password(req.new_password), req.phone_number),
+        )
+        conn.execute("UPDATE password_reset_tokens SET used = 1 WHERE id = ?", (token["id"],))
+
+    return {"status": "success"}
+
+
+@router.post("/admin/messages/send")
+async def admin_send_message(req: AdminSendMessageRequest):
+    _require_roles(req.username, req.password, {"admin", "support"})
+
+    with get_db() as conn:
+        if req.user_id:
+            rows = conn.execute("SELECT id FROM users WHERE id = ?", (req.user_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT id FROM users ORDER BY id DESC").fetchall()
+
+    sent = 0
+    for row in rows:
+        try:
+            await _send_text(row["id"], req.message)
+            sent += 1
+        except Exception:
+            continue
+
+    _write_admin_log("admin_send_message", {"user_id": req.user_id, "sent": sent})
+    return {"status": "success", "sent": sent}
+
+
+@router.get("/admin/rates")
+async def admin_get_rates(username: str, password: str):
+    _require_roles(username, password, {"admin", "support", "viewer"})
+    return {"settings": get_rate_settings()}
+
+
+@router.post("/admin/rates")
+async def admin_update_rates(req: AdminRateSettingsUpdateRequest):
+    _require_roles(req.username, req.password, {"admin", "support"})
+    updated = update_rate_settings({
+        "toman_to_tl_factor": req.toman_to_tl_factor,
+        "tl_to_toman_factor": req.tl_to_toman_factor,
+        "buy_usdt_factor": req.buy_usdt_factor,
+        "sell_usdt_factor": req.sell_usdt_factor,
+        "usdt_to_lira_factor": req.usdt_to_lira_factor,
+        "lira_to_usdt_factor": req.lira_to_usdt_factor,
+        "foreign_payment_factor": req.foreign_payment_factor,
+    })
+    _write_admin_log("update_rate_settings", updated)
+    return {"status": "success", "settings": updated}
