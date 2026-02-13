@@ -1,18 +1,21 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { Users, ArrowLeftRight, Shield, Activity, Bell, Settings, TrendingUp, DollarSign, CheckCircle, XCircle, Clock, Search, Filter, Download, RefreshCw, Menu, MessageSquare, BarChart3, FileText } from 'lucide-react';
+import { calculateFee, calculateReceiveAmount, deriveRates } from './exchangeMath';
+import type { ExchangeType, Rates } from './exchangeMath';
+import { normalizeNumberInput, formatFaNumber, normalizePhone, isValidIranPhone, cleanPersianText } from './utils/persian';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+const notifyMessage = (message: string, title = 'KIANI Exchange') => {
+  const tg = (window as any)?.Telegram?.WebApp;
+  if (tg?.showPopup) {
+    tg.showPopup({ title, message, buttons: [{ type: 'ok', text: 'باشه' }] });
+    return;
+  }
+  window.alert(message);
+};
 
-interface Rates {
-  buy_lira: number;
-  sell_lira: number;
-  buy_usdt: number;
-  sell_usdt: number;
-  usdt_to_lira: number;
-  lira_to_usdt: number;
-  foreign_payment: number;
-}
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface User {
   id: number;
@@ -38,14 +41,6 @@ interface Transaction {
 
 type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'admin';
 
-type ExchangeType =
-  | 'buy_lira'
-  | 'sell_lira'
-  | 'buy_usdt'
-  | 'sell_usdt'
-  | 'convert_usdt_to_lira'
-  | 'convert_lira_to_usdt';
-
 // ─── Helper Components ──────────────────────────────────────────────────────
 
 const RateBox = ({
@@ -68,8 +63,8 @@ const RateBox = ({
           {loading
             ? '...'
             : isConversionRate
-              ? `${rate.toLocaleString('fa-IR')} لیر`
-              : `${rate.toLocaleString('fa-IR')} تومان`}
+              ? `${safeLocale(rate)} لیر`
+              : `${safeLocale(rate)} تومان`}
         </span>
       </div>
     </div>
@@ -106,15 +101,13 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
 );
 
 // Helper functions for formatting and validation
-const formatNumberWithCommas = (num: string): string => {
-  // Remove non-digits
-  const cleaned = num.replace(/\D/g, '');
-  // Add commas for every 3 digits
-  return cleaned.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+const toSafeNumber = (value: unknown, fallback = 0): number => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 };
 
-const removeCommas = (num: string): string => {
-  return num.replace(/,/g, '');
+const safeLocale = (value: unknown): string => {
+  return formatFaNumber(toSafeNumber(value, 0));
 };
 
 const isPersianText = (text: string): boolean => /^[\u0600-\u06FF\s]+$/.test(text.trim());
@@ -183,26 +176,6 @@ const EXCHANGE_LIMITS: Record<ExchangeType, { min: number; max: number; fee: num
   sell_usdt: { min: 100, max: 50000, fee: 0 }, // USDT to Toman
   convert_usdt_to_lira: { min: 100, max: 50000, fee: 0 }, // USDT to TL
   convert_lira_to_usdt: { min: 5000, max: 200000, fee: 0 }, // TL to USDT
-};
-
-// Calculate fee based on amount and exchange type
-const calculateFee = (amount: number, exchangeType: ExchangeType): number => {
-  const limits = EXCHANGE_LIMITS[exchangeType];
-  
-  // TOMAN to TL exchange: 80 TL fee for amounts less than 15,000,000 TOMAN
-  if (exchangeType === 'buy_lira' && amount < 15000000) {
-    return 80; // 80 TL fee
-  }
-  
-  // Example fee logic: if amount is less than threshold, add fixed fee
-  // You can customize this based on your requirements
-  if (amount < 10000000 && exchangeType === 'buy_lira') {
-    return 50000; // 50,000 Toman fee for small amounts
-  }
-  if (amount < 5000 && exchangeType === 'sell_lira') {
-    return 50; // 50 TL fee for small amounts
-  }
-  return 0;
 };
 
 // ─── Exchange Pair Labels ───────────────────────────────────────────────────
@@ -274,26 +247,31 @@ function App() {
     if (!rates.buy_lira) setLoading(true);
     try {
       const response = await fetch(`${API_URL}/rates/current`);
+      if (!response.ok) {
+        throw new Error(`rates_http_${response.status}`);
+      }
+
       const data = await response.json();
+      const usdt_irr = Number(data?.rates?.USDT_IRR);
+      const usdt_try = Number(data?.rates?.USDT_TRY);
 
-      const usdt_irr = data.rates.USDT_IRR;
-      const usdt_try = data.rates.USDT_TRY;
-      const eff_toman = usdt_irr / 10;
+      if (!Number.isFinite(usdt_irr) || !Number.isFinite(usdt_try) || usdt_irr <= 0 || usdt_try <= 0) {
+        throw new Error('rates_payload_invalid');
+      }
 
-      // Fix: Swap lira_to_usdt and usdt_to_lira rates
-      // تبدیل لیر به تتر should be 44..45 (lira_to_usdt)
-      // تبدیل تتر به لیر should be 42.71 (usdt_to_lira)
-      setRates({
-        buy_lira: Math.round(((eff_toman / usdt_try) * 1.02) / 10) * 10,
-        sell_lira: Math.round(((eff_toman / usdt_try) * 0.97) / 10) * 10,
-        buy_usdt: Math.round((eff_toman * 1.01) / 10) * 10,
-        sell_usdt: Math.round((eff_toman * 0.99) / 10) * 10,
-        // Swapped: تبدیل تتر به لیر should be 42.71
-        usdt_to_lira: parseFloat((usdt_try * 0.98).toFixed(2)), // ~42.71
-        // Swapped: تبدیل لیر به تتر should be 44..45  
-        lira_to_usdt: parseFloat((usdt_try * 1.02).toFixed(2)), // ~44.45
-        foreign_payment: Math.round((eff_toman * 1.05) / 10) * 10,
-      });
+      if (data?.rates?.buy_lira) {
+        setRates({
+          buy_lira: Number(data.rates.buy_lira),
+          sell_lira: Number(data.rates.sell_lira),
+          buy_usdt: Number(data.rates.buy_usdt),
+          sell_usdt: Number(data.rates.sell_usdt),
+          usdt_to_lira: Number(data.rates.usdt_to_lira),
+          lira_to_usdt: Number(data.rates.lira_to_usdt),
+          foreign_payment: Number(data.rates.foreign_payment || 0),
+        });
+      } else {
+        setRates(deriveRates(usdt_irr, usdt_try, data?.settings));
+      }
     } catch (error) {
       console.error('Rate fetch error:', error);
     } finally {
@@ -568,7 +546,7 @@ function ExchangePage({
   useEffect(() => {
     if (!amount || !selectedExchange) return;
 
-    const amt = parseFloat(removeCommas(amount));
+    const amt = parseFloat(normalizeNumberInput(amount));
     setNumericAmount(amt);
     
     if (isNaN(amt) || amt <= 0) {
@@ -598,63 +576,24 @@ function ExchangePage({
     
     setError('');
 
-    // Calculate fee
-    const calculatedFee = calculateFee(amt, selectedExchange);
-    setFee(calculatedFee);
-    // For TOMAN to TL exchange, fee is in TL, not Toman
-    // So total amount should be the same as amt (no addition)
-    const total = selectedExchange === 'buy_lira' ? amt : amt + calculatedFee;
-    setTotalAmount(total);
+    const calculation = calculateReceiveAmount(selectedExchange, amt, rates);
+    setFee(calculation.fee);
+    setTotalAmount(amt);
+    setReceiveAmount(parseFloat(calculation.receiveAmount.toFixed(4)));
 
-    let received = 0;
-    let feeApplied = false;
-    let feeAmount = 0;
-    
-    switch (selectedExchange) {
-      case 'buy_lira':
-        // TOMAN to TL exchange
-        received = amt / rates.buy_lira;
-        // Apply 80 TL fee for amounts less than 15,000,000 TOMAN
-        if (amt < 15000000) {
-          feeAmount = 80; // TL fee
-          received = received - feeAmount;
-          feeApplied = true;
-        }
-        break;
-      case 'sell_lira':
-        received = amt * rates.sell_lira;
-        break;
-      case 'buy_usdt':
-        received = amt / rates.buy_usdt;
-        break;
-      case 'sell_usdt':
-        received = amt * rates.sell_usdt;
-        break;
-      case 'convert_usdt_to_lira':
-        received = amt * rates.usdt_to_lira;
-        break;
-      case 'convert_lira_to_usdt':
-        received = amt / rates.lira_to_usdt;
-        break;
-    }
-
-    // Ensure received amount is not negative
-    if (received < 0) {
-      received = 0;
-    }
-    
-    setReceiveAmount(parseFloat(received.toFixed(4)));
-    // Update fee if applied
-    if (feeApplied) {
-      setFee(feeAmount);
+    if (
+      (selectedExchange === 'convert_usdt_to_lira' || selectedExchange === 'sell_usdt') &&
+      calculation.netSendAmount <= 0
+    ) {
+      setError('مبلغ ارسال باید بیشتر از کارمزد باشد');
     }
   }, [amount, selectedExchange, rates]);
 
   // Helper function to get currency unit
 
   const handleAmountChange = (value: string) => {
-    // Format with commas as user types
-    const formatted = formatNumberWithCommas(value);
+    const normalized = normalizeNumberInput(value);
+    const formatted = normalized ? formatFaNumber(normalized) : '';
     setFormattedAmount(formatted);
     setAmount(formatted);
   };
@@ -673,24 +612,24 @@ function ExchangePage({
 
   const handleSubmit = async () => {
     if (!user || user.kyc_status !== 'Approved') {
-      alert('لطفاً ابتدا وارد شوید و احراز هویت کنید');
+      notifyMessage('لطفاً ابتدا وارد شوید و احراز هویت کنید');
       return;
     }
 
-    const amt = parseFloat(removeCommas(amount));
+    const amt = parseFloat(normalizeNumberInput(amount));
     if (!amount || amt <= 0) {
-      alert('لطفاً مبلغ معتبر وارد کنید');
+      notifyMessage('لطفاً مبلغ معتبر وارد کنید');
       return;
     }
 
     // Validate against limits
     const limits = EXCHANGE_LIMITS[selectedExchange];
     if (amt < limits.min) {
-      alert(`حداقل مبلغ ${limits.min.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
+      notifyMessage(`حداقل مبلغ ${limits.min.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
       return;
     }
     if (amt > limits.max) {
-      alert(`حداکثر مبلغ ${limits.max.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
+      notifyMessage(`حداکثر مبلغ ${limits.max.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`);
       return;
     }
 
@@ -770,10 +709,10 @@ function ExchangePage({
           });
         }, 1000);
       } else {
-        alert('خطا در ارسال درخواست');
+        notifyMessage('خطا در ارسال درخواست');
       }
     } catch {
-      alert('خطا در ارتباط با سرور');
+      notifyMessage('خطا در ارتباط با سرور');
     }
   };
 
@@ -867,12 +806,25 @@ function ExchangePage({
               <div className="flex justify-between items-center text-sm">
                 <span className="text-gray-600">کارمزد:</span>
                 <span className="font-semibold text-red-600">
-                  {fee.toLocaleString('fa-IR')} {selectedExchange === 'buy_lira' ? 'TL' : getCurrencyUnit(selectedExchange, 'send')}
+                  {fee.toLocaleString('fa-IR')} {getCurrencyUnit(selectedExchange, 'receive')}
                 </span>
               </div>
-              {selectedExchange === 'buy_lira' && numericAmount < 15000000 && (
+              {selectedExchange === 'sell_lira' && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mt-2 text-xs text-yellow-700">
-                  <p>💡 مبادلات کمتر از ۱۵,۰۰۰,۰۰۰ تومان شامل کارمزد ۸۰ TL می‌شوند.</p>
+                  <p>✅ برای تراکنش های زیر 5000 لیر کارمزد ثابت ۸۰ TL از مبلغ دریافتی کسر می‌شود.</p>
+                </div>
+              )}
+              {selectedExchange === 'buy_lira' && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mt-2 text-xs text-yellow-700">
+                  <p>✅ برای تراکنش های زیر 15,000,000 تومان کارمزد ثابت ۸۰ TL از مبلغ دریافتی کسر می‌شود.</p>
+                </div>
+              )}
+              {(selectedExchange === 'convert_usdt_to_lira' || selectedExchange === 'sell_usdt') && (
+                <div className="flex justify-between items-center text-sm mt-1">
+                  <span className="text-gray-600">مبلغ خالص پس از کارمزد:</span>
+                  <span className="font-semibold text-purple-600">
+                    {(Math.max(numericAmount - fee, 0)).toLocaleString('fa-IR')} USDT
+                  </span>
                 </div>
               )}
               <div className="flex justify-between items-center text-sm mt-1">
@@ -930,12 +882,12 @@ function ExchangePage({
             />
             <InfoRow
               label="مبلغ ارسالی"
-              value={`${parseFloat(removeCommas(amount)).toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`}
+              value={`${parseFloat(normalizeNumberInput(amount)).toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`}
             />
             {fee > 0 && (
               <InfoRow
                 label="کارمزد"
-                value={`${fee.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`}
+                value={`${fee.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'receive')}`}
               />
             )}
             <InfoRow
@@ -998,14 +950,14 @@ function ExchangePage({
                     setError('');
                     setCountdown(3600);
                     setTransactionRef('');
-                    alert('درخواست با موفقیت لغو شد');
+                    notifyMessage('درخواست با موفقیت لغو شد');
                   } else {
                     // Try to get error details from response
                     try {
                       const errorData = await response.json();
-                      alert(`خطا در لغو درخواست: ${errorData.detail || 'خطای ناشناخته'}`);
+                      notifyMessage(`خطا در لغو درخواست: ${errorData.detail || 'خطای ناشناخته'}`);
                     } catch {
-                      alert(`خطا در لغو درخواست (کد: ${response.status})`);
+                      notifyMessage(`خطا در لغو درخواست (کد: ${response.status})`);
                     }
                     
                     // Even if cancel fails, reset the form so user can try again
@@ -1027,7 +979,7 @@ function ExchangePage({
                   }
                 } catch (error) {
                   console.error('Cancel error:', error);
-                  alert('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید.');
+                  notifyMessage('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید.');
                   
                   // Reset form even on network error
                   // Clear countdown interval
@@ -1130,10 +1082,7 @@ function RegistrationPage({
     return /^\d{16}$/.test(cleaned) && isValidLuhn(cleaned);
   };
 
-  const isValidPhone = (phone: string) => {
-    const cleaned = phone.replace(/\D/g, '');
-    return /^09\d{9}$/.test(cleaned);
-  };
+  const isValidPhone = (phone: string) => isValidIranPhone(phone);
 
   const isValidPassword = (password: string) => {
     const hasLetter = /[a-zA-Z]/.test(password);
@@ -1162,7 +1111,7 @@ function RegistrationPage({
       }
     }
     if (!isValidBankCard(formData.bankCardNumber)) {
-      newErrors.bankCardNumber = 'شماره کارت نامعتبر است (بررسی Luhn انجام نشد)';
+      newErrors.bankCardNumber = 'شماره کارت نامعتبر است';
     }
     if (!isValidPhone(formData.phoneNumber)) {
       newErrors.phoneNumber = 'لطفا شماره موبایل ایران به نام خودتان مطابق مثال وارد کنید 09121111111';
@@ -1206,7 +1155,8 @@ function RegistrationPage({
 
   const updateField = useCallback(
     (field: keyof RegistrationFormData, value: string | boolean) => {
-      setFormData((prev) => ({ ...prev, [field]: value }));
+      const normalizedValue = typeof value === 'string' && (field === 'firstName' || field === 'lastName') ? cleanPersianText(value) : value;
+      setFormData((prev) => ({ ...prev, [field]: normalizedValue }));
     },
     []
   );
@@ -1214,17 +1164,22 @@ function RegistrationPage({
   const validateSingleField = (field: keyof RegistrationFormData, value: string | boolean) => {
     const nextErrors = { ...errors };
     const strValue = String(value);
+    delete nextErrors[field];
+
     if (field === 'firstName' && strValue && !isPersianText(strValue)) {
       nextErrors.firstName = 'لطفا نام را با حروف فارسی وارد کنید';
     }
     if (field === 'lastName' && strValue && !isPersianText(strValue)) {
       nextErrors.lastName = 'لطفا نام خانوادگی را با حروف فارسی وارد کنید';
     }
+    if (field === 'nationalId' && strValue && !isValidNationalId(strValue)) {
+      nextErrors.nationalId = 'کد ملی نامعتبر است';
+    }
     if (field === 'phoneNumber' && strValue && !/^09\d{9}$/.test(strValue.replace(/\D/g, ''))) {
       nextErrors.phoneNumber = 'لطفا شماره موبایل ایران به نام خودتان مطابق مثال وارد کنید 09121111111';
     }
     if (field === 'bankCardNumber' && strValue.replace(/\D/g, '').length === 16 && !isValidLuhn(strValue)) {
-      nextErrors.bankCardNumber = 'شماره کارت نامعتبر است (بررسی Luhn انجام نشد)';
+      nextErrors.bankCardNumber = 'شماره کارت نامعتبر است';
     }
     if (field === 'dateOfBirth' && strValue.replace(/\D/g, '').length >= 4) {
       const year = parseInt(strValue.replace(/\D/g, '').slice(0, 4), 10);
@@ -1234,15 +1189,21 @@ function RegistrationPage({
         nextErrors.dateOfBirth = 'برای ثبت نام باید حداقل 18 سال داشته باشید';
       }
     }
+    if (field === 'password' && strValue && !isValidPassword(strValue)) {
+      nextErrors.password = 'رمز عبور باید حداقل 8 کاراکتر و شامل حروف و اعداد باشد';
+    }
+    if (field === 'confirmPassword' && strValue && strValue !== formData.password) {
+      nextErrors.confirmPassword = 'رمز عبور و تکرار آن یکسان نیستند';
+    }
     setErrors(nextErrors);
   };
 
 
-  const handleSubmit = async () => {
+   const handleSubmit = async () => {
     if (!validateForm()) return;
 
     if (attempts >= 5) {
-      alert('شما بیش از 5 بار امروز تلاش کرده‌اید. لطفاً فردا دوباره تلاش کنید.');
+      notifyMessage('شما بیش از 5 بار امروز تلاش کرده‌اید. لطفاً فردا دوباره تلاش کنید.');
       return;
     }
 
@@ -1253,14 +1214,44 @@ function RegistrationPage({
     }, 1000);
 
     try {
-      // Verify with EHRAZ.IO
+      const normalizedPhone = normalizePhone(formData.phoneNumber);
+
+      // 1) check conflicts first (no ehraz call if already registered)
+      const checkRes = await fetch(`${API_URL}/users/register/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: normalizedPhone, national_id: formData.nationalId }),
+      });
+      const checkData = await checkRes.json().catch(() => ({}));
+      if (checkData.exists_phone || checkData.exists_national_id) {
+        notifyMessage('شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.');
+        return;
+      }
+
+      // 2) verify mobile + national id
+      const mobileMatchResponse = await fetch(`${API_URL}/verify/ehraz-mobile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nationalCode: formData.nationalId,
+          mobileNumber: normalizedPhone,
+        }),
+      });
+      const mobileMatchData = await mobileMatchResponse.json();
+      if (!mobileMatchData.matched) {
+        incrementAttempts();
+        notifyMessage('شماره موبایل و کد ملی با هم تطابق ندارند. لطفاً فقط شماره‌ای را وارد کنید که به نام خودتان است.');
+        return;
+      }
+
+      // 3) verify national id + dob + card
       const ehrazResponse = await fetch(`${API_URL}/verify/ehraz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          cardNumber: formData.bankCardNumber.replace(/\s/g, ''),
+          cardNumber: normalizeNumberInput(formData.bankCardNumber),
           nationalCode: formData.nationalId,
-          birthDate: formData.dateOfBirth.replace(/\//g, ''),
+          birthDate: normalizeNumberInput(formData.dateOfBirth),
         }),
       });
 
@@ -1268,76 +1259,45 @@ function RegistrationPage({
 
       if (!ehrazData.matched) {
         incrementAttempts();
-        alert('اطلاعات وارد شده صحیح نیست. لطفاً دوباره بررسی کنید.\n\n' +
-              'اطلاعات کارت بانکی شما با کد ملی و تاریخ تولدتان همخوانی ندارد.\n' +
-              'لطفا اطلاعات وارد شده رو بررسی و دوباره تلاش کنید.');
-        setSubmitting(false);
-        clearInterval(progressTimer);
-        setProgress(0);
+        notifyMessage('کارت بانکی، تاریخ تولد و کد ملی با هم تطابق ندارند. لطفاً اطلاعات صحیح را وارد کنید.');
         return;
       }
 
-      // Verify national ID with phone ownership
-      const mobileMatchResponse = await fetch(`${API_URL}/verify/ehraz-mobile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nationalCode: formData.nationalId,
-          mobileNumber: formData.phoneNumber,
-        }),
-      });
-      const mobileMatchData = await mobileMatchResponse.json();
-      if (!mobileMatchData.matched) {
-        incrementAttempts();
-        alert('شماره موبایل با کد ملی مطابقت ندارد یا به نام شما نیست.');
-        clearInterval(progressTimer);
-        setProgress(0);
-        return;
-      }
-
-      // Register user
+      // 4) register
       const registerResponse = await fetch(`${API_URL}/users/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          first_name: formData.firstName,
-          last_name: formData.lastName,
+          first_name: cleanPersianText(formData.firstName),
+          last_name: cleanPersianText(formData.lastName),
           national_id: formData.nationalId,
-          date_of_birth: formData.dateOfBirth.replace(/\//g, ''),
-          bank_card_number: formData.bankCardNumber.replace(/\s/g, ''),
-          phone_number: formData.phoneNumber,
+          date_of_birth: normalizeNumberInput(formData.dateOfBirth),
+          bank_card_number: normalizeNumberInput(formData.bankCardNumber),
+          phone_number: normalizedPhone,
           password: formData.password,
         }),
       });
 
       if (registerResponse.ok) {
-        alert('ثبت نام با موفقیت انجام شد! اکنون می‌توانید وارد شوید.');
+        notifyMessage('ثبت نام شما با موفقیت انجام شد، تبریک! اکنون می‌توانید وارد شوید.');
         onLoginRedirect();
       } else {
         const errorData = await registerResponse.json().catch(() => null);
         incrementAttempts();
-        
-        // Show specific error messages based on backend response
+
         let errorMessage = 'خطا در ثبت نام. لطفاً دوباره تلاش کنید.';
-        
-        if (errorData?.detail) {
-          if (errorData.detail === 'already_registered_phone') {
-            errorMessage = 'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.';
-          } else if (errorData.detail === 'already_registered_national_id') {
-            errorMessage = 'این کد ملی قبلاً ثبت شده است. لطفاً وارد شوید یا با پشتیبانی تماس بگیرید.';
-          } else if (errorData.detail === 'already_registered_card') {
-            errorMessage = 'این شماره کارت قبلاً ثبت شده است.';
-          } else {
-            errorMessage = 'خطا در ثبت نام، لطفاً مجدد تلاش کنید.';
-          }
+        if (errorData?.detail === 'already_registered_phone' || errorData?.detail === 'already_registered_national_id') {
+          errorMessage = 'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.';
+        } else if (errorData?.detail === 'already_registered_card') {
+          errorMessage = 'این شماره کارت قبلاً ثبت شده است.';
         }
-        
-        alert(errorMessage);
+
+        notifyMessage(errorMessage);
       }
     } catch (error) {
       incrementAttempts();
       console.error('Registration error:', error);
-      alert('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.');
+      notifyMessage('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.');
     } finally {
       clearInterval(progressTimer);
       setProgress(100);
@@ -1704,6 +1664,55 @@ function LoginPage({
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [resetMode, setResetMode] = useState<'' | 'bot' | 'sms'>('');
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+
+  const startReset = async (channel: 'bot' | 'sms') => {
+    if (!phoneNumber) {
+      setError('ابتدا شماره موبایل را وارد کنید');
+      return;
+    }
+
+    if (channel === 'bot') {
+      notifyMessage('در تلگرام به ربات پیام /resetpassword بدهید و شماره خود را با Share Contact ارسال کنید.');
+      return;
+    }
+
+    const response = await fetch(`${API_URL}/users/password-reset/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone_number: normalizePhone(phoneNumber), channel }),
+    });
+
+    if (response.ok) {
+      setResetMode(channel);
+      notifyMessage('در صورت معتبر بودن شماره، کد بازیابی پیامک شد.');
+    } else {
+      setError('در ارسال درخواست بازیابی خطا رخ داد');
+    }
+  };
+
+  const completeReset = async () => {
+    const response = await fetch(`${API_URL}/users/password-reset/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone_number: normalizePhone(phoneNumber),
+        code: resetCode,
+        new_password: newPassword,
+      }),
+    });
+
+    if (response.ok) {
+      notifyMessage('رمز عبور با موفقیت تغییر کرد.');
+      setResetMode('');
+      setResetCode('');
+      setNewPassword('');
+    } else {
+      setError('کد بازیابی نامعتبر یا منقضی است');
+    }
+  };
 
   const handleLogin = async () => {
     setError('');
@@ -1720,7 +1729,7 @@ function LoginPage({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone_number: phoneNumber,
+          phone_number: normalizePhone(phoneNumber),
           password: password,
         }),
       });
@@ -1787,6 +1796,29 @@ function LoginPage({
             </div>
           )}
 
+          <div className="text-center text-sm">
+            <button onClick={() => startReset('bot')} className="text-blue-600 ml-3">فراموشی رمز (از طریق ربات)</button>
+            <button onClick={() => startReset('sms')} className="text-blue-600">فراموشی رمز (پیامک)</button>
+          </div>
+
+          {resetMode && (
+            <div className="bg-gray-50 border rounded-xl p-3 space-y-2">
+              <input
+                className="w-full px-3 py-2 border rounded"
+                placeholder="کد تایید"
+                value={resetCode}
+                onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+              <input
+                type="password"
+                className="w-full px-3 py-2 border rounded"
+                placeholder="رمز عبور جدید"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <button onClick={completeReset} className="w-full bg-indigo-600 text-white py-2 rounded">ثبت رمز جدید</button>
+            </div>
+          )}
           {/* Login Button */}
           <button
             onClick={handleLogin}
@@ -1819,58 +1851,136 @@ function AdminPanelPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [ehrazLogs, setEhrazLogs] = useState<any[]>([]);
+  const [smsLogs, setSmsLogs] = useState<any[]>([]);
   const [report, setReport] = useState<any>(null);
-  const [faqs, setFaqs] = useState<any[]>([]);
+  const [adminRates, setAdminRates] = useState<Record<string, number>>({});
   const [statusRef, setStatusRef] = useState('');
   const [statusValue, setStatusValue] = useState('Under Review');
-  const [faqQuestion, setFaqQuestion] = useState('');
-  const [faqAnswer, setFaqAnswer] = useState('');
+  const [receiptPhotoUrl, setReceiptPhotoUrl] = useState('');
+  const [receiptDescription, setReceiptDescription] = useState('');
+  const [paymentLink, setPaymentLink] = useState('');
 
-  const loadAll = async () => {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [selectedCategory, setSelectedCategory] = useState('all');
+
+  const categories = [
+    { id: 'all', name: 'All Modules' },
+    { id: 'main', name: 'Main' },
+    { id: 'users', name: 'Users' },
+    { id: 'operations', name: 'Operations' },
+    { id: 'compliance', name: 'Compliance' },
+    { id: 'reports', name: 'Reports' },
+    { id: 'system', name: 'System' },
+  ];
+
+  const navigationItems = [
+    { id: 'dashboard', name: 'Dashboard', icon: BarChart3, category: 'main' },
+    { id: 'users', name: 'User Management', icon: Users, category: 'users' },
+    { id: 'exchanges', name: 'Exchange Requests', icon: ArrowLeftRight, category: 'operations' },
+    { id: 'kyc', name: 'KYC Verification', icon: Shield, category: 'compliance' },
+    { id: 'rates', name: 'Exchange Rates', icon: TrendingUp, category: 'operations' },
+    { id: 'transactions', name: 'Transaction Logs', icon: FileText, category: 'reports' },
+    { id: 'settings', name: 'Settings', icon: Settings, category: 'system' },
+  ];
+
+  const loadAll = useCallback(async () => {
     const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    const [u, t, l, r, f] = await Promise.all([
+    const [u, t, l, r, rs, kyc, activity] = await Promise.all([
       fetch(`${API_URL}/admin/users?${qs}`),
       fetch(`${API_URL}/admin/transactions?${qs}`),
       fetch(`${API_URL}/admin/logs?${qs}`),
       fetch(`${API_URL}/admin/reports?${qs}`),
-      fetch(`${API_URL}/admin/faqs?${qs}`),
+      fetch(`${API_URL}/admin/rates?${qs}`),
+      fetch(`${API_URL}/admin/kyc-logs?${qs}`),
+      fetch(`${API_URL}/admin/activity-logs?${qs}`),
     ]);
     setUsers((await u.json()).users || []);
     setTransactions((await t.json()).transactions || []);
     setLogs((await l.json()).logs || []);
     setReport((await r.json()).report || null);
-    setFaqs((await f.json()).faqs || []);
-  };
+    setAdminRates((await rs.json()).settings || {});
+    const kycData = await kyc.json();
+    setEhrazLogs(kycData.ehraz_logs || []);
+    setSmsLogs(kycData.sms_logs || []);
+    setActivityLogs((await activity.json()).logs || []);
+  }, [username, password]);
 
   const login = async () => {
     const res = await fetch(`${API_URL}/admin/login`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
     });
-    if (res.ok) {
-      setLoggedIn(true);
-      loadAll();
-    } else {
-      alert('نام کاربری یا رمز عبور ادمین اشتباه است');
-    }
+    if (!res.ok) return notifyMessage('نام کاربری یا رمز عبور ادمین اشتباه است');
+    setLoggedIn(true);
+    loadAll();
   };
 
-  if (!loggedIn) return <div className="p-6 max-w-md mx-auto"><div className="bg-white p-6 rounded-xl shadow"><h2 className="text-xl font-bold mb-4">ورود ادمین</h2><input className="w-full border p-2 mb-2 rounded" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} /><input type="password" className="w-full border p-2 mb-3 rounded" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} /><button onClick={login} className="w-full bg-blue-600 text-white py-2 rounded">Login</button></div></div>;
+  if (!loggedIn) {
+    return <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4"><div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-3"><h2 className="text-xl font-bold">Admin Login</h2><input className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700" placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} /><input type="password" className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700" placeholder="Password" value={password} onChange={(e)=>setPassword(e.target.value)} /><button onClick={login} className="w-full py-2 rounded bg-blue-600">Login</button></div></div>;
+  }
+
+  const getStatusColor = (status: string) => {
+    if (status === 'Under Review') return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+    if (status === 'Done') return 'bg-green-500/20 text-green-400 border-green-500/30';
+    if (String(status).includes('Canceled')) return 'bg-red-500/20 text-red-400 border-red-500/30';
+    return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+  };
+
+  const renderContent = () => {
+    if (activeTab === 'dashboard') {
+      return <div className="space-y-6"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"><StatCard title="Total Users" value={String(users.length)} icon={<Users className="w-8 h-8 text-blue-400" />} color="blue" /><StatCard title="Active Exchanges" value={String(transactions.filter((t)=>!String(t.status).includes('Canceled') && t.status!=='Done').length)} icon={<ArrowLeftRight className="w-8 h-8 text-green-400" />} color="green" /><StatCard title="Pending KYC" value={String(users.filter((u)=>u.kyc_status !== 'Approved').length)} icon={<Shield className="w-8 h-8 text-yellow-400" />} color="yellow" /></div></div>;
+    }
+    if (activeTab === 'users') {
+      return <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl overflow-auto"><table className="w-full text-sm"><thead className="bg-gray-900/50"><tr><th className="px-4 py-3 text-left">ID</th><th className="px-4 py-3 text-left">Name</th><th className="px-4 py-3 text-left">Phone</th><th className="px-4 py-3 text-left">National ID</th><th className="px-4 py-3 text-left">Status</th></tr></thead><tbody>{users.map((u)=><tr key={u.id} className="border-t border-gray-700/40"><td className="px-4 py-3">#{u.id}</td><td className="px-4 py-3">{u.first_name} {u.last_name}</td><td className="px-4 py-3">{u.phone_number}</td><td className="px-4 py-3">{u.national_id}</td><td className="px-4 py-3">{u.kyc_status}</td></tr>)}</tbody></table></div>;
+    }
+    if (activeTab === 'exchanges') {
+      return <div className="space-y-4"><div className="grid grid-cols-1 md:grid-cols-4 gap-3"><MiniStat label="Under Review" value={String(transactions.filter((t)=>t.status==='Under Review').length)} icon={<Clock className="w-5 h-5 text-yellow-400" />} /><MiniStat label="Completed" value={String(transactions.filter((t)=>t.status==='Done').length)} icon={<CheckCircle className="w-5 h-5 text-green-400" />} /><MiniStat label="Canceled" value={String(transactions.filter((t)=>String(t.status).includes('Canceled')).length)} icon={<XCircle className="w-5 h-5 text-red-400" />} /><MiniStat label="Processing" value={String(transactions.filter((t)=>t.status==='Under Process').length)} icon={<Activity className="w-5 h-5 text-blue-400" />} /></div><div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4 space-y-2"><div className="flex gap-2 flex-wrap"><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700" placeholder="Ref #" value={statusRef} onChange={(e)=>setStatusRef(e.target.value)} /><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700" placeholder="Status" value={statusValue} onChange={(e)=>setStatusValue(e.target.value)} /><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700" placeholder="Receipt URL" value={receiptPhotoUrl} onChange={(e)=>setReceiptPhotoUrl(e.target.value)} /><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700" placeholder="Description" value={receiptDescription} onChange={(e)=>setReceiptDescription(e.target.value)} /><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700" placeholder="Payment link" value={paymentLink} onChange={(e)=>setPaymentLink(e.target.value)} /><button onClick={async()=>{await fetch(`${API_URL}/admin/transactions/${statusRef}/update-status`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,status:statusValue,receipt_photo_url:receiptPhotoUrl||null,receipt_description:receiptDescription||null,payment_link:paymentLink||null})});loadAll();}} className="px-4 py-2 bg-green-600 rounded">Update</button></div></div><div className="bg-gray-800/50 border border-gray-700/50 rounded-xl overflow-auto"><table className="w-full text-sm"><thead className="bg-gray-900/50"><tr><th className="px-4 py-3 text-left">Ref</th><th className="px-4 py-3 text-left">User</th><th className="px-4 py-3 text-left">Pair</th><th className="px-4 py-3 text-left">Amount</th><th className="px-4 py-3 text-left">Status</th></tr></thead><tbody>{transactions.map((t)=><tr key={t.reference_number} className="border-t border-gray-700/40"><td className="px-4 py-3">#{t.reference_number}</td><td className="px-4 py-3">{t.user_name}</td><td className="px-4 py-3">{t.exchange_pair}</td><td className="px-4 py-3">{safeLocale(t.send_amount)}</td><td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs border ${getStatusColor(t.status)}`}>{t.status}</span></td></tr>)}</tbody></table></div></div>;
+    }
+    if (activeTab === 'kyc') {
+      return <div className="space-y-6"><div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"><h3 className="font-bold mb-3">EHRAZ Logs</h3><div className="max-h-72 overflow-auto space-y-2">{ehrazLogs.map((l)=><div key={`e${l.id}`} className="text-xs border border-gray-700/50 rounded p-2"><div>{l.created_at} | {l.endpoint}</div><div>Phone: {l.phone_number || '-'} | NID: {l.national_id || '-'}</div><div className="text-gray-300 break-all">Req: {l.request_payload}</div><div className="text-gray-300 break-all">Resp: {l.response_payload}</div><div className={l.success ? 'text-green-400' : 'text-red-400'}>{l.error_message || (l.success ? 'success' : 'failed')}</div></div>)}</div></div><div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"><h3 className="font-bold mb-3">Ghasedak SMS Logs</h3><div className="max-h-72 overflow-auto space-y-2">{smsLogs.map((l)=><div key={`s${l.id}`} className="text-xs border border-gray-700/50 rounded p-2"><div>{l.created_at} | {l.phone_number}</div><div className="text-gray-300 break-all">Req: {l.request_payload}</div><div className="text-gray-300 break-all">Resp: {l.response_payload}</div><div className={l.success ? 'text-green-400' : 'text-red-400'}>{l.error_message || (l.success ? 'success' : 'failed')}</div></div>)}</div></div></div>;
+    }
+    if (activeTab === 'rates') {
+      return <div className="max-w-4xl bg-gray-800/50 border border-gray-700/50 rounded-xl p-6 space-y-3"><h3 className="text-xl font-bold">Rate Management</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{Object.entries(adminRates).map(([k,v])=> <label key={k} className="text-sm"><div className="mb-1 text-gray-300">{k}</div><input className="w-full px-3 py-2 rounded bg-gray-900/50 border border-gray-700" value={String(v)} onChange={(e)=>setAdminRates((prev)=>({...prev,[k]: Number(e.target.value || '0')}))} /></label>)}</div><button className="px-4 py-2 bg-blue-600 rounded" onClick={async()=>{const res=await fetch(`${API_URL}/admin/rates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,...adminRates})});if(res.ok){notifyMessage('Saved');loadAll();}}}>Save</button></div>;
+    }
+    if (activeTab === 'transactions') {
+      const allLogs = [...activityLogs, ...logs].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+      return <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"><h3 className="font-bold mb-3">All User/Admin Activities</h3><div className="max-h-[65vh] overflow-auto text-sm">{allLogs.map((l, idx)=><div key={l.id ? `${l.id}-${idx}` : idx} className="py-2 border-b border-gray-700/40"><span className="text-gray-400">{l.created_at}</span> - <span className="text-blue-300">{l.source || 'admin'}</span> - <span>{l.action}</span><div className="text-gray-400 break-all">{l.details}</div></div>)}</div></div>;
+    }
+    return <div className="text-white text-center py-20">Coming Soon...</div>;
+  };
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Admin Panel</h2><button onClick={loadAll} className="bg-blue-100 px-3 py-1 rounded">Refresh</button></div>
-      <div className="bg-white p-4 rounded-xl shadow text-sm">{report && <div>Orders: {report.total_orders} | Done: {report.done_orders} | Canceled: {report.canceled_orders}</div>}</div>
-      <div className="bg-white p-4 rounded-xl shadow">
-        <h3 className="font-bold mb-2">کنترل سفارش</h3>
-        <div className="flex gap-2"><input className="border p-2 rounded flex-1" placeholder="Reference Number" value={statusRef} onChange={(e) => setStatusRef(e.target.value)} /><input className="border p-2 rounded" value={statusValue} onChange={(e) => setStatusValue(e.target.value)} /><button onClick={async () => { await fetch(`${API_URL}/admin/transactions/${statusRef}/update-status?status=${encodeURIComponent(statusValue)}&admin_password=admin123`, { method: 'POST' }); loadAll(); }} className="bg-green-600 text-white px-3 rounded">Update</button></div>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900/95 backdrop-blur-xl border-r border-gray-700/50 transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex items-center justify-between p-6 border-b border-gray-700/50"><h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Kiani Admin</h1></div>
+        <div className="p-3 border-b border-gray-700/50"><select value={selectedCategory} onChange={(e)=>setSelectedCategory(e.target.value)} className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm"><option value="all">All Modules</option>{categories.filter(c=>c.id!=='all').map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+        <nav className="p-4 space-y-1 overflow-y-auto max-h-[calc(100vh-160px)]">{navigationItems.filter((item)=>selectedCategory==='all' || item.category===selectedCategory).map((item)=>{const Icon=item.icon;return <button key={item.id} onClick={()=>setActiveTab(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab===item.id?'bg-blue-500/20 text-blue-400 border border-blue-500/30':'text-gray-400 hover:bg-gray-800/50 hover:text-white'}`}><Icon className="w-5 h-5" /><span className="text-sm">{item.name}</span></button>;})}</nav>
       </div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Users ({users.length})</h3><div className="max-h-48 overflow-auto text-xs">{users.map((u) => <div key={u.id} className="border-b py-1 flex justify-between"><span>{u.first_name} {u.last_name} - {u.phone_number}</span><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/users/${u.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete test user</button></div>)}</div></div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Exchange Requests ({transactions.length})</h3><div className="max-h-56 overflow-auto text-xs">{transactions.slice(0, 50).map((t) => <div key={t.id} className="border-b py-1">#{t.reference_number} | {t.exchange_pair} | {t.status}</div>)}</div></div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">FAQ ({faqs.length})</h3><div className="flex gap-2 mb-2"><input className="border p-2 rounded flex-1 text-xs" placeholder="سوال" value={faqQuestion} onChange={(e)=>setFaqQuestion(e.target.value)} /><input className="border p-2 rounded flex-1 text-xs" placeholder="پاسخ" value={faqAnswer} onChange={(e)=>setFaqAnswer(e.target.value)} /><button className="bg-blue-600 text-white px-2 rounded text-xs" onClick={async ()=>{await fetch(`${API_URL}/admin/faqs`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,question:faqQuestion,answer:faqAnswer})});setFaqQuestion('');setFaqAnswer('');loadAll();}}>Add</button></div><div className="max-h-40 overflow-auto text-xs">{faqs.map((f) => <div key={f.id} className="border-b py-1 flex justify-between"><span>{f.question}</span><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete</button></div>)}</div></div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Logs ({logs.length})</h3><div className="max-h-40 overflow-auto text-xs">{logs.slice(0, 100).map((l) => <div key={l.id} className="border-b py-1">{l.created_at} - {l.action}</div>)}</div></div>
+      <div className={`transition-all duration-300 ${sidebarOpen ? 'lg:ml-64' : 'ml-0'}`}>
+        <div className="bg-gray-900/50 backdrop-blur-xl border-b border-gray-700/50 sticky top-0 z-40"><div className="flex items-center justify-between p-4"><div className="flex items-center gap-4"><button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-400 hover:text-white"><Menu className="w-6 h-6" /></button><h2 className="text-xl font-bold text-white">{navigationItems.find(item => item.id === activeTab)?.name || 'Dashboard'}</h2></div><div className="px-4 py-2 bg-gray-800/50 border border-gray-700/50 rounded-lg text-sm"><span className="text-gray-400">Orders: </span><span className="text-white font-medium">{report?.total_orders ?? 0}</span><span className="text-gray-400"> | Done: </span><span className="text-green-400 font-medium">{report?.done_orders ?? 0}</span><span className="text-gray-400"> | Canceled: </span><span className="text-red-400 font-medium">{report?.canceled_orders ?? 0}</span></div></div></div>
+        <div className="p-6">{renderContent()}</div>
+      </div>
     </div>
   );
+}
+
+function StatCard({ title, value, icon, color }: { title: string; value: string; icon: ReactNode; color: string }) {
+  const colorClassMap: Record<string, string> = {
+    blue: 'from-blue-500/10 to-blue-600/5 border-blue-500/20',
+    green: 'from-green-500/10 to-green-600/5 border-green-500/20',
+    purple: 'from-purple-500/10 to-purple-600/5 border-purple-500/20',
+    yellow: 'from-yellow-500/10 to-yellow-600/5 border-yellow-500/20',
+    red: 'from-red-500/10 to-red-600/5 border-red-500/20',
+    cyan: 'from-cyan-500/10 to-cyan-600/5 border-cyan-500/20',
+  };
+  const classes = colorClassMap[color] || colorClassMap.blue;
+  return <div className={`bg-gradient-to-br ${classes} border rounded-xl p-6 backdrop-blur-sm`}><div className="flex items-center justify-between"><div><p className="text-gray-400 text-sm">{title}</p><p className="text-3xl font-bold text-white mt-2">{value}</p></div><div className="bg-gray-700/30 p-3 rounded-lg">{icon}</div></div></div>;
+}
+
+function MiniStat({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
+  return <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4 backdrop-blur-sm"><div className="flex items-center justify-between"><span className="text-gray-400 text-sm">{label}</span>{icon}</div><p className="text-2xl font-bold text-white mt-2">{value}</p></div>;
 }
 
 // ─── PART 6: History Page ───────────────────────────────────────────────────
@@ -1974,13 +2084,13 @@ function HistoryPage() {
                 <div>
                   <span className="text-gray-600">مبلغ ارسال:</span>
                   <p className="font-semibold">
-                    {tx.send_amount.toLocaleString('fa-IR')}
+                    {safeLocale(tx.send_amount)}
                   </p>
                 </div>
                 <div>
                   <span className="text-gray-600">مبلغ دریافت:</span>
                   <p className="font-semibold">
-                    {tx.receive_amount.toLocaleString('fa-IR')}
+                    {safeLocale(tx.receive_amount)}
                   </p>
                 </div>
               </div>

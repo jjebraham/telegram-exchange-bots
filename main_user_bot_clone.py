@@ -2,6 +2,7 @@
 
 import logging
 import sqlite3
+import json
 import asyncio
 import random
 import re
@@ -21,6 +22,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
+from passlib.context import CryptContext
 
 ###############################################################################
 # CONFIGURATION
@@ -48,6 +50,7 @@ bot       = Bot(token=MAIN_BOT_TOKEN, proxy=PROXY_URL)
 admin_bot = Bot(token=ADMIN_BOT_TOKEN, proxy=PROXY_URL)
 storage   = MemoryStorage()
 dp        = Dispatcher(storage=storage)
+pwd_context = CryptContext(schemes=["sha256_crypt", "bcrypt"], deprecated="auto")
 
 ###############################################################################
 # ADMIN LOGGING MIDDLEWARE
@@ -71,6 +74,20 @@ async def log_to_admin(message: str):
         logging.error(f"Failed to log to admin: {e}")
         traceback.print_exc()
 
+
+
+def write_user_activity_log(user_id: int | None, action: str, source: str = "bot", details: dict | None = None):
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO user_activity_logs (user_id, phone_number, action, source, details) VALUES (?, ?, ?, ?, ?)",
+                (user_id, None, action, source, json.dumps(details or {}, ensure_ascii=False)),
+            )
+            conn.commit()
+    except Exception as exc:
+        logging.error(f"Failed to persist user activity log: {exc}")
+
 class AdminLogMiddleware:
     async def __call__(self, handler, event, data):
         try:
@@ -90,6 +107,7 @@ class AdminLogMiddleware:
                 else:
                     action = "performed an interaction"
                 await log_to_admin(f"👤 User: {uid} ({uname})\n🔍 Action: {action}")
+                write_user_activity_log(uid, action, "bot", {"name": uname})
                 result = await handler(event, data)
                 if isinstance(result, types.Message) and result.text:
                     await log_to_admin(f"🤖 Bot response: {result.text}")
@@ -99,6 +117,7 @@ class AdminLogMiddleware:
                 uid = event.from_user.id
                 uname = f"{event.from_user.first_name} {event.from_user.last_name or ''}"
                 await log_to_admin(f"👤 User: {uid} ({uname})\n🔍 Action: pressed {event.data}")
+                write_user_activity_log(uid, "pressed_callback", "bot", {"name": uname, "data": event.data})
                 result = await handler(event, data)
                 if isinstance(result, types.Message) and result.text:
                     await log_to_admin(f"🤖 Bot response: {result.text}")
@@ -138,6 +157,9 @@ def init_db():
                 kyc_notified INT DEFAULT 0
             )
         ''')
+        user_columns = {r['name'] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+        if 'password_hash' not in user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
         c.execute('''
             CREATE TABLE IF NOT EXISTS bank_cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -374,6 +396,11 @@ class LoginState(StatesGroup):
 class ReuploadState(StatesGroup):
     front_id = State()
     back_id = State()
+
+class ResetPasswordState(StatesGroup):
+    wait_contact = State()
+    wait_pass1 = State()
+    wait_pass2 = State()
 
 ###############################################################################
 # MENUS - CORRECTED AND STANDARDIZED
@@ -641,6 +668,105 @@ async def finish_registration_info(message: types.Message, state: FSMContext):
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("به صرافی کیانی خوش آمدید.\nبرای شروع ثبت نام کنید یا وارد حساب کاربری شوید.", reply_markup=main_menu)
+
+
+@dp.message(Command("cancel"))
+async def cmd_cancel_any(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("عملیات لغو شد.", reply_markup=main_menu)
+
+
+@dp.message(Command("resetpassword"))
+async def cmd_reset_password(message: types.Message, state: FSMContext):
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="ارسال شماره تلفن من", request_contact=True)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await state.set_state(ResetPasswordState.wait_contact)
+    await message.answer(
+        "برای بازیابی رمز عبور، شماره موبایل ثبت‌شده را با دکمه Share Contact ارسال کنید.",
+        reply_markup=kb,
+    )
+
+
+@dp.message(ResetPasswordState.wait_contact, F.contact)
+async def reset_password_contact(message: types.Message, state: FSMContext):
+    contact_phone = message.contact.phone_number or ""
+    digits = ''.join(ch for ch in contact_phone if ch.isdigit())
+    candidates = {contact_phone, digits}
+    if digits.startswith('98'):
+        candidates.add('0' + digits[2:])
+        candidates.add('+' + digits)
+    if digits.startswith('0'):
+        candidates.add('+98' + digits[1:])
+
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        placeholders = ','.join(['?'] * len(candidates))
+        row = c.execute(
+            f"SELECT id, phone_number FROM users WHERE phone_number IN ({placeholders}) LIMIT 1",
+            tuple(candidates),
+        ).fetchone()
+
+    if not row:
+        await state.clear()
+        await message.answer("این شماره در سیستم یافت نشد.", reply_markup=main_menu)
+        return
+
+    await state.update_data(reset_user_id=row['id'], attempts=0)
+    await state.set_state(ResetPasswordState.wait_pass1)
+    await message.answer("رمز عبور جدید را وارد کنید (حداقل 8 کاراکتر شامل حروف و اعداد).", reply_markup=ReplyKeyboardRemove())
+
+
+@dp.message(ResetPasswordState.wait_contact)
+async def reset_password_contact_wrong(message: types.Message, state: FSMContext):
+    await message.answer("شماره را دستی وارد نکنید؛ از دکمه Share Contact استفاده کنید.")
+
+
+@dp.message(ResetPasswordState.wait_pass1)
+async def reset_password_pass1(message: types.Message, state: FSMContext):
+    pwd1 = (message.text or '').strip()
+    if len(pwd1) < 8 or not re.search(r'[A-Za-z]', pwd1) or not re.search(r'\d', pwd1):
+        await message.answer("رمز عبور باید حداقل 8 کاراکتر و شامل حروف و اعداد باشد.")
+        return
+    await state.update_data(pass1=pwd1)
+    await state.set_state(ResetPasswordState.wait_pass2)
+    await message.answer("تکرار رمز عبور جدید را وارد کنید.")
+
+
+@dp.message(ResetPasswordState.wait_pass2)
+async def reset_password_pass2(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    pass1 = data.get('pass1', '')
+    pass2 = (message.text or '').strip()
+
+    attempts = int(data.get('attempts', 0)) + 1
+    if pass1 != pass2:
+        if attempts >= 3:
+            await state.clear()
+            await message.answer("تعداد تلاش بیش از حد مجاز بود. دوباره /resetpassword را بزنید.", reply_markup=main_menu)
+            return
+        await state.update_data(attempts=attempts)
+        await state.set_state(ResetPasswordState.wait_pass1)
+        await message.answer("رمزها یکسان نیستند. دوباره رمز عبور جدید را وارد کنید.")
+        return
+
+    hashed = pwd_context.hash(pass1)
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        try:
+            c.execute("UPDATE users SET password_hash=? WHERE id=?", (hashed, data['reset_user_id']))
+            conn.commit()
+        except Exception as exc:
+            logging.error(f"reset password update failed: {exc}")
+            await state.clear()
+            await message.answer("خطا در ثبت رمز جدید. لطفاً دوباره تلاش کنید.", reply_markup=main_menu)
+            return
+
+    await log_to_admin(f"🔐 Password reset via bot | user_id={data['reset_user_id']}")
+    await state.clear()
+    await message.answer("رمز عبور تنظیم شد، اکنون می‌توانید وارد شوید.", reply_markup=main_menu)
 
 ###############################################################################
 # REGISTRATION FLOW
