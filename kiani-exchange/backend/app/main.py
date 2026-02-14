@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
-from .api import rates, users, transactions
+from .api import rates, users, transactions, admin_plan
 from .price_cache import price_cache
 
 logging.basicConfig(
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(rates.router, prefix="/api", tags=["rates"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])
+app.include_router(admin_plan.router, prefix="/api", tags=["admin-plan"])
 
 
 @app.on_event("startup")
