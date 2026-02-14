@@ -306,7 +306,8 @@ def init_db():
         if "risk_score" not in existing_user_columns:
             c.execute("ALTER TABLE users ADD COLUMN risk_score INTEGER DEFAULT 0")
         if "created_at" not in existing_user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP")
+            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
+            c.execute("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
         if "is_active" not in existing_user_columns:
             c.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
         if "is_banned" not in existing_user_columns:
