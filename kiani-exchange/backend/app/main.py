@@ -1,9 +1,17 @@
 import logging
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .api import rates, users, transactions, admin_plan
 from .price_cache import price_cache
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
+logging.info(f"Loaded environment from: {env_path}")
 
 logging.basicConfig(
     level=logging.INFO,
