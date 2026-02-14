@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frontend API Test - Kiani Exchange</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+        .test {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+        .loading {
+            background-color: #fff3cd;
+            border-color: #ffeaa7;
+            color: #856404;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        h1, h2, h3 {
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <h1>Frontend API Integration Test</h1>
+    <p>Testing API endpoints through nginx proxy at: <code>https://miniapp.peerexo.com</code></p>
+    
+    <div class="test" id="test1">
+        <h3>1. Health Check</h3>
+        <button onclick="testHealth()">Test /health</button>
+        <div id="result1"></div>
+    </div>
+    
+    <div class="test" id="test2">
+        <h3>2. Exchange Rates</h3>
+        <button onclick="testRates()">Test /api/rates/current</button>
+        <div id="result2"></div>
+    </div>
+    
+    <div class="test" id="test3">
+        <h3>3. EHRAZ Verification (Mock Mode)</h3>
+        <button onclick="testEhraz()">Test /api/verify/ehraz</button>
+        <div id="result3"></div>
+    </div>
+    
+    <div class="test" id="test4">
+        <h3>4. User Registration</h3>
+        <button onclick="testRegister()">Test /api/users/register</button>
+        <div id="result4"></div>
+    </div>
+    
+    <div class="test" id="test5">
+        <h3>5. User Login</h3>
+        <button onclick="testLogin()">Test /api/users/login</button>
+        <div id="result5"></div>
+    </div>
+    
+    <div class="test" id="test6">
+        <h3>6. FAQs</h3>
+        <button onclick="testFaqs()">Test /api/faqs</button>
+        <div id="result6"></div>
+    </div>
+    
+    <div class="test" id="test7">
+        <h3>7. Admin Login</h3>
+        <button onclick="testAdminLogin()">Test /api/admin/login</button>
+        <div id="result7"></div>
+    </div>
+    
+    <div id="summary"></div>
+
+    <script>
+        const API_BASE = 'https://miniapp.peerexo.com/api';
+        
+        function setResult(elementId, status, message, data = null) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<p><strong>${status}:</strong> ${message}</p>`;
+            if (data) {
+                element.innerHTML += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            }
+            element.className = `test ${status === 'SUCCESS' ? 'success' : 'error'}`;
+        }
+        
+        function setLoading(elementId, message) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<p>${message}...</p>`;
+            element.className = 'test loading';
+        }
+        
+        async function testHealth() {
+            setLoading('result1', 'Testing /health endpoint');
+            try {
+                const response = await fetch('https://miniapp.peerexo.com/health');
+                const data = await response.json();
+                setResult('result1', 'SUCCESS', `HTTP ${response.status}: ${JSON.stringify(data)}`, data);
+            } catch (error) {
+                setResult('result1', 'ERROR', error.message);
+            }
+        }
+        
+        async function testRates() {
+            setLoading('result2', 'Testing exchange rates');
+            try {
+                const response = await fetch(`${API_BASE}/rates/current`);
+                const data = await response.json();
+                setResult('result2', 'SUCCESS', `HTTP ${response.status}: Got exchange rates`, data);
+            } catch (error) {
+                setResult('result2', 'ERROR', error.message);
+            }
+        }
+        
+        async function testEhraz() {
+            setLoading('result3', 'Testing EHRAZ verification');
+            try {
+                const response = await fetch(`${API_BASE}/verify/ehraz`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        nationalCode: "0083263497",
+                        cardNumber: "6219861012345678",
+                        birthDate: "13650626"
+                    })
+                });
+                const data = await response.json();
+                setResult('result3', 'SUCCESS', `HTTP ${response.status}: EHRAZ verification ${data.matched ? 'passed' : 'failed'}`, data);
+            } catch (error) {
+                setResult('result3', 'ERROR', error.message);
+            }
+        }
+        
+        async function testRegister() {
+            setLoading('result4', 'Testing user registration');
+            const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+            try {
+                const response = await fetch(`${API_BASE}/users/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        first_name: "تست",
+                        last_name: `کاربر${randomSuffix}`,
+                        national_id: `00123${randomSuffix}`,
+                        date_of_birth: "1365/06/26",
+                        bank_card_number: `62198610${randomSuffix}`,
+                        phone_number: `0912${randomSuffix}`,
+                        password: "Test1234!"
+                    })
+                });
+                const data = await response.json();
+                if (response.status === 200 || response.status === 409) {
+                    setResult('result4', 'SUCCESS', `HTTP ${response.status}: ${data.detail || data.message}`, data);
+                } else {
+                    setResult('result4', 'ERROR', `HTTP ${response.status}: ${JSON.stringify(data)}`, data);
+                }
+            } catch (error) {
+                setResult('result4', 'ERROR', error.message);
+            }
+        }
+        
+        async function testLogin() {
+            setLoading('result5', 'Testing user login');
+            try {
+                const response = await fetch(`${API_BASE}/users/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone_number: "09126257",  // From previous test
+                        password: "Test1234!"
+                    })
+                });
+                const data = await response.json();
+                if (response.status === 200) {
+                    setResult('result5', 'SUCCESS', `HTTP ${response.status}: Login successful, token received`, {
+                        token: data.token ? '***' + data.token.slice(-10) : 'No token',
+                        user: data.user
+                    });
+                } else {
+                    setResult('result5', 'ERROR', `HTTP ${response.status}: ${data.detail}`, data);
+                }
+            } catch (error) {
+                setResult('result5', 'ERROR', error.message);
+            }
+        }
+        
+        async function testFaqs() {
+            setLoading('result6', 'Testing FAQs');
+            try {
+                const response = await fetch(`${API_BASE}/faqs`);
+                const data = await response.json();
+                setResult('result6', 'SUCCESS', `HTTP ${response.status}: Got ${data.faqs?.length || 0} FAQs`, data);
+            } catch (error) {
+                setResult('result6', 'ERROR', error.message);
+            }
+        }
+        
+        async function testAdminLogin() {
+            setLoading('result7', 'Testing admin login');
+            try {
+                const response = await fetch(`${API_BASE}/admin/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: "admin",
+                        password: "admin123"
+                    })
+                });
+                const data = await response.json();
+                setResult('result7', 'SUCCESS', `HTTP ${response.status}: Admin login successful, role: ${data.role}`, data);
+            } catch (error) {
+                setResult('result7', 'ERROR', error.message);
+            }
+        }
+        
+        // Run all tests on page load
+        window.onload = function() {
+            setTimeout(() => {
+                testHealth();
+                setTimeout(testRates, 500);
+                setTimeout(testEhraz, 1000);
+                setTimeout(testFaqs, 1500);
+                setTimeout(testAdminLogin, 2000);
+            }, 1000);
+        };
+    </script>
+</body>
+</html>

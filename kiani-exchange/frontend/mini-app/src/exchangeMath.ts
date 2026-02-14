@@ -16,16 +16,23 @@ export interface Rates {
   foreign_payment: number;
 }
 
-export const deriveRates = (usdtIrr: number, usdtTry: number): Rates => {
+export const deriveRates = (usdtIrr: number, usdtTry: number, settings?: Record<string, number>): Rates => {
   const effToman = usdtIrr / 10;
+  const tomanToTl = settings?.toman_to_tl_factor ?? 0.995;
+  const tlToToman = settings?.tl_to_toman_factor ?? 0.94;
+  const buyUsdt = settings?.buy_usdt_factor ?? 1.01;
+  const sellUsdt = settings?.sell_usdt_factor ?? 0.99;
+  const usdtToLira = settings?.usdt_to_lira_factor ?? 0.98;
+  const liraToUsdt = settings?.lira_to_usdt_factor ?? 1.02;
+  const foreignPayment = settings?.foreign_payment_factor ?? 1.05;
   return {
-    buy_lira: Math.round(((effToman / usdtTry) * 1.02) / 10) * 10,
-    sell_lira: Math.round(((effToman / usdtTry) * 0.97) / 10) * 10,
-    buy_usdt: Math.round((effToman * 1.01) / 10) * 10,
-    sell_usdt: Math.round((effToman * 0.99) / 10) * 10,
-    usdt_to_lira: parseFloat((usdtTry * 0.98).toFixed(2)),
-    lira_to_usdt: parseFloat((usdtTry * 1.02).toFixed(2)),
-    foreign_payment: Math.round((effToman * 1.05) / 10) * 10,
+    buy_lira: Math.round(((effToman / usdtTry) * tomanToTl) / 10) * 10,
+    sell_lira: Math.round(((effToman / usdtTry) * tlToToman) / 10) * 10,
+    buy_usdt: Math.round((effToman * buyUsdt) / 10) * 10,
+    sell_usdt: Math.round((effToman * sellUsdt) / 10) * 10,
+    usdt_to_lira: parseFloat((usdtTry * usdtToLira).toFixed(2)),
+    lira_to_usdt: parseFloat((usdtTry * liraToUsdt).toFixed(2)),
+    foreign_payment: Math.round((effToman * foreignPayment) / 10) * 10,
   };
 };
 

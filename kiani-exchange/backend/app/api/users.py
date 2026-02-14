@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 from ..database import get_db
+from ..rate_settings import get_rate_settings, update_rate_settings
 from ..auth import (
     hash_password,
     verify_password,
@@ -18,6 +19,8 @@ from ..auth import (
     get_current_user_id,
 )
 
+# EHRAZ_TOKEN will be loaded from database via api_settings module
+# Default fallback token
 EHRAZ_TOKEN = "5942b9d62abc20405dadfb2c0f546b669cf1471c"
 
 # Telegram Bot Configuration
@@ -25,114 +28,133 @@ EHRAZ_TOKEN = "5942b9d62abc20405dadfb2c0f546b669cf1471c"
 TELEGRAM_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
 ADMIN_CHAT_ID = 2043363119
 
+# KYC Verification Mode
+# Set to True to enable test mode (bypasses EHRAZ for test data)
+# Set to False for production (real EHRAZ verification)
+# Will be overridden by database settings
+KYC_TEST_MODE = False  # DISABLED - Use real EHRAZ API
+
 # List of proxy servers from your configuration
+# IMPORTANT: EHRAZ API requires authenticated proxies
+# Use the pattern: http://jjebraham-{N}:Amir1234@p.webshare.io:80
+# Where N is a number from 1-100 (randomized)
+
 PROXY_LIST = [
-    "45.159.53.29:7401",
-    "107.181.142.146:5739",
-    "147.136.85.66:5982",
-    "193.160.78.239:5919",
-    "104.250.207.125:6523",
-    "173.245.88.77:5380",
-    "107.181.143.171:6302",
-    "45.38.84.162:7098",
-    "67.227.1.26:6307",
-    "92.113.1.107:5807",
-    "64.137.92.43:6242",
-    "67.227.37.170:5712",
-    "191.96.173.42:6055",
-    "104.143.252.167:5781",
-    "45.141.81.25:6085",
-    "168.199.145.4:6262",
-    "45.38.111.198:6113",
-    "31.58.23.166:5739",
-    "45.150.178.246:6118",
-    "206.206.71.86:5726",
-    "67.227.37.52:5594",
-    "92.112.155.70:7194",
-    "104.239.97.191:5944",
-    "2.57.30.125:7201",
-    "104.238.14.125:6510",
-    "104.239.44.190:6112",
-    "184.174.126.51:6343",
-    "136.0.189.140:6867",
-    "168.199.145.55:6313",
-    "2.57.31.223:6799",
-    "67.227.42.206:6183",
-    "194.39.32.247:6544",
-    "140.233.166.169:7202",
-    "31.59.21.101:6367",
-    "64.137.37.38:6628",
-    "102.212.88.222:6219",
-    "104.233.13.184:6179",
-    "104.252.28.134:6072",
-    "136.0.118.200:6572",
-    "80.96.71.105:5595",
-    "193.187.114.215:6230",
-    "45.38.84.253:7189",
-    "93.118.38.64:6208",
-    "206.206.64.140:6101",
-    "64.137.57.98:6107",
-    "104.252.193.112:6022",
-    "185.15.178.101:5785",
-    "104.253.81.21:5449",
-    "148.135.188.5:7037",
-    "31.57.90.143:5712",
-    "45.147.187.3:6376",
-    "45.150.23.199:6669",
-    "145.223.40.236:5806",
-    "155.254.38.123:5799",
-    "46.203.45.196:6219",
-    "185.171.255.30:6083",
-    "46.203.79.27:6553",
-    "45.159.54.195:7067",
-    "92.112.227.32:6204",
-    "82.29.229.112:6467",
-    "23.129.254.13:5995",
-    "67.227.113.72:5612",
-    "67.227.113.15:5555",
-    "92.112.238.65:6944",
-    "82.22.210.225:8067",
-    "45.61.97.253:6779",
-    "23.236.170.178:9211",
-    "104.252.193.75:5985",
-    "82.29.229.65:6420",
-    "23.229.110.120:8648",
-    "82.24.236.86:7896",
-    "31.58.24.163:6234",
-    "45.14.83.8:7986",
-    "82.23.225.200:8051",
-    "204.217.245.155:6746",
-    "82.27.214.241:6583",
-    "82.23.221.29:6359",
-    "45.131.94.82:6069",
-    "103.101.88.202:5926",
-    "82.21.245.103:6427",
-    "161.123.33.185:6208",
-    "23.95.255.75:6659",
-    "98.159.38.158:6458",
-    "45.39.4.13:5438",
-    "82.24.249.60:5897",
-    "136.0.189.227:6954",
-    "82.21.245.189:6513",
-    "206.232.103.58:6215",
-    "23.27.196.222:6591",
-    "104.143.226.126:5729",
-    "82.25.247.17:6351",
-    "92.112.235.4:6527",
-    "82.23.204.82:6914",
-    "23.27.210.154:6524",
-    "104.238.38.24:6292",
-    "216.173.72.20:6639",
-    "23.229.125.113:5382",
-    "82.29.245.125:6949",
-    "50.114.99.138:6879",
-    "50.114.99.125:6866"
+    "http://jjebraham-1:Amir1234@p.webshare.io:80",
+    "http://jjebraham-2:Amir1234@p.webshare.io:80",
+    "http://jjebraham-3:Amir1234@p.webshare.io:80",
+    "http://jjebraham-4:Amir1234@p.webshare.io:80",
+    "http://jjebraham-5:Amir1234@p.webshare.io:80",
+    "http://jjebraham-6:Amir1234@p.webshare.io:80",
+    "http://jjebraham-7:Amir1234@p.webshare.io:80",
+    "http://jjebraham-8:Amir1234@p.webshare.io:80",
+    "http://jjebraham-9:Amir1234@p.webshare.io:80",
+    "http://jjebraham-10:Amir1234@p.webshare.io:80",
+    "http://jjebraham-11:Amir1234@p.webshare.io:80",
+    "http://jjebraham-12:Amir1234@p.webshare.io:80",
+    "http://jjebraham-13:Amir1234@p.webshare.io:80",
+    "http://jjebraham-14:Amir1234@p.webshare.io:80",
+    "http://jjebraham-15:Amir1234@p.webshare.io:80",
+    "http://jjebraham-16:Amir1234@p.webshare.io:80",
+    "http://jjebraham-17:Amir1234@p.webshare.io:80",
+    "http://jjebraham-18:Amir1234@p.webshare.io:80",
+    "http://jjebraham-19:Amir1234@p.webshare.io:80",
+    "http://jjebraham-20:Amir1234@p.webshare.io:80",
+    "http://jjebraham-21:Amir1234@p.webshare.io:80",
+    "http://jjebraham-22:Amir1234@p.webshare.io:80",
+    "http://jjebraham-23:Amir1234@p.webshare.io:80",
+    "http://jjebraham-24:Amir1234@p.webshare.io:80",
+    "http://jjebraham-25:Amir1234@p.webshare.io:80",
+    "http://jjebraham-26:Amir1234@p.webshare.io:80",
+    "http://jjebraham-27:Amir1234@p.webshare.io:80",
+    "http://jjebraham-28:Amir1234@p.webshare.io:80",
+    "http://jjebraham-29:Amir1234@p.webshare.io:80",
+    "http://jjebraham-30:Amir1234@p.webshare.io:80",
+    "http://jjebraham-31:Amir1234@p.webshare.io:80",
+    "http://jjebraham-32:Amir1234@p.webshare.io:80",
+    "http://jjebraham-33:Amir1234@p.webshare.io:80",
+    "http://jjebraham-34:Amir1234@p.webshare.io:80",
+    "http://jjebraham-35:Amir1234@p.webshare.io:80",
+    "http://jjebraham-36:Amir1234@p.webshare.io:80",
+    "http://jjebraham-37:Amir1234@p.webshare.io:80",
+    "http://jjebraham-38:Amir1234@p.webshare.io:80",
+    "http://jjebraham-39:Amir1234@p.webshare.io:80",
+    "http://jjebraham-40:Amir1234@p.webshare.io:80",
+    "http://jjebraham-41:Amir1234@p.webshare.io:80",
+    "http://jjebraham-42:Amir1234@p.webshare.io:80",
+    "http://jjebraham-43:Amir1234@p.webshare.io:80",
+    "http://jjebraham-44:Amir1234@p.webshare.io:80",
+    "http://jjebraham-45:Amir1234@p.webshare.io:80",
+    "http://jjebraham-46:Amir1234@p.webshare.io:80",
+    "http://jjebraham-47:Amir1234@p.webshare.io:80",
+    "http://jjebraham-48:Amir1234@p.webshare.io:80",
+    "http://jjebraham-49:Amir1234@p.webshare.io:80",
+    "http://jjebraham-50:Amir1234@p.webshare.io:80",
+    "http://jjebraham-51:Amir1234@p.webshare.io:80",
+    "http://jjebraham-52:Amir1234@p.webshare.io:80",
+    "http://jjebraham-53:Amir1234@p.webshare.io:80",
+    "http://jjebraham-54:Amir1234@p.webshare.io:80",
+    "http://jjebraham-55:Amir1234@p.webshare.io:80",
+    "http://jjebraham-56:Amir1234@p.webshare.io:80",
+    "http://jjebraham-57:Amir1234@p.webshare.io:80",
+    "http://jjebraham-58:Amir1234@p.webshare.io:80",
+    "http://jjebraham-59:Amir1234@p.webshare.io:80",
+    "http://jjebraham-60:Amir1234@p.webshare.io:80",
+    "http://jjebraham-61:Amir1234@p.webshare.io:80",
+    "http://jjebraham-62:Amir1234@p.webshare.io:80",
+    "http://jjebraham-63:Amir1234@p.webshare.io:80",
+    "http://jjebraham-64:Amir1234@p.webshare.io:80",
+    "http://jjebraham-65:Amir1234@p.webshare.io:80",
+    "http://jjebraham-66:Amir1234@p.webshare.io:80",
+    "http://jjebraham-67:Amir1234@p.webshare.io:80",
+    "http://jjebraham-68:Amir1234@p.webshare.io:80",
+    "http://jjebraham-69:Amir1234@p.webshare.io:80",
+    "http://jjebraham-70:Amir1234@p.webshare.io:80",
+    "http://jjebraham-71:Amir1234@p.webshare.io:80",
+    "http://jjebraham-72:Amir1234@p.webshare.io:80",
+    "http://jjebraham-73:Amir1234@p.webshare.io:80",
+    "http://jjebraham-74:Amir1234@p.webshare.io:80",
+    "http://jjebraham-75:Amir1234@p.webshare.io:80",
+    "http://jjebraham-76:Amir1234@p.webshare.io:80",
+    "http://jjebraham-77:Amir1234@p.webshare.io:80",
+    "http://jjebraham-78:Amir1234@p.webshare.io:80",
+    "http://jjebraham-79:Amir1234@p.webshare.io:80",
+    "http://jjebraham-80:Amir1234@p.webshare.io:80",
+    "http://jjebraham-81:Amir1234@p.webshare.io:80",
+    "http://jjebraham-82:Amir1234@p.webshare.io:80",
+    "http://jjebraham-83:Amir1234@p.webshare.io:80",
+    "http://jjebraham-84:Amir1234@p.webshare.io:80",
+    "http://jjebraham-85:Amir1234@p.webshare.io:80",
+    "http://jjebraham-86:Amir1234@p.webshare.io:80",
+    "http://jjebraham-87:Amir1234@p.webshare.io:80",
+    "http://jjebraham-88:Amir1234@p.webshare.io:80",
+    "http://jjebraham-89:Amir1234@p.webshare.io:80",
+    "http://jjebraham-90:Amir1234@p.webshare.io:80",
+    "http://jjebraham-91:Amir1234@p.webshare.io:80",
+    "http://jjebraham-92:Amir1234@p.webshare.io:80",
+    "http://jjebraham-93:Amir1234@p.webshare.io:80",
+    "http://jjebraham-94:Amir1234@p.webshare.io:80",
+    "http://jjebraham-95:Amir1234@p.webshare.io:80",
+    "http://jjebraham-96:Amir1234@p.webshare.io:80",
+    "http://jjebraham-97:Amir1234@p.webshare.io:80",
+    "http://jjebraham-98:Amir1234@p.webshare.io:80",
+    "http://jjebraham-99:Amir1234@p.webshare.io:80",
+    "http://jjebraham-100:Amir1234@p.webshare.io:80",
 ]
 
 def get_random_proxy():
     """Get a random proxy from the list"""
-    proxy = random.choice(PROXY_LIST)
-    return f"http://jjebraham:Amir1234@{proxy}"
+    # Try to get proxies from database first
+    try:
+        from .api_settings import get_ehraz_proxies
+        proxy_list = get_ehraz_proxies()
+        if proxy_list:
+            return random.choice(proxy_list)
+    except ImportError:
+        pass
+    
+    # Fallback to hardcoded list
+    return random.choice(PROXY_LIST)
 
 
 async def send_telegram_notification(message: str):
@@ -221,6 +243,23 @@ class AdminSendMessageRequest(BaseModel):
     user_id: int | None = None
 
 
+class RegisterCheckRequest(BaseModel):
+    phone_number: str
+    national_id: str
+
+
+class AdminRateSettingsUpdateRequest(BaseModel):
+    username: str
+    password: str
+    toman_to_tl_factor: float
+    tl_to_toman_factor: float
+    buy_usdt_factor: float
+    sell_usdt_factor: float
+    usdt_to_lira_factor: float
+    lira_to_usdt_factor: float
+    foreign_payment_factor: float
+
+
 def _admin_role(username: str, password: str) -> str | None:
     admin_user = os.getenv("ADMIN_PANEL_USERNAME", "admin")
     admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
@@ -257,10 +296,69 @@ def _write_admin_log(action: str, details: dict | None = None):
         )
 
 
+def _log_user_activity(action: str, source: str, details: dict | None = None, user_id: int | None = None, phone_number: str | None = None):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO user_activity_logs (user_id, phone_number, action, source, details) VALUES (?, ?, ?, ?, ?)",
+            (user_id, phone_number, action, source, json.dumps(details or {}, ensure_ascii=False)),
+        )
+
+
+def _write_ehraz_log(phone_number: str | None, national_id: str | None, endpoint: str, request_payload: dict, response_payload: dict | str, success: bool, error_message: str | None = None):
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO ehraz_logs
+               (phone_number, national_id, endpoint, request_payload, response_payload, success, error_message)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                phone_number,
+                national_id,
+                endpoint,
+                json.dumps(request_payload, ensure_ascii=False),
+                json.dumps(response_payload, ensure_ascii=False) if not isinstance(response_payload, str) else response_payload,
+                1 if success else 0,
+                error_message,
+            ),
+        )
+
+
+def _log_kyc_verification(action: str, phone_number: str, national_id: str, details: dict):
+    """Log KYC verification steps for admin panel"""
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO kyc_verification_logs 
+               (phone_number, national_id, action, details)
+               VALUES (?, ?, ?, ?)""",
+            (
+                phone_number,
+                national_id,
+                action,
+                json.dumps(details, ensure_ascii=False),
+            ),
+        )
+
+
+def _write_sms_log(phone_number: str, request_payload: dict, response_payload: str, success: bool, error_message: str | None = None):
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO sms_logs (phone_number, provider, request_payload, response_payload, success, error_message)
+               VALUES (?, 'ghasedak', ?, ?, ?, ?)""",
+            (
+                phone_number,
+                json.dumps(request_payload, ensure_ascii=False),
+                response_payload,
+                1 if success else 0,
+                error_message,
+            ),
+        )
+
+
 async def _send_text(chat_id: int, text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     async with aiohttp.ClientSession() as session:
         await session.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
+
+
 
 
 def _normalize_iran_phone(phone: str) -> str:
@@ -273,145 +371,196 @@ def _normalize_iran_phone(phone: str) -> str:
 
 
 async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str]:
-    """
-    Send SMS via Ghasedak API using proxy rotation.
-    First tries template API, falls back to simple SMS.
-    """
-    api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
-    template_name = os.getenv("GHASEDAK_TEMPLATE_NAME", "").strip()
-    line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
+    """Send SMS via Ghasedak API using OTP endpoint with Iranian proxies"""
+    # Try to get settings from database first
+    try:
+        from .api_settings import get_ghasedak_api_key, get_ghasedak_template
+        api_key = get_ghasedak_api_key()
+        template_name = get_ghasedak_template()
+    except ImportError:
+        # Fallback to environment variables
+        api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
+        template_name = os.getenv("GHASEDAK_TEMPLATE_NAME", "").strip()
     
     if not api_key:
         return (False, "missing_ghasedak_api_key")
     
-    # Try template API first (with template name now configured)
-    if template_name:
-        # Extract OTP code from message (looking for 6-digit code)
-        import re
-        otp_match = re.search(r'\b(\d{6})\b', message)
-        otp_code = otp_match.group(1) if otp_match else "000000"
-        
-        # Create payload for template API
-        payload = {
-            "receptors": [{
-                "mobile": phone_number,
-                "clientReferenceId": f"reset_{int(time.time())}_{phone_number[-4:]}"
-            }],
-            "templateName": template_name,
-            "param1": otp_code,
-            "param2": "",
-            "param3": "",
-            "param4": "",
-            "param5": "",
-            "param6": "",
-            "param7": "",
-            "param8": "",
-            "param9": "",
-            "param10": "",
-            "isVoice": False,
-            "udh": False
-        }
-        
-        headers = {
-            "accept": "text/plain",
-            "ApiKey": api_key,
-            "Content-Type": "application/json",
-        }
-        
-        # Try template API with proxy rotation (3 attempts like EHRAZ)
-        for attempt in range(3):
-            proxy_url = get_random_proxy()
-            try:
-                logger.info(f"Ghasedak template attempt {attempt + 1} with proxy: {proxy_url}")
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        "https://gateway.ghasedak.me/rest/api/v1/WebService/SendOtpWithParams",
-                        json=payload,
-                        headers=headers,
-                        proxy=proxy_url,
-                        timeout=10,
-                    ) as resp:
-                        body = await resp.text()
-                        logger.info("Ghasedak template response status=%s body=%s", resp.status, body[:500])
-                        
-                        # Parse JSON response
-                        try:
-                            response_json = json.loads(body)
-                            # Check for success (different response formats possible)
-                            is_success = (
-                                response_json.get("isSuccess") == True or
-                                response_json.get("IsSuccess") == True or
-                                response_json.get("statusCode") == 200 or
-                                response_json.get("StatusCode") == 200
-                            )
-                            if is_success:
-                                return (True, body)
-                            else:
-                                logger.warning(f"Ghasedak template API failed (attempt {attempt + 1}): {body}")
-                                continue  # Try next proxy
-                        except json.JSONDecodeError:
-                            # If not JSON, check HTTP status
-                            if resp.status == 200:
-                                return (True, body)
-                            else:
-                                logger.warning(f"Ghasedak template API non-JSON response (attempt {attempt + 1}): {body}")
-                                continue  # Try next proxy
-            except Exception as exc:
-                logger.warning(f"Ghasedak template attempt {attempt + 1} exception: {exc}")
-                continue  # Try next proxy
-        
-        logger.warning("All Ghasedak template attempts failed, falling back to simple SMS")
+    if not template_name:
+        # Fallback to simple SMS if no template
+        return await _send_ghasedak_simple_sms(phone_number, message)
     
-    # Fallback to simple SMS method (either template not configured or all template attempts failed)
-    # Simple SMS payload
-    simple_payload = {
+    # Extract OTP code from message (looking for 6-digit code)
+    import re
+    code_match = re.search(r'\b(\d{6})\b', message)
+    if not code_match:
+        # No 6-digit code found, use simple SMS
+        return await _send_ghasedak_simple_sms(phone_number, message)
+    
+    code = code_match.group(1)
+    
+    # Use OTP endpoint (from working test app)
+    url = "https://gateway.ghasedak.me/rest/api/v1/WebService/SendOtpWithParams"
+    
+    headers = {
+        "accept": "text/plain",
+        "ApiKey": api_key,  # Note: "ApiKey" not "apikey"
+        "Content-Type": "application/json",
+    }
+    
+    payload = {
+        "receptors": [{"mobile": phone_number, "clientReferenceId": str(int(time.time()))}],
+        "templateName": template_name,
+        "param1": code,
+        "param2": "",
+        "param3": "",
+        "param4": "",
+        "param5": "",
+        "param6": "",
+        "param7": "",
+        "param8": "",
+        "param9": "",
+        "param10": "",
+        "isVoice": False,
+        "udh": False,
+    }
+    
+    # Try with Iranian proxies first (from your working test)
+    # Get proxy settings from database
+    try:
+        from .api_settings import get_ghasedak_proxy_format, get_ghasedak_proxy_pool
+        proxy_format = get_ghasedak_proxy_format()
+        proxy_start, proxy_end = get_ghasedak_proxy_pool()
+    except ImportError:
+        # Fallback to default
+        proxy_format = "http://jjebraham-{n}:Amir1234@59.152.60.100:6040"
+        proxy_start, proxy_end = 1, 100
+    
+    for attempt in range(3):
+        proxy_num = random.randint(proxy_start, proxy_end)
+        proxy_url = proxy_format.format(n=proxy_num)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    proxy=proxy_url,
+                    timeout=15,
+                ) as resp:
+                    body = await resp.text()
+                    ok = resp.status == 200
+                    
+                    # Parse response
+                    try:
+                        data = json.loads(body) if body.strip() else {}
+                        # Success: HTTP 200 + isSuccess True (typical Ghasedak)
+                        if resp.status == 200 and (data.get("isSuccess") is True or "isSuccess" not in data):
+                            logger.info(f"Ghasedak OTP sent via proxy {proxy_url}: success")
+                            _write_sms_log(phone_number, payload, body[:2000], True, None)
+                            return (True, body)
+                        else:
+                            error_msg = data.get("message") or f"HTTP {resp.status}: {body[:300]}"
+                            logger.warning(f"Ghasedak OTP failed via proxy {proxy_url}: {error_msg}")
+                    except:
+                        error_msg = f"Invalid JSON: {body[:300]}"
+                        logger.warning(f"Ghasedak OTP invalid response via proxy {proxy_url}: {error_msg}")
+                    
+                    _write_sms_log(phone_number, payload, body[:2000], False, f"proxy_http_{resp.status}")
+        except Exception as exc:
+            logger.warning(f"Ghasedak proxy attempt {attempt+1} failed (proxy={proxy_url}): {exc}")
+            continue
+    
+    # If OTP endpoint fails, try simple SMS as fallback
+    logger.info("Ghasedak OTP endpoint failed, trying simple SMS as fallback")
+    return await _send_ghasedak_simple_sms(phone_number, message)
+
+async def _send_ghasedak_simple_sms(phone_number: str, message: str) -> tuple[bool, str]:
+    """Fallback: Send simple SMS (old method)"""
+    # Try to get settings from database first
+    try:
+        from .api_settings import get_ghasedak_api_key, get_ghasedak_line_number
+        api_key = get_ghasedak_api_key()
+        line_number = get_ghasedak_line_number()
+    except ImportError:
+        # Fallback to environment variables
+        api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
+        line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
+    
+    if not api_key:
+        return (False, "missing_ghasedak_api_key")
+
+    payload = {
         "receptor": phone_number,
         "message": message,
     }
     if line_number:
-        simple_payload["linenumber"] = line_number
-    
-    simple_headers = {
+        payload["linenumber"] = line_number
+
+    headers = {
         "apikey": api_key,
         "Content-Type": "application/x-www-form-urlencoded",
     }
     
-    # Try simple SMS with proxy rotation (3 attempts)
-    for attempt in range(3):
-        proxy_url = get_random_proxy()
+    url = "https://api.ghasedak.me/v2/sms/send/simple"
+    
+    # Try with Iranian proxy first
+    # Get proxy settings from database
+    try:
+        from .api_settings import get_ghasedak_proxy_format, get_ghasedak_proxy_pool
+        proxy_format = get_ghasedak_proxy_format()
+        proxy_start, proxy_end = get_ghasedak_proxy_pool()
+    except ImportError:
+        # Fallback to default
+        proxy_format = "http://jjebraham-{n}:Amir1234@59.152.60.100:6040"
+        proxy_start, proxy_end = 1, 100
+    
+    for attempt in range(2):
+        proxy_num = random.randint(proxy_start, proxy_end)
+        proxy_url = proxy_format.format(n=proxy_num)
+        
         try:
-            logger.info(f"Ghasedak simple SMS attempt {attempt + 1} with proxy: {proxy_url}")
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    "https://api.ghasedak.me/v2/sms/send/simple",
-                    data=simple_payload,
-                    headers=simple_headers,
+                    url,
+                    data=payload,
+                    headers=headers,
                     proxy=proxy_url,
                     timeout=10,
                 ) as resp:
                     body = await resp.text()
-                    logger.info("Ghasedak simple SMS response status=%s body=%s", resp.status, body[:500])
-                    if resp.status == 200:
-                        return (True, body)
-                    else:
-                        logger.warning(f"Ghasedak simple SMS failed with status {resp.status} (attempt {attempt + 1}): {body}")
-                        continue  # Try next proxy
+                    ok = resp.status == 200
+                    logger.info(f"Ghasedak simple SMS via proxy {proxy_url}: status={resp.status}")
+                    _write_sms_log(phone_number, payload, body[:2000], ok, 
+                                 f"simple_proxy_http_{resp.status}" if not ok else None)
+                    return (ok, body)
         except Exception as exc:
-            logger.warning(f"Ghasedak simple SMS attempt {attempt + 1} exception: {exc}")
-            continue  # Try next proxy
+            logger.warning(f"Ghasedak simple SMS proxy attempt {attempt+1} failed: {exc}")
+            continue
     
-    logger.error("All Ghasedak SMS attempts failed")
-    return (False, "all_attempts_failed")
+    # All attempts failed
+    error_msg = "Ghasedak API failed with all Iranian proxies"
+    logger.error(error_msg)
+    _write_sms_log(phone_number, payload, error_msg, False, error_msg)
+    return (False, error_msg)
 
-async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
+async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 6, phone_number: str | None = None, national_id: str | None = None):
+    # Get EHRAZ token from database or fallback
+    try:
+        from .api_settings import get_ehraz_token
+        token = get_ehraz_token()
+        if not token:
+            token = EHRAZ_TOKEN
+    except ImportError:
+        token = EHRAZ_TOKEN
+    
     headers = {
-        "Authorization": f"Bearer {EHRAZ_TOKEN}",
+        "Authorization": f"Token {token}",
         "Content-Type": "application/json",
     }
 
     # Quick direct attempt first to reduce perceived latency.
     try:
-        logger.info(f"EHRAZ direct attempt: {url}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
@@ -419,20 +568,36 @@ async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=timeout_seconds),
             ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    logger.info(f"EHRAZ direct success: {data}")
+                # Try to get response text first for debugging
+                response_text = await resp.text()
+                
+                # Log raw response for debugging
+                logger.debug(f"EHRAZ raw response: {response_text[:200]}")
+                
+                try:
+                    data = json.loads(response_text) if response_text.strip() else {}
+                except json.JSONDecodeError as json_err:
+                    _write_ehraz_log(phone_number, national_id, url, payload, 
+                                    {"raw_response": response_text[:500], "json_error": str(json_err)}, 
+                                    False, f"json_decode_error")
+                    # Return empty dict to continue with proxy fallback
+                    data = {}
+                
+                if resp.status == 200 and data:
+                    _write_ehraz_log(phone_number, national_id, url, payload, data, True)
                     return data
                 else:
-                    logger.warning(f"EHRAZ direct failed with status: {resp.status}")
-    except Exception as e:
-        logger.warning(f"EHRAZ direct exception: {e}")
+                    error_msg = f"http_{resp.status}" if resp.status != 200 else "empty_or_invalid_response"
+                    _write_ehraz_log(phone_number, national_id, url, payload, 
+                                    {"status": resp.status, "raw_response": response_text[:500]}, 
+                                    False, error_msg)
+    except Exception as exc:
+        _write_ehraz_log(phone_number, national_id, url, payload, {"error": str(exc)}, False, str(exc))
 
     # Fallback with proxy rotation.
-    for attempt in range(3):  # Increased from 2 to 3 attempts
+    for _ in range(2):
         proxy_url = get_random_proxy()
         try:
-            logger.info(f"EHRAZ proxy attempt {attempt + 1}: {proxy_url}")
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     url,
@@ -441,18 +606,32 @@ async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
                     proxy=proxy_url,
                     timeout=aiohttp.ClientTimeout(total=timeout_seconds),
                 ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        logger.info(f"EHRAZ proxy success: {data}")
+                    # Try to get response text first for debugging
+                    response_text = await resp.text()
+                    
+                    try:
+                        data = json.loads(response_text) if response_text.strip() else {}
+                    except json.JSONDecodeError as json_err:
+                        _write_ehraz_log(phone_number, national_id, url, payload, 
+                                        {"proxy_raw_response": response_text[:500], "json_error": str(json_err)}, 
+                                        False, f"proxy_json_decode_error")
+                        # Continue to next proxy attempt
+                        continue
+                    
+                    if resp.status == 200 and data:
+                        _write_ehraz_log(phone_number, national_id, url, payload, data, True)
                         return data
                     else:
-                        logger.warning(f"EHRAZ proxy failed with status: {resp.status}")
-        except Exception as e:
-            logger.warning(f"EHRAZ proxy attempt {attempt + 1} exception: {e}")
+                        error_msg = f"proxy_http_{resp.status}" if resp.status != 200 else "proxy_empty_response"
+                        _write_ehraz_log(phone_number, national_id, url, payload, 
+                                        {"status": resp.status, "proxy_raw_response": response_text[:500]}, 
+                                        False, error_msg)
+        except Exception as exc:
+            _write_ehraz_log(phone_number, national_id, url, payload, {"proxy_error": str(exc)}, False, str(exc))
             continue
 
-    logger.error("All EHRAZ attempts failed")
-    return {"matched": False}
+    _write_ehraz_log(phone_number, national_id, url, payload, {"api_failed": True}, False, "all_attempts_failed")
+    raise Exception("EHRAZ API service unavailable - all proxy attempts failed")
 
 
 def _user_dict(row):
@@ -471,41 +650,193 @@ def _user_dict(row):
     }
 
 
+@router.post("/users/register/check")
+async def check_register_conflicts(req: RegisterCheckRequest):
+    phone = _normalize_iran_phone(req.phone_number)
+    with get_db() as conn:
+        existing_phone = conn.execute("SELECT id FROM users WHERE phone_number = ?", (phone,)).fetchone()
+        existing_nid = conn.execute("SELECT id FROM users WHERE national_id = ?", (req.national_id,)).fetchone()
+    return {
+        "exists_phone": bool(existing_phone),
+        "exists_national_id": bool(existing_nid),
+    }
+
+
 @router.post("/users/register")
 async def register_user(req: RegisterRequest):
+    req.phone_number = _normalize_iran_phone(req.phone_number)
     hashed = hash_password(req.password)
+    
+    # Log KYC verification start
+    _log_kyc_verification("kyc_start", req.phone_number, req.national_id, {
+        "step": "start",
+        "action": "registration_attempt"
+    })
 
     with get_db() as conn:
-        existing = conn.execute(
+        # Step 1: Check if phone number exists in database
+        existing_phone = conn.execute(
             "SELECT id FROM users WHERE phone_number = ?",
             (req.phone_number,),
         ).fetchone()
-        if existing:
+        if existing_phone:
+            _log_user_activity("register_conflict_phone", "miniapp", {"phone_number": req.phone_number}, phone_number=req.phone_number)
+            _log_kyc_verification("kyc_failed", req.phone_number, req.national_id, {
+                "step": "phone_check",
+                "action": "phone_already_registered",
+                "error": "Phone number already registered"
+            })
             raise HTTPException(
                 status_code=409,
                 detail="already_registered_phone",
             )
 
+        # Step 2: Check if national ID exists in database
         existing_nid = conn.execute(
             "SELECT id FROM users WHERE national_id = ?",
             (req.national_id,),
         ).fetchone()
         if existing_nid:
+            _log_user_activity("register_conflict_national_id", "miniapp", {"national_id": req.national_id}, phone_number=req.phone_number)
+            _log_kyc_verification("kyc_failed", req.phone_number, req.national_id, {
+                "step": "national_id_check",
+                "action": "national_id_already_registered",
+                "error": "National ID already registered"
+            })
             raise HTTPException(status_code=409, detail="already_registered_national_id")
 
+        # Step 3: Check if bank card exists in database
         existing_card = conn.execute(
             "SELECT id FROM users WHERE bank_card_number = ?",
             (req.bank_card_number,),
         ).fetchone()
         if existing_card:
+            _log_user_activity("register_conflict_card", "miniapp", {"bank_card_number": req.bank_card_number}, phone_number=req.phone_number)
+            _log_kyc_verification("kyc_failed", req.phone_number, req.national_id, {
+                "step": "card_check",
+                "action": "card_already_registered",
+                "error": "Bank card already registered"
+            })
             raise HTTPException(status_code=409, detail="already_registered_card")
 
+        # Step 4: Call EHRAZ API to match phone number with national ID
+        _log_kyc_verification("kyc_step", req.phone_number, req.national_id, {
+            "step": "ehraz_phone_national_match",
+            "action": "calling_ehraz_api"
+        })
+        
+        try:
+            # Check if we're in test mode and this is test data
+            test_phone_prefix = req.phone_number.startswith("0912") or req.phone_number.startswith("0935") or req.phone_number.startswith("0999")
+            test_nid_prefix = req.national_id.startswith("00") or req.national_id.startswith("11") or req.national_id == "2091925799"
+            
+            if KYC_TEST_MODE and test_phone_prefix and test_nid_prefix:
+                # Test mode: Simulate successful EHRAZ verification for test data
+                _log_kyc_verification("kyc_step", req.phone_number, req.national_id, {
+                    "step": "ehraz_phone_national_match",
+                    "action": "test_mode_bypass",
+                    "note": "Test mode enabled, bypassing EHRAZ for test data"
+                })
+                
+                phone_national_match = {"matched": True}
+                card_national_match = {"matched": True}
+                
+                _log_kyc_verification("kyc_step", req.phone_number, req.national_id, {
+                    "step": "ehraz_card_national_match",
+                    "action": "test_mode_bypass",
+                    "note": "Test mode enabled, bypassing EHRAZ for test data"
+                })
+            else:
+                # Production mode: Real EHRAZ API calls
+                # First EHRAZ API call: Match phone number with national ID
+                phone_national_match = await _ehraz_post(
+                    "https://ehraz.io/api/v1/match/national-with-mobile",
+                    {
+                        "nationalCode": req.national_id,
+                        "mobileNumber": req.phone_number  # Fixed parameter name
+                    },
+                    phone_number=req.phone_number,
+                    national_id=req.national_id
+                )
+                
+                if not phone_national_match.get("matched", False):
+                    _log_kyc_verification("kyc_failed", req.phone_number, req.national_id, {
+                        "step": "ehraz_phone_national_match",
+                        "action": "ehraz_api_failed",
+                        "error": "Phone number and national ID do not match",
+                        "ehraz_response": phone_national_match
+                    })
+                    raise HTTPException(
+                        status_code=400,
+                        detail="phone_national_mismatch",
+                    )
+                
+                _log_kyc_verification("kyc_step", req.phone_number, req.national_id, {
+                    "step": "ehraz_phone_national_match",
+                    "action": "ehraz_api_success",
+                    "ehraz_response": phone_national_match
+                })
+                
+                # Step 5: Call EHRAZ API to match national ID with DOB and bank card
+                _log_kyc_verification("kyc_step", req.phone_number, req.national_id, {
+                    "step": "ehraz_card_national_match",
+                    "action": "calling_ehraz_api"
+                })
+                
+                # Format card number (remove spaces) and date (YYYYMMDD format)
+                formatted_card = ''.join(ch for ch in req.bank_card_number if ch.isdigit())
+                formatted_dob = ''.join(ch for ch in req.date_of_birth if ch.isdigit())
+                
+                card_national_match = await _ehraz_post(
+                    "https://ehraz.io/api/v1/match/card-with-national",
+                    {
+                        "nationalCode": req.national_id,
+                        "birthDate": formatted_dob,
+                        "cardNumber": formatted_card
+                    },
+                    phone_number=req.phone_number,
+                    national_id=req.national_id
+                )
+                
+                if not card_national_match.get("matched", False):
+                    _log_kyc_verification("kyc_failed", req.phone_number, req.national_id, {
+                        "step": "ehraz_card_national_match",
+                        "action": "ehraz_api_failed",
+                        "error": "National ID, DOB, and bank card do not match",
+                        "ehraz_response": card_national_match
+                    })
+                    raise HTTPException(
+                        status_code=400,
+                        detail="card_national_mismatch",
+                    )
+                
+                _log_kyc_verification("kyc_step", req.phone_number, req.national_id, {
+                    "step": "ehraz_card_national_match",
+                    "action": "ehraz_api_success",
+                    "ehraz_response": card_national_match
+                })
+            
+        except HTTPException:
+            # Re-raise HTTP exceptions (like phone_national_mismatch)
+            raise
+        except Exception as e:
+            _log_kyc_verification("kyc_failed", req.phone_number, req.national_id, {
+                "step": "ehraz_api_call",
+                "action": "ehraz_api_error",
+                "error": str(e)
+            })
+            raise HTTPException(
+                status_code=500,
+                detail="verification_service_error",
+            )
+
+        # Step 6: All checks passed, create user
         conn.execute(
             """INSERT INTO users
                (first_name, last_name, national_id, dob,
                 bank_card_number, phone_number, password_hash,
                 accepted_terms, kyc_status, verification_level)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Approved', 1)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Approved', 2)""",  # Level 2 for full KYC verification
             (
                 req.first_name,
                 req.last_name,
@@ -530,11 +861,16 @@ async def register_user(req: RegisterRequest):
     )
     await send_telegram_notification(notification_message)
 
+    with get_db() as conn:
+        user_row = conn.execute("SELECT id FROM users WHERE phone_number = ?", (req.phone_number,)).fetchone()
+    _log_user_activity("register_success", "miniapp", {"national_id": req.national_id}, user_id=user_row["id"] if user_row else None, phone_number=req.phone_number)
+
     return {"status": "success", "message": "User registered"}
 
 
 @router.post("/users/login")
 async def login_user(req: LoginRequest):
+    req.phone_number = _normalize_iran_phone(req.phone_number)
     with get_db() as conn:
         user = conn.execute(
             "SELECT * FROM users WHERE phone_number = ?",
@@ -550,6 +886,7 @@ async def login_user(req: LoginRequest):
             f"📝 وضعیت: کاربر یافت نشد"
         )
         await send_telegram_notification(notification_message)
+        _log_user_activity("login_failed", "miniapp", {"reason": "user_not_found"}, phone_number=req.phone_number)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not verify_password(req.password, user["password_hash"]):
@@ -562,6 +899,7 @@ async def login_user(req: LoginRequest):
             f"📝 وضعیت: رمز عبور اشتباه"
         )
         await send_telegram_notification(notification_message)
+        _log_user_activity("login_failed", "miniapp", {"reason": "invalid_password"}, user_id=user["id"], phone_number=req.phone_number)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token({"user_id": user["id"]})
@@ -574,6 +912,7 @@ async def login_user(req: LoginRequest):
         f"⏰ زمان: {asyncio.get_event_loop().time()}"
     )
     await send_telegram_notification(notification_message)
+    _log_user_activity("login_success", "miniapp", {"kyc_status": user["kyc_status"]}, user_id=user["id"], phone_number=req.phone_number)
 
     return {"token": token, "user": _user_dict(user)}
 
@@ -593,89 +932,33 @@ async def get_me(user_id: int = Depends(get_current_user_id)):
 
 @router.post("/verify/ehraz")
 async def verify_with_ehraz(req: EhrazRequest):
-    logger.info(f"EHRAZ verification request: {req.nationalCode}, {req.cardNumber[:6]}...")
-    
-    # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
-    
-    if USE_MOCK_EHRAZ:
-        logger.info("Using mock EHRAZ mode for testing")
-        
-        # Normalize card number: remove spaces
-        normalized_card = req.cardNumber.replace(" ", "")
-        
-        # Basic validation
-        if len(req.nationalCode) == 10 and len(normalized_card) == 16:
-            logger.info(f"Mock EHRAZ card validation passed: {req.nationalCode}, {normalized_card[:6]}...")
-            return {"matched": True}
-        else:
-            logger.info(f"Mock EHRAZ card validation failed: nationalCode={len(req.nationalCode)} digits, card={len(normalized_card)} digits")
-            return {"matched": False}
+    # Format card number (remove spaces) and date (YYYYMMDD format)
+    formatted_card = ''.join(ch for ch in req.cardNumber if ch.isdigit())
+    formatted_dob = ''.join(ch for ch in req.birthDate if ch.isdigit())
     
     data = await _ehraz_post(
         "https://ehraz.io/api/v1/match/card-with-national",
         {
-            "cardNumber": req.cardNumber,
+            "cardNumber": formatted_card,
             "nationalCode": req.nationalCode,
-            "birthDate": req.birthDate,
+            "birthDate": formatted_dob,
         },
-        timeout_seconds=15,
+        timeout_seconds=6,
     )
-    result = bool(data.get("matched", False))
-    logger.info(f"EHRAZ verification result: {result}")
-    return {"matched": result}
+    return {"matched": bool(data.get("matched", False))}
 
 
 @router.post("/verify/ehraz-mobile")
 async def verify_mobile_with_ehraz(req: EhrazMobileRequest):
-    logger.info(f"EHRAZ mobile verification request: {req.nationalCode}, {req.mobileNumber}")
-    
-    # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
-    
-    if USE_MOCK_EHRAZ:
-        logger.info("Using mock EHRAZ mode for mobile verification testing")
-        
-        # Normalize mobile number: remove +, spaces, dashes
-        normalized_mobile = req.mobileNumber.replace('+', '').replace(' ', '').replace('-', '')
-        
-        # Handle different formats:
-        # - 09123456789 (11 digits with 0)
-        # - 9123456789 (10 digits without 0)
-        # - 989123456789 (12 digits with country code)
-        
-        # Check if it's a valid Iranian mobile number
-        is_valid_iran_mobile = False
-        
-        # Format 1: 09123456789 (11 digits, starts with 09)
-        if normalized_mobile.startswith('09') and len(normalized_mobile) == 11:
-            is_valid_iran_mobile = True
-        # Format 2: 9123456789 (10 digits, starts with 9) - add leading 0
-        elif normalized_mobile.startswith('9') and len(normalized_mobile) == 10:
-            is_valid_iran_mobile = True
-        # Format 3: 989123456789 (12 digits, starts with 98) - remove country code
-        elif normalized_mobile.startswith('98') and len(normalized_mobile) == 12:
-            is_valid_iran_mobile = True
-        
-        # Basic validation
-        if len(req.nationalCode) == 10 and is_valid_iran_mobile:
-            logger.info(f"Mock EHRAZ mobile validation passed: {req.nationalCode}, {req.mobileNumber}")
-            return {"matched": True}
-        else:
-            logger.info(f"Mock EHRAZ mobile validation failed: nationalCode={len(req.nationalCode)} digits, mobile={req.mobileNumber}")
-            return {"matched": False}
-    
     data = await _ehraz_post(
         "https://ehraz.io/api/v1/match/national-with-mobile",
         {
             "nationalCode": req.nationalCode,
             "mobileNumber": req.mobileNumber,
         },
-        timeout_seconds=15,
+        timeout_seconds=6,
     )
-    result = bool(data.get("matched", False))
-    logger.info(f"EHRAZ mobile verification result: {result}")
-    return {"matched": result}
+    return {"matched": bool(data.get("matched", False))}
 
 
 @router.post("/admin/login")
@@ -785,16 +1068,20 @@ async def start_password_reset(req: PasswordResetStartRequest):
             code = None
 
     if req.channel == "sms" and user and code:
-        # Send real SMS via Ghasedak API
         ok, response_text = await _send_ghasedak_sms(
             normalized_phone,
             f"کد بازیابی رمز عبور: {code} (اعتبار: 10 دقیقه)",
         )
-        
         _write_admin_log(
             "password_reset_sms",
             {"phone": normalized_phone, "success": ok, "provider_response": response_text[:300]},
         )
+        
+        # Return actual status instead of always "sent"
+        if ok:
+            return {"status": "sent", "message": "SMS sent successfully"}
+        else:
+            return {"status": "failed", "message": f"SMS failed: {response_text[:100]}"}
 
     # For bot channel the reset is handled inside Telegram bot conversation (/resetpassword)
     return {"status": "sent"}
@@ -843,3 +1130,59 @@ async def admin_send_message(req: AdminSendMessageRequest):
 
     _write_admin_log("admin_send_message", {"user_id": req.user_id, "sent": sent})
     return {"status": "success", "sent": sent}
+
+
+@router.get("/admin/kyc-logs")
+async def admin_kyc_logs(username: str, password: str):
+    _require_roles(username, password, {"admin", "support", "viewer"})
+    with get_db() as conn:
+        ehraz_rows = conn.execute(
+            """SELECT id, phone_number, national_id, endpoint, request_payload, response_payload, success, error_message, created_at
+               FROM ehraz_logs ORDER BY id DESC LIMIT 500"""
+        ).fetchall()
+        sms_rows = conn.execute(
+            """SELECT id, phone_number, provider, request_payload, response_payload, success, error_message, created_at
+               FROM sms_logs ORDER BY id DESC LIMIT 500"""
+        ).fetchall()
+        kyc_verification_rows = conn.execute(
+            """SELECT id, phone_number, national_id, action, details, created_at
+               FROM kyc_verification_logs ORDER BY id DESC LIMIT 500"""
+        ).fetchall()
+    return {
+        "ehraz_logs": [dict(r) for r in ehraz_rows], 
+        "sms_logs": [dict(r) for r in sms_rows],
+        "kyc_verification_logs": [dict(r) for r in kyc_verification_rows]
+    }
+
+
+@router.get("/admin/activity-logs")
+async def admin_activity_logs(username: str, password: str):
+    _require_roles(username, password, {"admin", "support", "viewer"})
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, user_id, phone_number, action, source, details, created_at
+               FROM user_activity_logs ORDER BY id DESC LIMIT 1000"""
+        ).fetchall()
+    return {"logs": [dict(r) for r in rows]}
+
+
+@router.get("/admin/rates")
+async def admin_get_rates(username: str, password: str):
+    _require_roles(username, password, {"admin", "support", "viewer"})
+    return {"settings": get_rate_settings()}
+
+
+@router.post("/admin/rates")
+async def admin_update_rates(req: AdminRateSettingsUpdateRequest):
+    _require_roles(req.username, req.password, {"admin", "support"})
+    updated = update_rate_settings({
+        "toman_to_tl_factor": req.toman_to_tl_factor,
+        "tl_to_toman_factor": req.tl_to_toman_factor,
+        "buy_usdt_factor": req.buy_usdt_factor,
+        "sell_usdt_factor": req.sell_usdt_factor,
+        "usdt_to_lira_factor": req.usdt_to_lira_factor,
+        "lira_to_usdt_factor": req.lira_to_usdt_factor,
+        "foreign_payment_factor": req.foreign_payment_factor,
+    })
+    _write_admin_log("update_rate_settings", updated)
+    return {"status": "success", "settings": updated}
