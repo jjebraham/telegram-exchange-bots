@@ -162,6 +162,130 @@ def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS exchange_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                from_currency TEXT,
+                to_currency TEXT,
+                amount REAL,
+                rate REAL,
+                status TEXT DEFAULT 'pending',
+                risk_level TEXT DEFAULT 'low',
+                receipt_url TEXT,
+                payment_link TEXT,
+                admin_notes TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS announcements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                type TEXT DEFAULT 'info',
+                start_date TEXT,
+                end_date TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                subject TEXT,
+                message TEXT,
+                status TEXT DEFAULT 'open',
+                priority TEXT DEFAULT 'normal',
+                assigned_admin TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id INTEGER,
+                action TEXT NOT NULL,
+                entity_type TEXT,
+                entity_id TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                ip_address TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS blacklist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                value TEXT NOT NULL,
+                reason TEXT,
+                created_by TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(type, value)
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS referral_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                code TEXT UNIQUE,
+                uses INTEGER DEFAULT 0,
+                earnings REAL DEFAULT 0
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS user_segments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                criteria_json TEXT,
+                user_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS system_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                value TEXT,
+                category TEXT DEFAULT 'general',
+                description TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS risk_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                score INTEGER DEFAULT 0,
+                factors_json TEXT,
+                calculated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS bot_commands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT UNIQUE,
+                description TEXT,
+                response_template TEXT,
+                is_enabled INTEGER DEFAULT 1,
+                usage_count INTEGER DEFAULT 0
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS bot_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                command TEXT,
+                response TEXT,
+                session_id TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         c.execute('''
             CREATE TABLE IF NOT EXISTS kyc_verification_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,6 +296,33 @@ def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+
+        existing_user_columns = {
+            row["name"] for row in c.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "email" not in existing_user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        if "risk_score" not in existing_user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN risk_score INTEGER DEFAULT 0")
+        if "created_at" not in existing_user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP")
+        if "is_active" not in existing_user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+        if "is_banned" not in existing_user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0")
+
+        existing_faq_columns = {
+            row["name"] for row in c.execute("PRAGMA table_info(faqs)").fetchall()
+        }
+        if "category" not in existing_faq_columns:
+            c.execute("ALTER TABLE faqs ADD COLUMN category TEXT DEFAULT 'general'")
+        if "display_order" not in existing_faq_columns:
+            c.execute("ALTER TABLE faqs ADD COLUMN display_order INTEGER DEFAULT 0")
+        if "is_active" not in existing_faq_columns:
+            c.execute("ALTER TABLE faqs ADD COLUMN is_active INTEGER DEFAULT 1")
+        if "language" not in existing_faq_columns:
+            c.execute("ALTER TABLE faqs ADD COLUMN language TEXT DEFAULT 'fa'")
 
         # Backward-compatible migrations for existing DBs
         existing_transaction_columns = {
