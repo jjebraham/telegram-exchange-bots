@@ -1,9 +1,17 @@
 import logging
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
-from .api import rates, users, transactions
+from .api import rates, users, transactions, admin_settings
 from .price_cache import price_cache
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
+logging.info(f"Loaded environment from: {env_path}")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +35,7 @@ app.add_middleware(
 app.include_router(rates.router, prefix="/api", tags=["rates"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])
+app.include_router(admin_settings.router, prefix="/api", tags=["admin-settings"])
 
 
 @app.on_event("startup")

@@ -4,6 +4,7 @@ import random
 import logging
 import os
 import json
+import time
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -18,6 +19,8 @@ from ..auth import (
     get_current_user_id,
 )
 
+# EHRAZ_TOKEN will be loaded from database via api_settings module
+# Default fallback token
 EHRAZ_TOKEN = "5942b9d62abc20405dadfb2c0f546b669cf1471c"
 
 # Telegram Bot Configuration
@@ -28,121 +31,130 @@ ADMIN_CHAT_ID = 2043363119
 # KYC Verification Mode
 # Set to True to enable test mode (bypasses EHRAZ for test data)
 # Set to False for production (real EHRAZ verification)
-KYC_TEST_MODE = True  # ENABLED - EHRAZ API returning 500 errors
+# Will be overridden by database settings
+KYC_TEST_MODE = False  # DISABLED - Use real EHRAZ API
 
 # List of proxy servers from your configuration
+# IMPORTANT: EHRAZ API requires authenticated proxies
+# Use the pattern: http://jjebraham-{N}:Amir1234@p.webshare.io:80
+# Where N is a number from 1-100 (randomized)
+
 PROXY_LIST = [
-    # Working authenticated proxy from test - PRIMARY
+    "http://jjebraham-1:Amir1234@p.webshare.io:80",
+    "http://jjebraham-2:Amir1234@p.webshare.io:80",
+    "http://jjebraham-3:Amir1234@p.webshare.io:80",
+    "http://jjebraham-4:Amir1234@p.webshare.io:80",
+    "http://jjebraham-5:Amir1234@p.webshare.io:80",
+    "http://jjebraham-6:Amir1234@p.webshare.io:80",
+    "http://jjebraham-7:Amir1234@p.webshare.io:80",
+    "http://jjebraham-8:Amir1234@p.webshare.io:80",
+    "http://jjebraham-9:Amir1234@p.webshare.io:80",
+    "http://jjebraham-10:Amir1234@p.webshare.io:80",
+    "http://jjebraham-11:Amir1234@p.webshare.io:80",
+    "http://jjebraham-12:Amir1234@p.webshare.io:80",
+    "http://jjebraham-13:Amir1234@p.webshare.io:80",
+    "http://jjebraham-14:Amir1234@p.webshare.io:80",
+    "http://jjebraham-15:Amir1234@p.webshare.io:80",
+    "http://jjebraham-16:Amir1234@p.webshare.io:80",
+    "http://jjebraham-17:Amir1234@p.webshare.io:80",
+    "http://jjebraham-18:Amir1234@p.webshare.io:80",
     "http://jjebraham-19:Amir1234@p.webshare.io:80",
-    # Backup authenticated proxies (if you have more)
-    # "http://username:password@proxy2:port",
-    # "http://username:password@proxy3:port",
-    
-    # Note: Non-authenticated proxies are removed since they don't work with EHRAZ
-    # If you get more working authenticated proxies, add them here
-    "193.160.78.239:5919",
-    "104.250.207.125:6523",
-    "173.245.88.77:5380",
-    "107.181.143.171:6302",
-    "45.38.84.162:7098",
-    "67.227.1.26:6307",
-    "92.113.1.107:5807",
-    "64.137.92.43:6242",
-    "67.227.37.170:5712",
-    "191.96.173.42:6055",
-    "104.143.252.167:5781",
-    "45.141.81.25:6085",
-    "168.199.145.4:6262",
-    "45.38.111.198:6113",
-    "31.58.23.166:5739",
-    "45.150.178.246:6118",
-    "206.206.71.86:5726",
-    "67.227.37.52:5594",
-    "92.112.155.70:7194",
-    "104.239.97.191:5944",
-    "2.57.30.125:7201",
-    "104.238.14.125:6510",
-    "104.239.44.190:6112",
-    "184.174.126.51:6343",
-    "136.0.189.140:6867",
-    "168.199.145.55:6313",
-    "2.57.31.223:6799",
-    "67.227.42.206:6183",
-    "194.39.32.247:6544",
-    "140.233.166.169:7202",
-    "31.59.21.101:6367",
-    "64.137.37.38:6628",
-    "102.212.88.222:6219",
-    "104.233.13.184:6179",
-    "104.252.28.134:6072",
-    "136.0.118.200:6572",
-    "80.96.71.105:5595",
-    "193.187.114.215:6230",
-    "45.38.84.253:7189",
-    "93.118.38.64:6208",
-    "206.206.64.140:6101",
-    "64.137.57.98:6107",
-    "104.252.193.112:6022",
-    "185.15.178.101:5785",
-    "104.253.81.21:5449",
-    "148.135.188.5:7037",
-    "31.57.90.143:5712",
-    "45.147.187.3:6376",
-    "45.150.23.199:6669",
-    "145.223.40.236:5806",
-    "155.254.38.123:5799",
-    "46.203.45.196:6219",
-    "185.171.255.30:6083",
-    "46.203.79.27:6553",
-    "45.159.54.195:7067",
-    "92.112.227.32:6204",
-    "82.29.229.112:6467",
-    "23.129.254.13:5995",
-    "67.227.113.72:5612",
-    "67.227.113.15:5555",
-    "92.112.238.65:6944",
-    "82.22.210.225:8067",
-    "45.61.97.253:6779",
-    "23.236.170.178:9211",
-    "104.252.193.75:5985",
-    "82.29.229.65:6420",
-    "23.229.110.120:8648",
-    "82.24.236.86:7896",
-    "31.58.24.163:6234",
-    "45.14.83.8:7986",
-    "82.23.225.200:8051",
-    "204.217.245.155:6746",
-    "82.27.214.241:6583",
-    "82.23.221.29:6359",
-    "45.131.94.82:6069",
-    "103.101.88.202:5926",
-    "82.21.245.103:6427",
-    "161.123.33.185:6208",
-    "23.95.255.75:6659",
-    "98.159.38.158:6458",
-    "45.39.4.13:5438",
-    "82.24.249.60:5897",
-    "136.0.189.227:6954",
-    "82.21.245.189:6513",
-    "206.232.103.58:6215",
-    "23.27.196.222:6591",
-    "104.143.226.126:5729",
-    "82.25.247.17:6351",
-    "92.112.235.4:6527",
-    "82.23.204.82:6914",
-    "23.27.210.154:6524",
-    "104.238.38.24:6292",
-    "216.173.72.20:6639",
-    "23.229.125.113:5382",
-    "82.29.245.125:6949",
-    "50.114.99.138:6879",
-    "50.114.99.125:6866"
+    "http://jjebraham-20:Amir1234@p.webshare.io:80",
+    "http://jjebraham-21:Amir1234@p.webshare.io:80",
+    "http://jjebraham-22:Amir1234@p.webshare.io:80",
+    "http://jjebraham-23:Amir1234@p.webshare.io:80",
+    "http://jjebraham-24:Amir1234@p.webshare.io:80",
+    "http://jjebraham-25:Amir1234@p.webshare.io:80",
+    "http://jjebraham-26:Amir1234@p.webshare.io:80",
+    "http://jjebraham-27:Amir1234@p.webshare.io:80",
+    "http://jjebraham-28:Amir1234@p.webshare.io:80",
+    "http://jjebraham-29:Amir1234@p.webshare.io:80",
+    "http://jjebraham-30:Amir1234@p.webshare.io:80",
+    "http://jjebraham-31:Amir1234@p.webshare.io:80",
+    "http://jjebraham-32:Amir1234@p.webshare.io:80",
+    "http://jjebraham-33:Amir1234@p.webshare.io:80",
+    "http://jjebraham-34:Amir1234@p.webshare.io:80",
+    "http://jjebraham-35:Amir1234@p.webshare.io:80",
+    "http://jjebraham-36:Amir1234@p.webshare.io:80",
+    "http://jjebraham-37:Amir1234@p.webshare.io:80",
+    "http://jjebraham-38:Amir1234@p.webshare.io:80",
+    "http://jjebraham-39:Amir1234@p.webshare.io:80",
+    "http://jjebraham-40:Amir1234@p.webshare.io:80",
+    "http://jjebraham-41:Amir1234@p.webshare.io:80",
+    "http://jjebraham-42:Amir1234@p.webshare.io:80",
+    "http://jjebraham-43:Amir1234@p.webshare.io:80",
+    "http://jjebraham-44:Amir1234@p.webshare.io:80",
+    "http://jjebraham-45:Amir1234@p.webshare.io:80",
+    "http://jjebraham-46:Amir1234@p.webshare.io:80",
+    "http://jjebraham-47:Amir1234@p.webshare.io:80",
+    "http://jjebraham-48:Amir1234@p.webshare.io:80",
+    "http://jjebraham-49:Amir1234@p.webshare.io:80",
+    "http://jjebraham-50:Amir1234@p.webshare.io:80",
+    "http://jjebraham-51:Amir1234@p.webshare.io:80",
+    "http://jjebraham-52:Amir1234@p.webshare.io:80",
+    "http://jjebraham-53:Amir1234@p.webshare.io:80",
+    "http://jjebraham-54:Amir1234@p.webshare.io:80",
+    "http://jjebraham-55:Amir1234@p.webshare.io:80",
+    "http://jjebraham-56:Amir1234@p.webshare.io:80",
+    "http://jjebraham-57:Amir1234@p.webshare.io:80",
+    "http://jjebraham-58:Amir1234@p.webshare.io:80",
+    "http://jjebraham-59:Amir1234@p.webshare.io:80",
+    "http://jjebraham-60:Amir1234@p.webshare.io:80",
+    "http://jjebraham-61:Amir1234@p.webshare.io:80",
+    "http://jjebraham-62:Amir1234@p.webshare.io:80",
+    "http://jjebraham-63:Amir1234@p.webshare.io:80",
+    "http://jjebraham-64:Amir1234@p.webshare.io:80",
+    "http://jjebraham-65:Amir1234@p.webshare.io:80",
+    "http://jjebraham-66:Amir1234@p.webshare.io:80",
+    "http://jjebraham-67:Amir1234@p.webshare.io:80",
+    "http://jjebraham-68:Amir1234@p.webshare.io:80",
+    "http://jjebraham-69:Amir1234@p.webshare.io:80",
+    "http://jjebraham-70:Amir1234@p.webshare.io:80",
+    "http://jjebraham-71:Amir1234@p.webshare.io:80",
+    "http://jjebraham-72:Amir1234@p.webshare.io:80",
+    "http://jjebraham-73:Amir1234@p.webshare.io:80",
+    "http://jjebraham-74:Amir1234@p.webshare.io:80",
+    "http://jjebraham-75:Amir1234@p.webshare.io:80",
+    "http://jjebraham-76:Amir1234@p.webshare.io:80",
+    "http://jjebraham-77:Amir1234@p.webshare.io:80",
+    "http://jjebraham-78:Amir1234@p.webshare.io:80",
+    "http://jjebraham-79:Amir1234@p.webshare.io:80",
+    "http://jjebraham-80:Amir1234@p.webshare.io:80",
+    "http://jjebraham-81:Amir1234@p.webshare.io:80",
+    "http://jjebraham-82:Amir1234@p.webshare.io:80",
+    "http://jjebraham-83:Amir1234@p.webshare.io:80",
+    "http://jjebraham-84:Amir1234@p.webshare.io:80",
+    "http://jjebraham-85:Amir1234@p.webshare.io:80",
+    "http://jjebraham-86:Amir1234@p.webshare.io:80",
+    "http://jjebraham-87:Amir1234@p.webshare.io:80",
+    "http://jjebraham-88:Amir1234@p.webshare.io:80",
+    "http://jjebraham-89:Amir1234@p.webshare.io:80",
+    "http://jjebraham-90:Amir1234@p.webshare.io:80",
+    "http://jjebraham-91:Amir1234@p.webshare.io:80",
+    "http://jjebraham-92:Amir1234@p.webshare.io:80",
+    "http://jjebraham-93:Amir1234@p.webshare.io:80",
+    "http://jjebraham-94:Amir1234@p.webshare.io:80",
+    "http://jjebraham-95:Amir1234@p.webshare.io:80",
+    "http://jjebraham-96:Amir1234@p.webshare.io:80",
+    "http://jjebraham-97:Amir1234@p.webshare.io:80",
+    "http://jjebraham-98:Amir1234@p.webshare.io:80",
+    "http://jjebraham-99:Amir1234@p.webshare.io:80",
+    "http://jjebraham-100:Amir1234@p.webshare.io:80",
 ]
 
 def get_random_proxy():
     """Get a random proxy from the list"""
-    proxy = random.choice(PROXY_LIST)
-    return proxy  # Return as-is since all proxies now have full URL with auth
+    # Try to get proxies from database first
+    try:
+        from .api_settings import get_ehraz_proxies
+        proxy_list = get_ehraz_proxies()
+        if proxy_list:
+            return random.choice(proxy_list)
+    except ImportError:
+        pass
+    
+    # Fallback to hardcoded list
+    return random.choice(PROXY_LIST)
 
 
 async def send_telegram_notification(message: str):
@@ -359,8 +371,122 @@ def _normalize_iran_phone(phone: str) -> str:
 
 
 async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str]:
-    api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
-    line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
+    """Send SMS via Ghasedak API using OTP endpoint with Iranian proxies"""
+    # Try to get settings from database first
+    try:
+        from .api_settings import get_ghasedak_api_key, get_ghasedak_template
+        api_key = get_ghasedak_api_key()
+        template_name = get_ghasedak_template()
+    except ImportError:
+        # Fallback to environment variables
+        api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
+        template_name = os.getenv("GHASEDAK_TEMPLATE_NAME", "").strip()
+    
+    if not api_key:
+        return (False, "missing_ghasedak_api_key")
+    
+    if not template_name:
+        # Fallback to simple SMS if no template
+        return await _send_ghasedak_simple_sms(phone_number, message)
+    
+    # Extract OTP code from message (looking for 6-digit code)
+    import re
+    code_match = re.search(r'\b(\d{6})\b', message)
+    if not code_match:
+        # No 6-digit code found, use simple SMS
+        return await _send_ghasedak_simple_sms(phone_number, message)
+    
+    code = code_match.group(1)
+    
+    # Use OTP endpoint (from working test app)
+    url = "https://gateway.ghasedak.me/rest/api/v1/WebService/SendOtpWithParams"
+    
+    headers = {
+        "accept": "text/plain",
+        "ApiKey": api_key,  # Note: "ApiKey" not "apikey"
+        "Content-Type": "application/json",
+    }
+    
+    payload = {
+        "receptors": [{"mobile": phone_number, "clientReferenceId": str(int(time.time()))}],
+        "templateName": template_name,
+        "param1": code,
+        "param2": "",
+        "param3": "",
+        "param4": "",
+        "param5": "",
+        "param6": "",
+        "param7": "",
+        "param8": "",
+        "param9": "",
+        "param10": "",
+        "isVoice": False,
+        "udh": False,
+    }
+    
+    # Try with Iranian proxies first (from your working test)
+    # Get proxy settings from database
+    try:
+        from .api_settings import get_ghasedak_proxy_format, get_ghasedak_proxy_pool
+        proxy_format = get_ghasedak_proxy_format()
+        proxy_start, proxy_end = get_ghasedak_proxy_pool()
+    except ImportError:
+        # Fallback to default
+        proxy_format = "http://jjebraham-{n}:Amir1234@59.152.60.100:6040"
+        proxy_start, proxy_end = 1, 100
+    
+    for attempt in range(3):
+        proxy_num = random.randint(proxy_start, proxy_end)
+        proxy_url = proxy_format.format(n=proxy_num)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    proxy=proxy_url,
+                    timeout=15,
+                ) as resp:
+                    body = await resp.text()
+                    ok = resp.status == 200
+                    
+                    # Parse response
+                    try:
+                        data = json.loads(body) if body.strip() else {}
+                        # Success: HTTP 200 + isSuccess True (typical Ghasedak)
+                        if resp.status == 200 and (data.get("isSuccess") is True or "isSuccess" not in data):
+                            logger.info(f"Ghasedak OTP sent via proxy {proxy_url}: success")
+                            _write_sms_log(phone_number, payload, body[:2000], True, None)
+                            return (True, body)
+                        else:
+                            error_msg = data.get("message") or f"HTTP {resp.status}: {body[:300]}"
+                            logger.warning(f"Ghasedak OTP failed via proxy {proxy_url}: {error_msg}")
+                    except:
+                        error_msg = f"Invalid JSON: {body[:300]}"
+                        logger.warning(f"Ghasedak OTP invalid response via proxy {proxy_url}: {error_msg}")
+                    
+                    _write_sms_log(phone_number, payload, body[:2000], False, f"proxy_http_{resp.status}")
+        except Exception as exc:
+            logger.warning(f"Ghasedak proxy attempt {attempt+1} failed (proxy={proxy_url}): {exc}")
+            continue
+    
+    # If OTP endpoint fails, try simple SMS as fallback
+    logger.info("Ghasedak OTP endpoint failed, trying simple SMS as fallback")
+    return await _send_ghasedak_simple_sms(phone_number, message)
+
+async def _send_ghasedak_simple_sms(phone_number: str, message: str) -> tuple[bool, str]:
+    """Fallback: Send simple SMS (old method)"""
+    # Try to get settings from database first
+    try:
+        from .api_settings import get_ghasedak_api_key, get_ghasedak_line_number
+        api_key = get_ghasedak_api_key()
+        line_number = get_ghasedak_line_number()
+    except ImportError:
+        # Fallback to environment variables
+        api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
+        line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
+    
     if not api_key:
         return (False, "missing_ghasedak_api_key")
 
@@ -375,28 +501,61 @@ async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str
         "apikey": api_key,
         "Content-Type": "application/x-www-form-urlencoded",
     }
-
+    
+    url = "https://api.ghasedak.me/v2/sms/send/simple"
+    
+    # Try with Iranian proxy first
+    # Get proxy settings from database
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.ghasedak.me/v2/sms/send/simple",
-                data=payload,
-                headers=headers,
-                timeout=10,
-            ) as resp:
-                body = await resp.text()
-                ok = resp.status == 200
-                logger.info("Ghasedak response status=%s body=%s", resp.status, body[:500])
-                _write_sms_log(phone_number, payload, body[:2000], ok, None if ok else f"http_{resp.status}")
-                return (ok, body)
-    except Exception as exc:
-        logger.error("Ghasedak send failed: %s", exc)
-        _write_sms_log(phone_number, payload, str(exc), False, str(exc))
-        return (False, str(exc))
+        from .api_settings import get_ghasedak_proxy_format, get_ghasedak_proxy_pool
+        proxy_format = get_ghasedak_proxy_format()
+        proxy_start, proxy_end = get_ghasedak_proxy_pool()
+    except ImportError:
+        # Fallback to default
+        proxy_format = "http://jjebraham-{n}:Amir1234@59.152.60.100:6040"
+        proxy_start, proxy_end = 1, 100
+    
+    for attempt in range(2):
+        proxy_num = random.randint(proxy_start, proxy_end)
+        proxy_url = proxy_format.format(n=proxy_num)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    data=payload,
+                    headers=headers,
+                    proxy=proxy_url,
+                    timeout=10,
+                ) as resp:
+                    body = await resp.text()
+                    ok = resp.status == 200
+                    logger.info(f"Ghasedak simple SMS via proxy {proxy_url}: status={resp.status}")
+                    _write_sms_log(phone_number, payload, body[:2000], ok, 
+                                 f"simple_proxy_http_{resp.status}" if not ok else None)
+                    return (ok, body)
+        except Exception as exc:
+            logger.warning(f"Ghasedak simple SMS proxy attempt {attempt+1} failed: {exc}")
+            continue
+    
+    # All attempts failed
+    error_msg = "Ghasedak API failed with all Iranian proxies"
+    logger.error(error_msg)
+    _write_sms_log(phone_number, payload, error_msg, False, error_msg)
+    return (False, error_msg)
 
 async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 6, phone_number: str | None = None, national_id: str | None = None):
+    # Get EHRAZ token from database or fallback
+    try:
+        from .api_settings import get_ehraz_token
+        token = get_ehraz_token()
+        if not token:
+            token = EHRAZ_TOKEN
+    except ImportError:
+        token = EHRAZ_TOKEN
+    
     headers = {
-        "Authorization": f"Bearer {EHRAZ_TOKEN}",
+        "Authorization": f"Token {token}",
         "Content-Type": "application/json",
     }
 
@@ -471,8 +630,8 @@ async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 6, phone_n
             _write_ehraz_log(phone_number, national_id, url, payload, {"proxy_error": str(exc)}, False, str(exc))
             continue
 
-    _write_ehraz_log(phone_number, national_id, url, payload, {"matched": False}, False, "all_attempts_failed")
-    return {"matched": False}
+    _write_ehraz_log(phone_number, national_id, url, payload, {"api_failed": True}, False, "all_attempts_failed")
+    raise Exception("EHRAZ API service unavailable - all proxy attempts failed")
 
 
 def _user_dict(row):
@@ -624,12 +783,16 @@ async def register_user(req: RegisterRequest):
                     "action": "calling_ehraz_api"
                 })
                 
+                # Format card number (remove spaces) and date (YYYYMMDD format)
+                formatted_card = ''.join(ch for ch in req.bank_card_number if ch.isdigit())
+                formatted_dob = ''.join(ch for ch in req.date_of_birth if ch.isdigit())
+                
                 card_national_match = await _ehraz_post(
                     "https://ehraz.io/api/v1/match/card-with-national",
                     {
                         "nationalCode": req.national_id,
-                        "birthDate": req.date_of_birth,
-                        "cardNumber": req.bank_card_number
+                        "birthDate": formatted_dob,
+                        "cardNumber": formatted_card
                     },
                     phone_number=req.phone_number,
                     national_id=req.national_id
@@ -769,12 +932,16 @@ async def get_me(user_id: int = Depends(get_current_user_id)):
 
 @router.post("/verify/ehraz")
 async def verify_with_ehraz(req: EhrazRequest):
+    # Format card number (remove spaces) and date (YYYYMMDD format)
+    formatted_card = ''.join(ch for ch in req.cardNumber if ch.isdigit())
+    formatted_dob = ''.join(ch for ch in req.birthDate if ch.isdigit())
+    
     data = await _ehraz_post(
         "https://ehraz.io/api/v1/match/card-with-national",
         {
-            "cardNumber": req.cardNumber,
+            "cardNumber": formatted_card,
             "nationalCode": req.nationalCode,
-            "birthDate": req.birthDate,
+            "birthDate": formatted_dob,
         },
         timeout_seconds=6,
     )
@@ -909,6 +1076,12 @@ async def start_password_reset(req: PasswordResetStartRequest):
             "password_reset_sms",
             {"phone": normalized_phone, "success": ok, "provider_response": response_text[:300]},
         )
+        
+        # Return actual status instead of always "sent"
+        if ok:
+            return {"status": "sent", "message": "SMS sent successfully"}
+        else:
+            return {"status": "failed", "message": f"SMS failed: {response_text[:100]}"}
 
     # For bot channel the reset is handled inside Telegram bot conversation (/resetpassword)
     return {"status": "sent"}
