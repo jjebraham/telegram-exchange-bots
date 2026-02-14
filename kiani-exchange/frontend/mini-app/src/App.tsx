@@ -1853,6 +1853,11 @@ function AdminPanelPage() {
   const [logs, setLogs] = useState<any[]>([]);
   const [report, setReport] = useState<any>(null);
   const [faqs, setFaqs] = useState<any[]>([]);
+  const [kycLogs, setKycLogs] = useState<any>({
+    ehraz_logs: [],
+    sms_logs: [],
+    kyc_verification_logs: []
+  });
   const [statusRef, setStatusRef] = useState('');
   const [statusValue, setStatusValue] = useState('Under Review');
   const [faqQuestion, setFaqQuestion] = useState('');
@@ -1872,13 +1877,14 @@ function AdminPanelPage() {
 
   const loadAll = async () => {
     const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    const [u, t, l, r, f, rs] = await Promise.all([
+    const [u, t, l, r, f, rs, k] = await Promise.all([
       fetch(`${API_URL}/admin/users?${qs}`),
       fetch(`${API_URL}/admin/transactions?${qs}`),
       fetch(`${API_URL}/admin/logs?${qs}`),
       fetch(`${API_URL}/admin/reports?${qs}`),
       fetch(`${API_URL}/admin/faqs?${qs}`),
       fetch(`${API_URL}/admin/rates?${qs}`),
+      fetch(`${API_URL}/admin/kyc-logs?${qs}`),
     ]);
     setUsers((await u.json()).users || []);
     setTransactions((await t.json()).transactions || []);
@@ -1886,6 +1892,7 @@ function AdminPanelPage() {
     setReport((await r.json()).report || null);
     setFaqs((await f.json()).faqs || []);
     setAdminRates((await rs.json()).settings || {});
+    setKycLogs((await k.json()) || { ehraz_logs: [], sms_logs: [], kyc_verification_logs: [] });
   };
 
   const login = async () => {
@@ -2081,16 +2088,6 @@ function AdminPanelPage() {
         </div>
       </div>
 
-      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-        <h3 className="font-bold text-white mb-3">Broadcast Message</h3>
-        <div className="flex gap-2 flex-wrap"><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="User ID (empty for all)" value={targetUserId} onChange={(e)=>setTargetUserId(e.target.value)} /><input className="flex-1 px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="Message" value={messageText} onChange={(e)=>setMessageText(e.target.value)} /><button className="px-4 py-2 bg-purple-600 rounded text-white" onClick={async ()=>{const res=await fetch(`${API_URL}/admin/messages/send`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,message:messageText,user_id:targetUserId?Number(targetUserId):null})});const data=await res.json();notifyMessage(`ارسال شد: ${data.sent ?? 0}`);}}>Send</button></div>
-      </div>
-
-      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-        <h3 className="font-bold text-white mb-3">FAQ</h3>
-        <div className="flex gap-2 mb-2"><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="سوال" value={faqQuestion} onChange={(e)=>setFaqQuestion(e.target.value)} /><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="پاسخ" value={faqAnswer} onChange={(e)=>setFaqAnswer(e.target.value)} /><button className="px-3 py-2 bg-blue-600 rounded text-white" onClick={async ()=>{await fetch(`${API_URL}/admin/faqs`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,question:faqQuestion,answer:faqAnswer})});setFaqQuestion('');setFaqAnswer('');loadAll();}}>Add</button></div>
-        <div className="max-h-40 overflow-auto text-sm text-gray-300">{faqs.map((f)=><div key={f.id} className="py-1 border-b border-gray-700/40 flex justify-between"><span>{f.question}</span><button className="text-red-400" onClick={async ()=>{const qs=`username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`,{method:'DELETE'}); loadAll();}}>Delete</button></div>)}</div>
-      </div>
     </div>
   );
 
@@ -2099,12 +2096,190 @@ function AdminPanelPage() {
       case 'dashboard': return renderDashboard();
       case 'users': return renderUsers();
       case 'exchanges': return renderExchanges();
-      case 'kyc': return <div className="text-white text-center py-20">KYC Management Coming Soon...</div>;
+      case 'kyc': return (
+        <div className="space-y-6">
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+            <h3 className="font-bold mb-3 text-white">KYC Verification Flow Logs</h3>
+            <div className="max-h-72 overflow-auto space-y-2">
+              {kycLogs.kyc_verification_logs?.map((log: any) => (
+                <div key={`k${log.id}`} className="text-xs border border-gray-700/50 rounded p-2">
+                  <div className="flex justify-between">
+                    <span className="text-gray-300">{log.created_at}</span>
+                    <span className={`px-2 py-1 rounded ${
+                      log.action?.includes('failed') ? 'bg-red-500/20 text-red-400' :
+                      log.action?.includes('success') ? 'bg-green-500/20 text-green-400' :
+                      'bg-blue-500/20 text-blue-400'
+                    }`}>
+                      {log.action || 'Unknown'}
+                    </span>
+                  </div>
+                  <div className="text-gray-400">
+                    Phone: {log.phone_number || '-'} | NID: {log.national_id || '-'}
+                  </div>
+                  <div className="text-gray-300 break-all mt-1">
+                    Details: {log.details || 'No details'}
+                  </div>
+                </div>
+              ))}
+              {(!kycLogs.kyc_verification_logs || kycLogs.kyc_verification_logs.length === 0) && (
+                <div className="text-center text-gray-500 py-4">No KYC verification logs found</div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+            <h3 className="font-bold mb-3 text-white">EHRAZ API Logs</h3>
+            <div className="max-h-72 overflow-auto space-y-2">
+              {kycLogs.ehraz_logs?.map((log: any) => (
+                <div key={`e${log.id}`} className="text-xs border border-gray-700/50 rounded p-2">
+                  <div className="text-gray-300">
+                    {log.created_at} | {log.endpoint || 'Unknown endpoint'}
+                  </div>
+                  <div className="text-gray-400">
+                    Phone: {log.phone_number || '-'} | NID: {log.national_id || '-'}
+                  </div>
+                  <div className="text-gray-300 break-all mt-1">
+                    Request: {log.request_payload || 'No request data'}
+                  </div>
+                  <div className="text-gray-300 break-all mt-1">
+                    Response: {log.response_payload || 'No response data'}
+                  </div>
+                  <div className={`mt-1 ${log.success ? 'text-green-400' : 'text-red-400'}`}>
+                    {log.error_message || (log.success ? 'Success' : 'Failed')}
+                  </div>
+                </div>
+              ))}
+              {(!kycLogs.ehraz_logs || kycLogs.ehraz_logs.length === 0) && (
+                <div className="text-center text-gray-500 py-4">No EHRAZ API logs found</div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+            <h3 className="font-bold mb-3 text-white">Ghasedak SMS Logs</h3>
+            <div className="max-h-72 overflow-auto space-y-2">
+              {kycLogs.sms_logs?.map((log: any) => (
+                <div key={`s${log.id}`} className="text-xs border border-gray-700/50 rounded p-2">
+                  <div className="text-gray-300">
+                    {log.created_at} | {log.phone_number || 'Unknown phone'}
+                  </div>
+                  <div className="text-gray-300 break-all mt-1">
+                    Request: {log.request_payload || 'No request data'}
+                  </div>
+                  <div className="text-gray-300 break-all mt-1">
+                    Response: {log.response_payload || 'No response data'}
+                  </div>
+                  <div className={`mt-1 ${log.success ? 'text-green-400' : 'text-red-400'}`}>
+                    {log.error_message || (log.success ? 'Success' : 'Failed')}
+                  </div>
+                </div>
+              ))}
+              {(!kycLogs.sms_logs || kycLogs.sms_logs.length === 0) && (
+                <div className="text-center text-gray-500 py-4">No SMS logs found</div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
       case 'wallets': return <div className="text-white text-center py-20">Wallet Management Coming Soon...</div>;
       case 'rates': return <div className="max-w-3xl mx-auto bg-gray-800/50 border border-gray-700/50 rounded-xl p-6 space-y-4"><h3 className="text-xl font-bold text-white">Rate Management</h3><p className="text-gray-400 text-sm">ضرایب فعلی محاسبه نرخ</p><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{Object.entries(adminRates).map(([k,v]) => <label key={k} className="text-sm text-gray-300"><div className="mb-1">{k}</div><input className="w-full px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" value={String(v)} onChange={(e)=>setAdminRates((prev)=>({...prev,[k]: Number(e.target.value || '0')}))} /></label>)}</div><button className="px-4 py-2 bg-blue-600 rounded text-white" onClick={async ()=>{const res=await fetch(`${API_URL}/admin/rates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,...adminRates})}); if(res.ok){notifyMessage('ضرایب نرخ با موفقیت ذخیره شد'); loadAll();} else {notifyMessage('خطا در ذخیره تنظیمات نرخ');}}}>Save Rate Settings</button></div>;
       case 'fees': return <div className="text-white text-center py-20">Fee Configuration Coming Soon...</div>;
       case 'limits': return <div className="text-white text-center py-20">Transaction Limits Coming Soon...</div>;
-      case 'broadcast': return <div className="text-white text-center py-20">Broadcast Message Coming Soon...</div>;
+      case 'broadcast': return (
+        <div className="space-y-6">
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+            <h3 className="font-bold text-white mb-3">Broadcast Message</h3>
+            <div className="flex gap-2 flex-wrap">
+              <input 
+                className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
+                placeholder="User ID (empty for all)" 
+                value={targetUserId} 
+                onChange={(e)=>setTargetUserId(e.target.value)} 
+              />
+              <input 
+                className="flex-1 px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
+                placeholder="Message" 
+                value={messageText} 
+                onChange={(e)=>setMessageText(e.target.value)} 
+              />
+              <button 
+                className="px-4 py-2 bg-purple-600 rounded text-white" 
+                onClick={async ()=>{
+                  const res = await fetch(`${API_URL}/admin/messages/send`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                      username,
+                      password,
+                      message: messageText,
+                      user_id: targetUserId ? Number(targetUserId) : null
+                    })
+                  });
+                  const data = await res.json();
+                  notifyMessage(`ارسال شد: ${data.sent ?? 0}`);
+                }}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+            <h3 className="font-bold text-white mb-3">FAQ Management</h3>
+            <div className="flex gap-2 mb-2">
+              <input 
+                className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
+                placeholder="سوال" 
+                value={faqQuestion} 
+                onChange={(e)=>setFaqQuestion(e.target.value)} 
+              />
+              <input 
+                className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
+                placeholder="پاسخ" 
+                value={faqAnswer} 
+                onChange={(e)=>setFaqAnswer(e.target.value)} 
+              />
+              <button 
+                className="px-3 py-2 bg-blue-600 rounded text-white" 
+                onClick={async ()=>{
+                  await fetch(`${API_URL}/admin/faqs`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                      username,
+                      password,
+                      question: faqQuestion,
+                      answer: faqAnswer
+                    })
+                  });
+                  setFaqQuestion('');
+                  setFaqAnswer('');
+                  loadAll();
+                }}
+              >
+                Add FAQ
+              </button>
+            </div>
+            <div className="max-h-40 overflow-auto text-sm text-gray-300">
+              {faqs.map((f) => (
+                <div key={f.id} className="py-1 border-b border-gray-700/40 flex justify-between">
+                  <span>{f.question}</span>
+                  <button 
+                    className="text-red-400" 
+                    onClick={async ()=>{
+                      const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+                      await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`, {method: 'DELETE'});
+                      loadAll();
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
       case 'support': return <div className="text-white text-center py-20">Support Tickets Coming Soon...</div>;
       case 'referrals': return <div className="text-white text-center py-20">Referral Program Coming Soon...</div>;
       case 'promotions': return <div className="text-white text-center py-20">Promotions & Rewards Coming Soon...</div>;
