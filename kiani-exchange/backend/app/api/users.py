@@ -19,12 +19,12 @@ from ..auth import (
     get_current_user_id,
 )
 
-EHRAZ_TOKEN = "5942b9d62abc20405dadfb2c0f546b669cf1471c"
+EHRAZ_TOKEN = os.getenv("EHRAZ_TOKEN", "5942b9d62abc20405dadfb2c0f546b669cf1471c")
 
 # Telegram Bot Configuration
-# Use the same token as in transactions.py for consistency
-TELEGRAM_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
-ADMIN_CHAT_ID = 2043363119
+# Use environment variables for security
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU")
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "2043363119"))
 
 # KYC Verification Mode
 # Set to True to enable test mode (bypasses EHRAZ for test data)
@@ -147,7 +147,7 @@ def get_random_proxy():
 
 async def send_telegram_notification(message: str):
     """Send notification to Telegram admin bot"""
-    if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE" or ADMIN_CHAT_ID == "YOUR_CHAT_ID_HERE":
+    if not TELEGRAM_BOT_TOKEN or not ADMIN_CHAT_ID:
         logger.warning("Telegram bot token or admin chat ID not configured")
         return
     

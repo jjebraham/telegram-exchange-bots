@@ -9,8 +9,8 @@ from ..auth import get_current_user_id
 from ..price_cache import price_cache
 from ..exchange_math import calculate_order, derive_rates
 
-ADMIN_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
-ADMIN_CHAT_ID = 2043363119
+ADMIN_BOT_TOKEN = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU")
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "2043363119"))
 PROXY_URL = "http://jjebraham-25:Amir1234@p.webshare.io:80"
 
 router = APIRouter()
