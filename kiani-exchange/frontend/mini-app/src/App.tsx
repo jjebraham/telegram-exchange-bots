@@ -1927,6 +1927,22 @@ function AdminPanelPage() {
 
   const filteredUsers = users.filter((u) => (`${u.first_name} ${u.last_name} ${u.phone_number} ${u.id}`).toLowerCase().includes(searchQuery.toLowerCase()));
 
+  const deleteUserForReregistration = async (userId: number) => {
+    const shouldDelete = window.confirm('Delete this user so they can register again for testing?');
+    if (!shouldDelete) return;
+
+    const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    const res = await fetch(`${API_URL}/admin/users/${userId}?${qs}`, { method: 'DELETE' });
+
+    if (!res.ok) {
+      notifyMessage('حذف کاربر انجام نشد. دوباره تلاش کنید.');
+      return;
+    }
+
+    notifyMessage('کاربر حذف شد و می‌تواند دوباره ثبت‌نام کند.');
+    loadAll();
+  };
+
   const renderDashboard = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1990,7 +2006,7 @@ function AdminPanelPage() {
                 <td className="px-4 py-3 text-gray-300">{u.bank_card_number}</td>
                 <td className="px-4 py-3 text-gray-300">{u.phone_number}</td>
                 <td className="px-4 py-3">{u.kyc_status === 'Approved' ? <span className="px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/30">Verified</span> : <span className="px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">Pending</span>}</td>
-                <td className="px-4 py-3"><div className="flex items-center gap-2"><button className="px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded text-blue-400">View</button><button onClick={async ()=>{ if(!newUserPassword){notifyMessage('رمز جدید را وارد کنید');return;} await fetch(`${API_URL}/admin/users/${u.id}/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,new_password:newUserPassword})}); notifyMessage('رمز کاربر ریست شد'); }} className="px-2 py-1 bg-red-500/20 border border-red-500/30 rounded text-red-400">Reset Pass</button><button onClick={async ()=>{const qs=`username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/users/${u.id}?${qs}`,{method:'DELETE'}); loadAll();}} className="px-2 py-1 bg-gray-500/20 border border-gray-500/30 rounded text-gray-300">Delete</button></div></td>
+                <td className="px-4 py-3"><div className="flex items-center gap-2"><button className="px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded text-blue-400">View</button><button onClick={async ()=>{ if(!newUserPassword){notifyMessage('رمز جدید را وارد کنید');return;} await fetch(`${API_URL}/admin/users/${u.id}/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,new_password:newUserPassword})}); notifyMessage('رمز کاربر ریست شد'); }} className="px-2 py-1 bg-red-500/20 border border-red-500/30 rounded text-red-400">Reset Pass</button><button onClick={()=>deleteUserForReregistration(u.id)} className="px-2 py-1 bg-red-900/30 border border-red-500/40 rounded text-red-300" title="Delete user account to allow a fresh registration">Delete & Re-register</button></div></td>
               </tr>)}
             </tbody>
           </table>
