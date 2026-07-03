@@ -1,0 +1,5 @@
+ccxt>=4.4,<5
+jdatetime>=5.0,<6
+pyTelegramBotAPI>=4.20,<5
+pytz>=2024.1
+requests>=2.31,<3
