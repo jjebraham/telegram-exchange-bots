@@ -18,7 +18,7 @@ For that reason this integration does **not** overwrite the production file. `ma
 
 The wrapper reads these settings immediately whenever a user requests a rate:
 
-- `user_tl_buy_adjustment_pct` — default `+2.00%`
+- `user_tl_buy_adjustment_pct` — default `+1.67%`
 - `user_tl_sell_adjustment_pct` — default `-3.00%`
 - `user_usdt_buy_adjustment_pct` — default `+1.00%`
 - `user_usdt_sell_adjustment_pct` — default `-1.00%`
@@ -48,7 +48,7 @@ PRICING_DB_PATH=/home/kianirad2020/send_changes/pricing_settings.db \
 Expected result:
 
 ```text
-OK: patched and compiled 13 pricing handlers from /home/kianirad2020/telegram_bot/main_user_bot.py
+OK: patched and compiled 12 pricing handlers from /home/kianirad2020/telegram_bot/main_user_bot.py
 ```
 
 If the command fails, do **not** change Supervisor. The failure means the running file differs from the reviewed clone and needs a targeted review first.
@@ -88,4 +88,4 @@ Then reread, update, and restart the program. The original bot file is never mod
 
 ## Security warning
 
-The public repository currently contains credentials in `main_user_bot_clone.py`. Rotate every exposed Telegram token, API key, proxy credential, and third-party token, move them to environment variables, and purge them from Git history before treating this repository as secure.
+Historical commits may still contain previously exposed credentials. Keep the current source environment-based, rotate every exposed credential, and purge the old values from Git history.

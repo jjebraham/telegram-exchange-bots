@@ -23,42 +23,16 @@ class RuntimePatchError(RuntimeError):
 
 
 PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
-    "cmd_rates": (
-        (
-            "buy_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)",
-            "buy_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"2.00\"))",
-        ),
-        (
-            "sell_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)",
-            "sell_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_sell_adjustment_pct\", \"-3.00\"))",
-        ),
-        (
-            "buy_usdt_rate = round_to_nearest_10(eff_toman * 1.01)",
-            "buy_usdt_rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_buy_adjustment_pct\", \"1.00\"))",
-        ),
-        (
-            "sell_usdt_rate = round_to_nearest_10(eff_toman * 0.99)",
-            "sell_usdt_rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_sell_adjustment_pct\", \"-1.00\"))",
-        ),
-        (
-            "lira_to_usdt_rate = round(usdt_try * 1.02, 2)",
-            "lira_to_usdt_rate = round(usdt_try * _pricing_factor(\"user_try_to_usdt_adjustment_pct\", \"2.00\"), 2)",
-        ),
-        (
-            "usdt_to_lira_rate = round(usdt_try * 0.98, 2)",
-            "usdt_to_lira_rate = round(usdt_try * _pricing_factor(\"user_usdt_to_try_adjustment_pct\", \"-2.00\"), 2)",
-        ),
-    ),
     "buy_lira_user": (
         (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"2.00\"))",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"1.67\"))",
         ),
     ),
     "main_menu_buy_lira_rate": (
         (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"2.00\"))",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"1.67\"))",
         ),
     ),
     "sell_lira_user": (
