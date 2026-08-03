@@ -26,13 +26,13 @@ PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
     "buy_lira_user": (
         (
             "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"1.67\"))",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"0.67\"))",
         ),
     ),
     "main_menu_buy_lira_rate": (
         (
             "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"1.67\"))",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"0.67\"))",
         ),
     ),
     "sell_lira_user": (

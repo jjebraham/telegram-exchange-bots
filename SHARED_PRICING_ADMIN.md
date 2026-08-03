@@ -18,7 +18,7 @@ For that reason this integration does **not** overwrite the production file. `ma
 
 The wrapper reads these settings immediately whenever a user requests a rate:
 
-- `user_tl_buy_adjustment_pct` — default `+1.67%`
+- `user_tl_buy_adjustment_pct` — default `+0.67%`
 - `user_tl_sell_adjustment_pct` — default `-3.00%`
 - `user_usdt_buy_adjustment_pct` — default `+1.00%`
 - `user_usdt_sell_adjustment_pct` — default `-1.00%`
