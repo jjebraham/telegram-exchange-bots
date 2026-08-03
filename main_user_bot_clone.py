@@ -6,6 +6,8 @@ import asyncio
 import random
 import re
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 import time
 import aiohttp
 import io
@@ -21,21 +23,21 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
-from passlib.context import CryptContext
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 ###############################################################################
 # CONFIGURATION
 ###############################################################################
-MAIN_BOT_TOKEN   = "8509657640:AAG4gNsyvG0xt5ePoFXraBlMUb6hIrWmaWE"
-ADMIN_BOT_TOKEN  = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
-ADMIN_CHAT_ID    = 2043363119
-PROXY_URL        = "http://jjebraham-25:Amir1234@p.webshare.io:80"
-
-# Import BotCommand for command registration
-from aiogram.types import BotCommand
+MAIN_BOT_TOKEN = os.environ["MAIN_BOT_TOKEN"]
+ADMIN_BOT_TOKEN = os.environ["ADMIN_BOT_TOKEN"]
+ADMIN_CHAT_ID = int(os.environ["ADMIN_CHAT_ID"])
+PROXY_URL = os.environ.get("PROXY_URL") or None
 
 # WALLEX CONFIG
-WALLEX_API_KEY  = "15064|7tVDd4NDBYmATAe4lWTUQSTzj0v7ceTELEv6u6zG"
+WALLEX_API_KEY = os.environ["WALLEX_API_KEY"]
+EHRAZ_API_TOKEN = os.environ["EHRAZ_API_TOKEN"]
 WALLEX_BASE_URL = "https://api.wallex.ir/v1"
 
 logging.basicConfig(
@@ -52,7 +54,6 @@ bot       = Bot(token=MAIN_BOT_TOKEN, proxy=PROXY_URL)
 admin_bot = Bot(token=ADMIN_BOT_TOKEN, proxy=PROXY_URL)
 storage   = MemoryStorage()
 dp        = Dispatcher(storage=storage)
-pwd_context = CryptContext(schemes=["sha256_crypt", "bcrypt"], deprecated="auto")
 
 ###############################################################################
 # ADMIN LOGGING MIDDLEWARE
@@ -119,9 +120,7 @@ class AdminLogMiddleware:
 # DATABASE FUNCTIONS
 ###############################################################################
 def get_db_connection():
-    # Use the same database as the backend
-    db_path = "/home/kianirad2020/telegram_bot_repo/kiani-exchange/backend/users.db"
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn = sqlite3.connect("users.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -145,9 +144,6 @@ def init_db():
                 kyc_notified INT DEFAULT 0
             )
         ''')
-        user_columns = {r['name'] for r in c.execute("PRAGMA table_info(users)").fetchall()}
-        if 'password_hash' not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
         c.execute('''
             CREATE TABLE IF NOT EXISTS bank_cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,18 +220,44 @@ class PriceCache:
 
     async def fetch_usdt_try(self) -> float:
         btcturk_url = "https://api.btcturk.com/api/v2/ticker?pairSymbol=USDTTRY"
-        logging.debug(f"Fetching USDT-TRY: {btcturk_url}")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://www.btcturk.com",
+            "Referer": "https://www.btcturk.com/",
+        }
+        
+        # Try with proxy first
+        logging.debug(f"Fetching USDT-TRY (with proxy): {btcturk_url}")
         try:
             async with aiohttp.ClientSession() as sess:
-                async with sess.get(btcturk_url, proxy=PROXY_URL, timeout=10) as resp:
+                async with sess.get(btcturk_url, headers=headers, proxy=PROXY_URL, timeout=10) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
                     arr = data.get("data", [])
                     if arr:
                         lastp = arr[0].get("last")
+                        logging.debug(f"USDT-TRY rate (via proxy): {lastp}")
                         return float(lastp)
         except Exception as e:
-            logging.error(f"Exception fetching USDT-TRY: {e}")
+            logging.warning(f"Failed to fetch USDT-TRY via proxy: {e}")
+            
+            # Try direct connection as fallback
+            logging.debug(f"Fetching USDT-TRY (direct): {btcturk_url}")
+            try:
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(btcturk_url, headers=headers, timeout=10) as resp:
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        arr = data.get("data", [])
+                        if arr:
+                            lastp = arr[0].get("last")
+                            logging.debug(f"USDT-TRY rate (direct): {lastp}")
+                            return float(lastp)
+            except Exception as e2:
+                logging.error(f"Failed to fetch USDT-TRY direct: {e2}")
+                
         return None
 
     async def get_usdt_irr(self) -> float:
@@ -295,7 +317,7 @@ def increment_ehraz(user_id: int):
 async def match_card_with_national(card_number: str, national_id: str, dob: str) -> bool:
     url = "https://ehraz.io/api/v1/match/card-with-national"
     headers = {
-        "Authorization": "Token 5942b9d62abc20405dadfb2c0f546b669cf1471c",
+        "Authorization": f"Token {EHRAZ_API_TOKEN}",
         "Content-Type": "application/json"
     }
     proxy_url_for_sync = PROXY_URL
@@ -384,11 +406,6 @@ class LoginState(StatesGroup):
 class ReuploadState(StatesGroup):
     front_id = State()
     back_id = State()
-
-class ResetPasswordState(StatesGroup):
-    wait_contact = State()
-    wait_pass1 = State()
-    wait_pass2 = State()
 
 ###############################################################################
 # MENUS - CORRECTED AND STANDARDIZED
@@ -656,220 +673,6 @@ async def finish_registration_info(message: types.Message, state: FSMContext):
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("به صرافی کیانی خوش آمدید.\nبرای شروع ثبت نام کنید یا وارد حساب کاربری شوید.", reply_markup=main_menu)
-
-
-@dp.message(Command("cancel"))
-async def cmd_cancel_any(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("عملیات لغو شد.", reply_markup=main_menu)
-
-@dp.message(Command("rates"))
-async def cmd_rates(message: types.Message):
-    """Show current exchange rates"""
-    wait_msg = await message.answer("در حال دریافت آخرین نرخ‌ها... ⏳")
-    
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    
-    await wait_msg.delete()
-    
-    if not usdt_irr or not usdt_try:
-        await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
-        return
-    
-    eff_toman = usdt_irr / 10
-    
-    # Calculate all rates
-    buy_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
-    sell_lira_rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
-    buy_usdt_rate = round_to_nearest_10(eff_toman * 1.01)
-    sell_usdt_rate = round_to_nearest_10(eff_toman * 0.99)
-    lira_to_usdt_rate = round(usdt_try * 1.02, 2)
-    usdt_to_lira_rate = round(usdt_try * 0.98, 2)
-    
-    rates_text = (
-        "💰 **نرخ‌های فعلی صرافی کیانی:**\n\n"
-        f"🇮🇷 ➡️ 🇹🇷 خرید لیر: **{buy_lira_rate:,}** تومان\n"
-        f"🇹🇷 ➡️ 🇮🇷 فروش لیر: **{sell_lira_rate:,}** تومان\n"
-        f"🇮🇷 ➡️ 💰 خرید تتر: **{buy_usdt_rate:,}** تومان\n"
-        f"💰 ➡️ 🇮🇷 فروش تتر: **{sell_usdt_rate:,}** تومان\n"
-        f"🇹🇷 ➡️ 💰 تبدیل لیر به تتر: **{lira_to_usdt_rate}** لیر\n"
-        f"💰 ➡️ 🇹🇷 تبدیل تتر به لیر: **{usdt_to_lira_rate}** لیر\n\n"
-        "📊 *آخرین بروزرسانی: همین لحظه*"
-    )
-    
-    await message.answer(rates_text, parse_mode="Markdown")
-
-@dp.message(Command("balance"))
-async def cmd_balance(message: types.Message):
-    """Show user balance"""
-    user_id = message.from_user.id
-    
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        # Check if user exists
-        user = c.execute("SELECT id, first_name, last_name FROM users WHERE id=?", (user_id,)).fetchone()
-        
-        if not user:
-            await message.answer("شما ثبت نام نکرده‌اید. لطفاً ابتدا ثبت نام کنید.")
-            return
-        
-        # Get user balances (placeholder - need transactions table)
-        # For now, show user info
-        full_name = f"{user['first_name']} {user['last_name']}"
-        
-        balance_text = (
-            f"👤 **اطلاعات حساب:** {full_name}\n"
-            f"🆔 **کد کاربری:** {user_id}\n\n"
-            "💰 **موجودی‌ها:**\n"
-            "💎 تتر: 0.00 USDT\n"
-            "🇹🇷 لیر: 0.00 TRY\n"
-            "🇮🇷 تومان: 0 تومان\n\n"
-            "📝 *سیستم تراکنش در حال توسعه است*"
-        )
-        
-        await message.answer(balance_text, parse_mode="Markdown")
-
-@dp.message(Command("history"))
-async def cmd_history(message: types.Message):
-    """Show transaction history"""
-    user_id = message.from_user.id
-    
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        user = c.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
-        
-        if not user:
-            await message.answer("شما ثبت نام نکرده‌اید. لطفاً ابتدا ثبت نام کنید.")
-            return
-    
-    history_text = (
-        "📜 **تاریخچه تراکنش‌ها**\n\n"
-        "🕒 **آخرین تراکنش‌ها:**\n"
-        "• در حال حاضر تراکنشی ثبت نشده است.\n\n"
-        "📊 **آمار کلی:**\n"
-        "✅ تراکنش‌های موفق: 0\n"
-        "❌ تراکنش‌های ناموفق: 0\n"
-        "💰 مجموع مبادلات: 0 تومان\n\n"
-        "📝 *سیستم تراکنش در حال توسعه است*"
-    )
-    
-    await message.answer(history_text, parse_mode="Markdown")
-
-@dp.message(Command("support"))
-async def cmd_support(message: types.Message):
-    """Show support contact information"""
-    support_text = (
-        "📞 **تماس با پشتیبانی**\n\n"
-        "🕒 **ساعات کاری:**\n"
-        "شنبه تا پنجشنبه: ۹ صبح تا ۹ شب\n"
-        "جمعه: ۱۰ صبح تا ۶ عصر\n\n"
-        "📱 **روش‌های ارتباطی:**\n"
-        "• تلگرام: @TL905411603664\n"
-        "• تلفن: ۰۹۱۲۱۹۵۸۲۹۶\n"
-        "• ایمیل: support@kiani-exchange.com\n\n"
-        "📍 **آدرس دفتر:**\n"
-        "تهران، خیابان ولیعصر\n\n"
-        "⚠️ **توجه:**\n"
-        "• برای امنیت بیشتر، از ارسال اطلاعات حساس در چت عمومی خودداری کنید.\n"
-        "• پشتیبانی فقط از طریق کانال‌های رسمی پاسخگو است.\n"
-        "• زمان پاسخگویی معمولاً کمتر از ۱ ساعت است."
-    )
-    
-    await message.answer(support_text, parse_mode="Markdown")
-
-
-@dp.message(Command("resetpassword"))
-async def cmd_reset_password(message: types.Message, state: FSMContext):
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="ارسال شماره تلفن من", request_contact=True)]],
-        resize_keyboard=True,
-        one_time_keyboard=True,
-    )
-    await state.set_state(ResetPasswordState.wait_contact)
-    await message.answer(
-        "برای بازیابی رمز عبور، شماره موبایل ثبت‌شده را با دکمه Share Contact ارسال کنید.",
-        reply_markup=kb,
-    )
-
-
-@dp.message(ResetPasswordState.wait_contact, F.contact)
-async def reset_password_contact(message: types.Message, state: FSMContext):
-    contact_phone = message.contact.phone_number or ""
-    digits = ''.join(ch for ch in contact_phone if ch.isdigit())
-    candidates = {contact_phone, digits}
-    if digits.startswith('98'):
-        candidates.add('0' + digits[2:])
-        candidates.add('+' + digits)
-    if digits.startswith('0'):
-        candidates.add('+98' + digits[1:])
-
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        placeholders = ','.join(['?'] * len(candidates))
-        row = c.execute(
-            f"SELECT id, phone_number FROM users WHERE phone_number IN ({placeholders}) LIMIT 1",
-            tuple(candidates),
-        ).fetchone()
-
-    if not row:
-        await state.clear()
-        await message.answer("این شماره در سیستم یافت نشد.", reply_markup=main_menu)
-        return
-
-    await state.update_data(reset_user_id=row['id'], attempts=0)
-    await state.set_state(ResetPasswordState.wait_pass1)
-    await message.answer("رمز عبور جدید را وارد کنید (حداقل 8 کاراکتر شامل حروف و اعداد).", reply_markup=ReplyKeyboardRemove())
-
-
-@dp.message(ResetPasswordState.wait_contact)
-async def reset_password_contact_wrong(message: types.Message, state: FSMContext):
-    await message.answer("شماره را دستی وارد نکنید؛ از دکمه Share Contact استفاده کنید.")
-
-
-@dp.message(ResetPasswordState.wait_pass1)
-async def reset_password_pass1(message: types.Message, state: FSMContext):
-    pwd1 = (message.text or '').strip()
-    if len(pwd1) < 8 or not re.search(r'[A-Za-z]', pwd1) or not re.search(r'\d', pwd1):
-        await message.answer("رمز عبور باید حداقل 8 کاراکتر و شامل حروف و اعداد باشد.")
-        return
-    await state.update_data(pass1=pwd1)
-    await state.set_state(ResetPasswordState.wait_pass2)
-    await message.answer("تکرار رمز عبور جدید را وارد کنید.")
-
-
-@dp.message(ResetPasswordState.wait_pass2)
-async def reset_password_pass2(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    pass1 = data.get('pass1', '')
-    pass2 = (message.text or '').strip()
-
-    attempts = int(data.get('attempts', 0)) + 1
-    if pass1 != pass2:
-        if attempts >= 3:
-            await state.clear()
-            await message.answer("تعداد تلاش بیش از حد مجاز بود. دوباره /resetpassword را بزنید.", reply_markup=main_menu)
-            return
-        await state.update_data(attempts=attempts)
-        await state.set_state(ResetPasswordState.wait_pass1)
-        await message.answer("رمزها یکسان نیستند. دوباره رمز عبور جدید را وارد کنید.")
-        return
-
-    hashed = pwd_context.hash(pass1)
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        try:
-            c.execute("UPDATE users SET password_hash=? WHERE id=?", (hashed, data['reset_user_id']))
-            conn.commit()
-        except Exception as exc:
-            logging.error(f"reset password update failed: {exc}")
-            await state.clear()
-            await message.answer("خطا در ثبت رمز جدید. لطفاً دوباره تلاش کنید.", reply_markup=main_menu)
-            return
-
-    await log_to_admin(f"🔐 Password reset via bot | user_id={data['reset_user_id']}")
-    await state.clear()
-    await message.answer("رمز عبور تنظیم شد، اکنون می‌توانید وارد شوید.", reply_markup=main_menu)
 
 ###############################################################################
 # REGISTRATION FLOW
@@ -1159,7 +962,7 @@ async def buy_lira_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "buy_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1175,7 +978,7 @@ async def main_menu_buy_lira_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
@@ -1540,26 +1343,11 @@ async def contact_us_cmd(message: types.Message):
 ###############################################################################
 # BOT STARTUP
 ###############################################################################
-async def set_bot_commands():
-    """Set the bot commands menu in Telegram"""
-    commands = [
-        BotCommand(command="start", description="منوی اصلی"),
-        BotCommand(command="resetpassword", description="بازیابی رمز عبور"),
-        BotCommand(command="rates", description="نرخ‌های فعلی"),
-        BotCommand(command="balance", description="موجودی حساب"),
-        BotCommand(command="history", description="تاریخچه تراکنش‌ها"),
-        BotCommand(command="support", description="تماس با پشتیبانی"),
-    ]
-    await bot.set_my_commands(commands)
-
 async def main():
     init_db()
     logging.debug("Starting MAIN user bot…")
     dp.message.middleware.register(AdminLogMiddleware())
     dp.callback_query.middleware.register(AdminLogMiddleware())
-    
-    # Set bot commands
-    await set_bot_commands()
     
     # Start background tasks
     kyc_task = asyncio.create_task(check_kyc_loop())
