@@ -1,0 +1,41 @@
+name: Shared pricing user bot
+
+on:
+  pull_request:
+    paths:
+      - "main_user_bot_clone.py"
+      - "main_user_pricing_client.py"
+      - "main_user_runtime.py"
+      - "tests/test_main_user_shared_pricing.py"
+      - ".github/workflows/shared-pricing-user-bot.yml"
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - "main_user_bot_clone.py"
+      - "main_user_pricing_client.py"
+      - "main_user_runtime.py"
+      - "tests/test_main_user_shared_pricing.py"
+      - ".github/workflows/shared-pricing-user-bot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax check
+        run: python -m py_compile main_user_pricing_client.py main_user_runtime.py
+
+      - name: Verify and test pricing transformation
+        run: python -m unittest tests.test_main_user_shared_pricing -v
