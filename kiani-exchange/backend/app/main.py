@@ -1,9 +1,12 @@
 import logging
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables before importing modules that read them at import time.
-load_dotenv()
+# Load the backend .env explicitly. This is more reliable than python-dotenv's
+# automatic stack-frame discovery (which can fail in stdin/embedded execution).
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 # This backend uses the admin bot for registration/login/transaction notifications.
 # Keep TELEGRAM_BOT_TOKEN available for the user-facing bot, but map the dedicated
