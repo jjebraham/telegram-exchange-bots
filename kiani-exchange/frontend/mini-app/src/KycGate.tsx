@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import KycFlow from './KycFlow'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '/api'
@@ -7,10 +8,24 @@ export default function KycGate() {
   const [visible, setVisible] = useState(false)
   const [open, setOpen] = useState(false)
   const [level, setLevel] = useState<number | null>(null)
+  const [navTarget, setNavTarget] = useState<HTMLElement | null>(null)
   const previousToken = useRef('')
   const previousLevel = useRef<number | null>(null)
   const previousLevel2Status = useRef<string | null>(null)
   const previousLevel3Status = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.location.hostname.includes('kianiapp')) return
+
+    const findNav = () => {
+      const target = document.querySelector('nav.fixed.bottom-0 > div') as HTMLElement | null
+      if (target) setNavTarget(target)
+    }
+    findNav()
+    const observer = new MutationObserver(findNav)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || window.location.hostname.includes('kianiapp')) return
@@ -32,6 +47,8 @@ export default function KycGate() {
         return
       }
 
+      if (!cancelled) setVisible(true)
+
       try {
         const response = await fetch(`${API_BASE}/kyc/status`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -44,7 +61,6 @@ export default function KycGate() {
         if (cancelled) return
 
         setLevel(nextLevel)
-        setVisible(nextLevel < 3)
 
         // A fresh Level-1 login immediately continues into the KYC flow.
         if (previousToken.current !== token && nextLevel === 1) {
@@ -82,15 +98,23 @@ export default function KycGate() {
 
   if (!visible) return null
 
+  const menuButton = (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      className="flex flex-col items-center px-4 py-1 text-emerald-600"
+      title={`احراز هویت - سطح ${level || 1}`}
+    >
+      <span className="text-xl">🪪</span>
+      <span className="mt-1 text-xs font-medium">احراز هویت</span>
+    </button>
+  )
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-24 left-4 z-[70] rounded-full bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-xl"
-      >
-        احراز هویت — سطح {level || 1}
-      </button>
+      {navTarget
+        ? createPortal(menuButton, navTarget)
+        : <div className="fixed bottom-2 left-1/2 z-[70] -translate-x-1/2">{menuButton}</div>}
 
       {open && (
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/60 p-4" dir="rtl">
