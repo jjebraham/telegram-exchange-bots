@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import APIRouter, HTTPException
@@ -8,6 +9,7 @@ from ..exchange_math import derive_rates
 from ..price_cache import price_cache
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict[str, float] = {
     "toman_to_tl_manual_rate": 0.0,
@@ -92,6 +94,32 @@ async def get_effective_rates() -> tuple[dict[str, float], dict[str, float], flo
     return effective, settings, usdt_irr, usdt_try
 
 
+async def _admin_rate_snapshot(settings: dict[str, float]) -> dict:
+    """Return market/effective rates when available without blocking admin settings.
+
+    The admin must still be able to view and edit manual rates/percentages during a
+    temporary upstream market-data outage. Public pricing continues to fail closed.
+    """
+    try:
+        usdt_irr = await price_cache.get_usdt_irr()
+        usdt_try = await price_cache.get_usdt_try()
+        effective = derive_rates(usdt_irr, usdt_try, settings)
+        return {
+            "market_available": True,
+            "market": {"USDT_IRR": usdt_irr, "USDT_TRY": usdt_try},
+            "effective_rates": effective,
+            "market_error": None,
+        }
+    except Exception as exc:
+        logger.warning("Admin rate snapshot could not fetch market data: %s", exc)
+        return {
+            "market_available": False,
+            "market": {},
+            "effective_rates": {},
+            "market_error": "upstream_market_data_unavailable",
+        }
+
+
 @router.get("/rates/current")
 async def get_current_rates():
     effective, settings, usdt_irr, usdt_try = await get_effective_rates()
@@ -108,11 +136,11 @@ async def get_current_rates():
 @router.get("/admin/rates")
 async def admin_get_rates(username: str, password: str):
     _require_admin(username, password)
-    effective, settings, usdt_irr, usdt_try = await get_effective_rates()
+    settings = get_rate_settings()
+    snapshot = await _admin_rate_snapshot(settings)
     return {
         "settings": settings,
-        "effective_rates": effective,
-        "market": {"USDT_IRR": usdt_irr, "USDT_TRY": usdt_try},
+        **snapshot,
     }
 
 
@@ -142,10 +170,10 @@ async def admin_update_rates(req: AdminRateSettings):
             ("rate_settings_updated", "12 pair rate/percentage settings updated"),
         )
 
-    effective, settings, usdt_irr, usdt_try = await get_effective_rates()
+    settings = get_rate_settings()
+    snapshot = await _admin_rate_snapshot(settings)
     return {
         "status": "success",
         "settings": settings,
-        "effective_rates": effective,
-        "market": {"USDT_IRR": usdt_irr, "USDT_TRY": usdt_try},
+        **snapshot,
     }
