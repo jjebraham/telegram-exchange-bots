@@ -60,7 +60,8 @@ export const calculateReceiveAmount = (exchangeType: ExchangeType, sendAmount: n
       receiveAmount = sendAmount / rates.buy_lira - fee;
       break;
     case 'sell_lira':
-      receiveAmount = sendAmount * rates.sell_lira;
+      netSendAmount = Math.max(sendAmount - fee, 0);
+      receiveAmount = netSendAmount * rates.sell_lira;
       break;
     case 'buy_usdt':
       receiveAmount = sendAmount / rates.buy_usdt - fee;
