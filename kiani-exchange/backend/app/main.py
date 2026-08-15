@@ -4,9 +4,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Always load the backend .env from its known location before importing modules
-# that read configuration at import time.
+# that read configuration at import time. Use override=True so stale variables
+# inherited by a long-running Supervisor daemon cannot mask the current .env.
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR / ".env", override=True)
 
 # KYC documents contain highly sensitive identity data. Use a restrictive process
 # umask so newly created runtime files are private to the service account by default.
