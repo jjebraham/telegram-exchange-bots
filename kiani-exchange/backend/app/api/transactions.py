@@ -1,4 +1,5 @@
 import aiohttp
+import html
 import logging
 import os
 from datetime import datetime
@@ -7,12 +8,16 @@ from pydantic import BaseModel
 from typing import Optional
 from ..database import get_db
 from ..auth import get_current_user_id
-from ..price_cache import price_cache
-from ..exchange_math import calculate_order, derive_rates
+from ..exchange_math import calculate_order
+from ..admin_notify import now_text, send_admin_message
+from .rates import get_effective_rates
 
 logger = logging.getLogger(__name__)
 
-ADMIN_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+ADMIN_BOT_TOKEN = (
+    os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "").strip()
+    or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+)
 ADMIN_CHAT_ID = int(os.getenv("TELEGRAM_ADMIN_CHAT_ID", "0") or 0)
 PROXY_URL = os.getenv("TRANSACTION_PROXY_URL", "").strip() or None
 
@@ -63,7 +68,7 @@ class StatusUpdateRequest(BaseModel):
 
 async def _send_telegram_message(chat_id: int, message: str):
     if not ADMIN_BOT_TOKEN:
-        logger.warning("TELEGRAM_BOT_TOKEN is not configured; skipping Telegram message")
+        logger.warning("Telegram bot token is not configured; skipping Telegram message")
         return
     admin_url = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": message}
@@ -77,16 +82,20 @@ async def _send_telegram_message(chat_id: int, message: str):
 
 
 async def _notify_status_change(user_id: int, reference_number: str, status: str):
+    # Keep the legacy user notification attempt, but always send the admin event
+    # through the dedicated admin notification path as well.
     msg = f"📌 وضعیت سفارش #{reference_number} تغییر کرد:\n{status}"
     try:
         await _send_telegram_message(user_id, msg)
     except Exception:
         pass
-    if ADMIN_CHAT_ID:
-        try:
-            await _send_telegram_message(ADMIN_CHAT_ID, f"🔔 وضعیت سفارش {reference_number} => {status}")
-        except Exception:
-            pass
+
+    await send_admin_message(
+        "🔔 <b>تغییر وضعیت سفارش</b>\n"
+        f"🔢 شماره پیگیری: {html.escape(reference_number)}\n"
+        f"📌 وضعیت جدید: {html.escape(status)}\n"
+        f"⏰ زمان: {now_text()}"
+    )
 
 
 def _admin_role(username: str, password: str) -> str | None:
@@ -118,15 +127,22 @@ async def create_transaction(
     req: TransactionRequest,
     user_id: int = Depends(get_current_user_id),
 ):
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    rates = derive_rates(usdt_irr, usdt_try)
+    rates, _settings, _usdt_irr, _usdt_try = await get_effective_rates()
     calculated = calculate_order(req.exchange_type, req.send_amount, rates)
 
     if req.exchange_type in {"sell_usdt", "convert_usdt_to_lira"} and calculated.net_send_amount <= 0:
         raise HTTPException(status_code=400, detail="send_amount_too_low_for_fee")
 
     with get_db() as conn:
+        user = conn.execute(
+            """SELECT id, first_name, last_name, phone_number, national_id, dob,
+                      bank_card_number, verification_level
+               FROM users WHERE id = ?""",
+            (user_id,),
+        ).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="user_not_found")
+
         existing = conn.execute(
             "SELECT id FROM transactions WHERE reference_number = ?",
             (req.reference_number,),
@@ -142,9 +158,9 @@ async def create_transaction(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id,
-                req.user_name,
-                req.user_phone,
-                req.verification_level,
+                f"{user['first_name']} {user['last_name']}",
+                user["phone_number"],
+                int(user["verification_level"] or 1),
                 req.exchange_pair,
                 req.exchange_type,
                 req.send_amount,
@@ -155,9 +171,38 @@ async def create_transaction(
                 req.expires_at,
             ),
         )
-        conn.commit()
+        conn.execute(
+            "INSERT INTO admin_logs (action, details) VALUES (?, ?)",
+            ("user_created_order", f"user_id={user_id};ref={req.reference_number};pair={req.exchange_pair}"),
+        )
 
-    return {"status": "success", "reference_number": req.reference_number, "receive_amount": calculated.receive_amount, "fee": calculated.fee_amount, "fee_currency": calculated.fee_currency, "net_send_amount": calculated.net_send_amount}
+    notification = (
+        "🆕 <b>درخواست معامله جدید</b>\n\n"
+        f"👤 نام: {html.escape(str(user['first_name']))} {html.escape(str(user['last_name']))}\n"
+        f"📱 شماره: {html.escape(str(user['phone_number']))}\n"
+        f"✅ سطح احراز: {int(user['verification_level'] or 1)}\n"
+        f"💱 نوع معامله: {html.escape(req.exchange_pair)}\n"
+        f"💵 مبلغ ارسال: {req.send_amount:,.4f}\n"
+        f"💰 مبلغ دریافت: {calculated.receive_amount:,.4f}\n"
+        f"💸 کارمزد: {calculated.fee_amount:,.4f} {html.escape(calculated.fee_currency)}\n"
+        f"🔢 شماره پیگیری: {html.escape(req.reference_number)}\n"
+        f"🆔 کد ملی: {html.escape(str(user['national_id'] or '-'))}\n"
+        f"💳 کارت: {html.escape(str(user['bank_card_number'] or '-'))}\n"
+        f"⏰ زمان: {now_text()}"
+    )
+    notified = await send_admin_message(notification)
+    if not notified:
+        logger.error("Order %s was created but admin Telegram notification failed", req.reference_number)
+
+    return {
+        "status": "success",
+        "reference_number": req.reference_number,
+        "receive_amount": calculated.receive_amount,
+        "fee": calculated.fee_amount,
+        "fee_currency": calculated.fee_currency,
+        "net_send_amount": calculated.net_send_amount,
+        "admin_notified": notified,
+    }
 
 
 @router.get("/user/transactions")
@@ -195,72 +240,9 @@ async def get_user_transactions(
 
 @router.post("/admin/notify-transaction")
 async def notify_admin_transaction(req: NotifyTransactionRequest):
-    if not ADMIN_BOT_TOKEN or not ADMIN_CHAT_ID:
-        raise HTTPException(status_code=503, detail="Telegram admin notification is not configured")
-
-    national_id = req.national_id
-    date_of_birth = req.date_of_birth
-    bank_card_number = req.bank_card_number
-
-    with get_db() as conn:
-        user_row = conn.execute(
-            "SELECT national_id, dob, bank_card_number FROM users WHERE phone_number = ?",
-            (req.user_phone,),
-        ).fetchone()
-        if user_row:
-            national_id = user_row["national_id"]
-            date_of_birth = user_row["dob"]
-            bank_card_number = user_row["bank_card_number"]
-
-    message = (
-        "🆕 درخواست معامله جدید\n\n"
-        f"👤 نام: {req.user_name}\n"
-        f"📱 شماره: {req.user_phone}\n"
-        f"✅ سطح احراز: {req.verification_level}\n"
-        f"💱 نوع معامله: {req.exchange_pair}\n"
-        f"💵 ارسال: {req.send_amount}\n"
-        f"💰 دریافت: {req.receive_amount}\n"
-        f"🔢 شماره پیگیری: {req.reference_number}\n"
-        f"📅 تاریخ: {req.timestamp}\n"
-        f"⏰ انقضا: {req.expires_at}"
-    )
-
-    if national_id or date_of_birth or bank_card_number:
-        message += "\n\n🔐 اطلاعات احراز کاربر:\n"
-        if national_id:
-            message += f"🆔 کدملی: {national_id}\n"
-        if date_of_birth:
-            message += f"📅 تاریخ تولد: {date_of_birth}\n"
-        if bank_card_number:
-            message += f"💳 شماره کارت: {bank_card_number}"
-
-    admin_url = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": ADMIN_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-    }
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                admin_url,
-                json=payload,
-                proxy=PROXY_URL,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    raise HTTPException(
-                        status_code=502,
-                        detail="Failed to notify admin",
-                    )
-    except aiohttp.ClientError:
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to connect to Telegram",
-        )
-
-    return {"status": "sent"}
+    # Kept for backwards compatibility with older frontend builds. New order
+    # notifications are sent atomically from POST /transactions after the DB insert.
+    return {"status": "already_notified_by_create_transaction", "reference_number": req.reference_number}
 
 
 @router.post("/transactions/{reference_number}/cancel")
@@ -270,7 +252,7 @@ async def cancel_transaction(
 ):
     with get_db() as conn:
         transaction = conn.execute(
-            """SELECT id, status FROM transactions
+            """SELECT id, status, user_name, user_phone FROM transactions
                WHERE reference_number = ? AND user_id = ?""",
             (reference_number, user_id),
         ).fetchone()
@@ -284,9 +266,18 @@ async def cancel_transaction(
                WHERE reference_number = ? AND user_id = ?""",
             (reference_number, user_id),
         )
-        conn.commit()
+        conn.execute(
+            "INSERT INTO admin_logs (action, details) VALUES (?, ?)",
+            ("user_canceled_order", f"user_id={user_id};ref={reference_number}"),
+        )
 
-    await _notify_status_change(user_id, reference_number, "Canceled by User")
+    await send_admin_message(
+        "❌ <b>لغو سفارش توسط کاربر</b>\n"
+        f"👤 {html.escape(str(transaction['user_name'] or '-'))}\n"
+        f"📱 {html.escape(str(transaction['user_phone'] or '-'))}\n"
+        f"🔢 شماره پیگیری: {html.escape(reference_number)}\n"
+        f"⏰ زمان: {now_text()}"
+    )
     return {"status": "success", "message": "Transaction canceled"}
 
 
@@ -325,7 +316,6 @@ async def update_transaction_status(reference_number: str, req: StatusUpdateRequ
                WHERE reference_number = ?""",
             (req.status, req.receipt_photo_url, req.receipt_description, req.payment_link, datetime.utcnow().isoformat(), reference_number),
         )
-        conn.commit()
 
     await _notify_status_change(transaction["user_id"], reference_number, req.status)
     return {"status": "success", "message": f"Transaction status updated to {req.status}"}
