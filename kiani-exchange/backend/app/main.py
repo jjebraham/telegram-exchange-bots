@@ -5,6 +5,13 @@ from dotenv import load_dotenv
 # Load environment variables before importing modules that read them at import time.
 load_dotenv()
 
+# This backend uses the admin bot for registration/login/transaction notifications.
+# Keep TELEGRAM_BOT_TOKEN available for the user-facing bot, but map the dedicated
+# admin token into the legacy variable expected by existing backend modules.
+admin_bot_token = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "").strip()
+if admin_bot_token:
+    os.environ["TELEGRAM_BOT_TOKEN"] = admin_bot_token
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
