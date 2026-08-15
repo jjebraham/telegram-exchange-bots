@@ -8,6 +8,9 @@ export default function KycGate() {
   const [open, setOpen] = useState(false)
   const [level, setLevel] = useState<number | null>(null)
   const previousToken = useRef('')
+  const previousLevel = useRef<number | null>(null)
+  const previousLevel2Status = useRef<string | null>(null)
+  const previousLevel3Status = useRef<string | null>(null)
 
   useEffect(() => {
     if (typeof window === 'undefined' || window.location.hostname.includes('kianiapp')) return
@@ -18,6 +21,9 @@ export default function KycGate() {
       const token = localStorage.getItem('token') || localStorage.getItem('auth_token') || ''
       if (!token) {
         previousToken.current = ''
+        previousLevel.current = null
+        previousLevel2Status.current = null
+        previousLevel3Status.current = null
         if (!cancelled) {
           setVisible(false)
           setOpen(false)
@@ -33,17 +39,34 @@ export default function KycGate() {
         if (!response.ok) return
         const data = await response.json()
         const nextLevel = Number(data?.verification_level || 1)
+        const level2Status = data?.level2?.status || null
+        const level3Status = data?.level3?.status || null
         if (cancelled) return
 
         setLevel(nextLevel)
         setVisible(nextLevel < 3)
 
-        // When a user has just logged in and is only Level 1, immediately show
-        // the next KYC step once so the Level-1 success is obvious.
+        // A fresh Level-1 login immediately continues into the KYC flow.
         if (previousToken.current !== token && nextLevel === 1) {
           setOpen(true)
         }
+
+        // Re-open the KYC panel when an admin decision changes what the user
+        // needs to do next (approved => next level, rejected => re-upload).
+        if (previousLevel.current !== null && nextLevel > previousLevel.current) {
+          setOpen(true)
+        }
+        if (previousLevel2Status.current === 'pending' && level2Status === 'rejected') {
+          setOpen(true)
+        }
+        if (previousLevel3Status.current === 'pending' && level3Status === 'rejected') {
+          setOpen(true)
+        }
+
         previousToken.current = token
+        previousLevel.current = nextLevel
+        previousLevel2Status.current = level2Status
+        previousLevel3Status.current = level3Status
       } catch (error) {
         console.error('KYC gate status check failed', error)
       }
