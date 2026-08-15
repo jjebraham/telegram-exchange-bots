@@ -8,6 +8,10 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BACKEND_DIR / ".env")
 
+# KYC documents contain highly sensitive identity data. Use a restrictive process
+# umask so newly created runtime files are private to the service account by default.
+os.umask(0o077)
+
 # Keep the normal user bot token separate from the dedicated admin bot token.
 # Older backend helpers may still read TELEGRAM_BOT_TOKEN, so map the admin token
 # only for this FastAPI process when a dedicated admin token is configured.
