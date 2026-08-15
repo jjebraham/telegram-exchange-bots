@@ -37,8 +37,8 @@ export const deriveRates = (usdtIrr: number, usdtTry: number, settings?: Record<
 };
 
 export const calculateFee = (exchangeType: ExchangeType, sendAmount: number): number => {
-  if (exchangeType === 'sell_lira') return sendAmount < 5000 ? 80 : 0;
-  if (exchangeType === 'buy_lira') return sendAmount < 15_000_000 ? 80 : 0;
+  if (exchangeType === 'sell_lira') return sendAmount < 5000 ? 160 : 0;
+  if (exchangeType === 'buy_lira') return sendAmount < 15_000_000 ? 160 : 0;
   if (
     exchangeType === 'buy_usdt' ||
     exchangeType === 'sell_usdt' ||
