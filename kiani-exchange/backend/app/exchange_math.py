@@ -29,8 +29,8 @@ def calculate_order(exchange_type: str, send_amount: float, rates: dict[str, flo
         receive = (send_amount / rates["buy_lira"]) - fee_amount
         net_send = send_amount
     elif exchange_type == "sell_lira":
-        receive = send_amount * rates["sell_lira"]
-        net_send = send_amount
+        net_send = max(send_amount - fee_amount, 0.0)
+        receive = net_send * rates["sell_lira"]
     elif exchange_type == "buy_usdt":
         receive = (send_amount / rates["buy_usdt"]) - fee_amount
         net_send = send_amount
