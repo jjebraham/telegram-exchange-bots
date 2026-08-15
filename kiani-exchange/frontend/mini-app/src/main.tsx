@@ -6,6 +6,8 @@ import KycGate from './KycGate'
 import AdminKycReview from './AdminKycReview'
 import BrandSanitizer from './BrandSanitizer'
 import UserActivityReporter from './UserActivityReporter'
+import AdminRateEditorFix from './AdminRateEditorFix'
+import ProfilePageOverlay from './ProfilePageOverlay'
 import './index.css'
 
 const rootElement = document.getElementById('root')!
@@ -94,6 +96,8 @@ const renderApp = () => {
         <KycGate />
         <AdminKycReview />
         <UserActivityReporter />
+        <AdminRateEditorFix />
+        <ProfilePageOverlay />
       </ErrorBoundary>
     </React.StrictMode>,
   )
