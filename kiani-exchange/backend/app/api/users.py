@@ -18,14 +18,14 @@ from ..auth import (
     get_current_user_id,
 )
 
-EHRAZ_TOKEN = "5942b9d62abc20405dadfb2c0f546b669cf1471c"
+EHRAZ_TOKEN = os.getenv("EHRAZ_TOKEN", "").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+ADMIN_CHAT_ID = int(os.getenv("TELEGRAM_ADMIN_CHAT_ID", "0") or 0)
+PROXY_USERNAME = os.getenv("PROXY_USERNAME", "").strip()
+PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "").strip()
+USE_MOCK_EHRAZ = os.getenv("USE_MOCK_EHRAZ", "true").strip().lower() in {"1", "true", "yes", "on"}
 
-# Telegram Bot Configuration
-# Use the same token as in transactions.py for consistency
-TELEGRAM_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
-ADMIN_CHAT_ID = 2043363119
-
-# List of proxy servers from your configuration
+# List of proxy servers from your configuration. Credentials are loaded from .env.
 PROXY_LIST = [
     "45.159.53.29:7401",
     "107.181.142.146:5739",
@@ -129,25 +129,28 @@ PROXY_LIST = [
     "50.114.99.125:6866"
 ]
 
+
 def get_random_proxy():
-    """Get a random proxy from the list"""
+    """Get a random proxy using credentials loaded from the environment."""
     proxy = random.choice(PROXY_LIST)
-    return f"http://jjebraham:Amir1234@{proxy}"
+    if PROXY_USERNAME and PROXY_PASSWORD:
+        return f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{proxy}"
+    return f"http://{proxy}"
 
 
 async def send_telegram_notification(message: str):
-    """Send notification to Telegram admin bot"""
-    if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE" or ADMIN_CHAT_ID == "YOUR_CHAT_ID_HERE":
+    """Send notification to Telegram admin bot without exposing the token in source."""
+    if not TELEGRAM_BOT_TOKEN or not ADMIN_CHAT_ID:
         logger.warning("Telegram bot token or admin chat ID not configured")
         return
-    
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": ADMIN_CHAT_ID,
         "text": message,
         "parse_mode": "HTML"
     }
-    
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=10) as response:
@@ -155,6 +158,7 @@ async def send_telegram_notification(message: str):
                     logger.error(f"Failed to send Telegram notification: {response.status}")
     except Exception as e:
         logger.error(f"Error sending Telegram notification: {e}")
+
 
 router = APIRouter()
 
@@ -222,18 +226,18 @@ class AdminSendMessageRequest(BaseModel):
 
 
 def _admin_role(username: str, password: str) -> str | None:
-    admin_user = os.getenv("ADMIN_PANEL_USERNAME", "admin")
-    admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
-    support_user = os.getenv("SUPPORT_PANEL_USERNAME", "support")
-    support_pass = os.getenv("SUPPORT_PANEL_PASSWORD", "support123")
-    viewer_user = os.getenv("VIEWER_PANEL_USERNAME", "viewer")
-    viewer_pass = os.getenv("VIEWER_PANEL_PASSWORD", "viewer123")
+    admin_user = os.getenv("ADMIN_PANEL_USERNAME", "").strip()
+    admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "")
+    support_user = os.getenv("SUPPORT_PANEL_USERNAME", "").strip()
+    support_pass = os.getenv("SUPPORT_PANEL_PASSWORD", "")
+    viewer_user = os.getenv("VIEWER_PANEL_USERNAME", "").strip()
+    viewer_pass = os.getenv("VIEWER_PANEL_PASSWORD", "")
 
-    if username == admin_user and password == admin_pass:
+    if admin_user and admin_pass and username == admin_user and password == admin_pass:
         return "admin"
-    if username == support_user and password == support_pass:
+    if support_user and support_pass and username == support_user and password == support_pass:
         return "support"
-    if username == viewer_user and password == viewer_pass:
+    if viewer_user and viewer_pass and username == viewer_user and password == viewer_pass:
         return "viewer"
     return None
 
@@ -258,6 +262,9 @@ def _write_admin_log(action: str, details: dict | None = None):
 
 
 async def _send_text(chat_id: int, text: str):
+    if not TELEGRAM_BOT_TOKEN:
+        logger.warning("TELEGRAM_BOT_TOKEN is not configured; skipping Telegram message")
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     async with aiohttp.ClientSession() as session:
         await session.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
@@ -280,18 +287,15 @@ async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str
     api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
     template_name = os.getenv("GHASEDAK_TEMPLATE_NAME", "").strip()
     line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
-    
+
     if not api_key:
         return (False, "missing_ghasedak_api_key")
-    
-    # Try template API first (with template name now configured)
+
     if template_name:
-        # Extract OTP code from message (looking for 6-digit code)
         import re
         otp_match = re.search(r'\b(\d{6})\b', message)
         otp_code = otp_match.group(1) if otp_match else "000000"
-        
-        # Create payload for template API
+
         payload = {
             "receptors": [{
                 "mobile": phone_number,
@@ -311,14 +315,13 @@ async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str
             "isVoice": False,
             "udh": False
         }
-        
+
         headers = {
             "accept": "text/plain",
             "ApiKey": api_key,
             "Content-Type": "application/json",
         }
-        
-        # Try template API with proxy rotation (3 attempts like EHRAZ)
+
         for attempt in range(3):
             proxy_url = get_random_proxy()
             try:
@@ -333,11 +336,9 @@ async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str
                     ) as resp:
                         body = await resp.text()
                         logger.info("Ghasedak template response status=%s body=%s", resp.status, body[:500])
-                        
-                        # Parse JSON response
+
                         try:
                             response_json = json.loads(body)
-                            # Check for success (different response formats possible)
                             is_success = (
                                 response_json.get("isSuccess") == True or
                                 response_json.get("IsSuccess") == True or
@@ -346,37 +347,31 @@ async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str
                             )
                             if is_success:
                                 return (True, body)
-                            else:
-                                logger.warning(f"Ghasedak template API failed (attempt {attempt + 1}): {body}")
-                                continue  # Try next proxy
+                            logger.warning(f"Ghasedak template API failed (attempt {attempt + 1}): {body}")
+                            continue
                         except json.JSONDecodeError:
-                            # If not JSON, check HTTP status
                             if resp.status == 200:
                                 return (True, body)
-                            else:
-                                logger.warning(f"Ghasedak template API non-JSON response (attempt {attempt + 1}): {body}")
-                                continue  # Try next proxy
+                            logger.warning(f"Ghasedak template API non-JSON response (attempt {attempt + 1}): {body}")
+                            continue
             except Exception as exc:
                 logger.warning(f"Ghasedak template attempt {attempt + 1} exception: {exc}")
-                continue  # Try next proxy
-        
+                continue
+
         logger.warning("All Ghasedak template attempts failed, falling back to simple SMS")
-    
-    # Fallback to simple SMS method (either template not configured or all template attempts failed)
-    # Simple SMS payload
+
     simple_payload = {
         "receptor": phone_number,
         "message": message,
     }
     if line_number:
         simple_payload["linenumber"] = line_number
-    
+
     simple_headers = {
         "apikey": api_key,
         "Content-Type": "application/x-www-form-urlencoded",
     }
-    
-    # Try simple SMS with proxy rotation (3 attempts)
+
     for attempt in range(3):
         proxy_url = get_random_proxy()
         try:
@@ -393,23 +388,26 @@ async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str
                     logger.info("Ghasedak simple SMS response status=%s body=%s", resp.status, body[:500])
                     if resp.status == 200:
                         return (True, body)
-                    else:
-                        logger.warning(f"Ghasedak simple SMS failed with status {resp.status} (attempt {attempt + 1}): {body}")
-                        continue  # Try next proxy
+                    logger.warning(f"Ghasedak simple SMS failed with status {resp.status} (attempt {attempt + 1}): {body}")
+                    continue
         except Exception as exc:
             logger.warning(f"Ghasedak simple SMS attempt {attempt + 1} exception: {exc}")
-            continue  # Try next proxy
-    
+            continue
+
     logger.error("All Ghasedak SMS attempts failed")
     return (False, "all_attempts_failed")
 
+
 async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
+    if not EHRAZ_TOKEN:
+        logger.error("EHRAZ_TOKEN is not configured")
+        return {"matched": False}
+
     headers = {
         "Authorization": f"Bearer {EHRAZ_TOKEN}",
         "Content-Type": "application/json",
     }
 
-    # Quick direct attempt first to reduce perceived latency.
     try:
         logger.info(f"EHRAZ direct attempt: {url}")
         async with aiohttp.ClientSession() as session:
@@ -423,13 +421,11 @@ async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
                     data = await resp.json()
                     logger.info(f"EHRAZ direct success: {data}")
                     return data
-                else:
-                    logger.warning(f"EHRAZ direct failed with status: {resp.status}")
+                logger.warning(f"EHRAZ direct failed with status: {resp.status}")
     except Exception as e:
         logger.warning(f"EHRAZ direct exception: {e}")
 
-    # Fallback with proxy rotation.
-    for attempt in range(3):  # Increased from 2 to 3 attempts
+    for attempt in range(3):
         proxy_url = get_random_proxy()
         try:
             logger.info(f"EHRAZ proxy attempt {attempt + 1}: {proxy_url}")
@@ -445,8 +441,7 @@ async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
                         data = await resp.json()
                         logger.info(f"EHRAZ proxy success: {data}")
                         return data
-                    else:
-                        logger.warning(f"EHRAZ proxy failed with status: {resp.status}")
+                    logger.warning(f"EHRAZ proxy failed with status: {resp.status}")
         except Exception as e:
             logger.warning(f"EHRAZ proxy attempt {attempt + 1} exception: {e}")
             continue
@@ -518,7 +513,6 @@ async def register_user(req: RegisterRequest):
         )
         conn.commit()
 
-    # Send notification to admin bot
     notification_message = (
         "📝 <b>ثبت نام جدید</b>\n"
         f"👤 نام: {req.first_name} {req.last_name}\n"
@@ -526,7 +520,7 @@ async def register_user(req: RegisterRequest):
         f"🆔 کدملی: {req.national_id}\n"
         f"💳 کارت: {req.bank_card_number}\n"
         f"📅 تاریخ: {req.date_of_birth}\n"
-        f"⏰ زمان: {asyncio.get_event_loop().time()}"
+        f"⏰ زمان: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %z')}"
     )
     await send_telegram_notification(notification_message)
 
@@ -542,23 +536,21 @@ async def login_user(req: LoginRequest):
         ).fetchone()
 
     if not user or not user["password_hash"]:
-        # Send failed login attempt notification
         notification_message = (
             "❌ <b>تلاش ناموفق ورود</b>\n"
             f"📱 شماره: {req.phone_number}\n"
-            f"⏰ زمان: {asyncio.get_event_loop().time()}\n"
+            f"⏰ زمان: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %z')}\n"
             f"📝 وضعیت: کاربر یافت نشد"
         )
         await send_telegram_notification(notification_message)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not verify_password(req.password, user["password_hash"]):
-        # Send failed login attempt notification
         notification_message = (
             "❌ <b>تلاش ناموفق ورود</b>\n"
             f"📱 شماره: {req.phone_number}\n"
             f"👤 کاربر: {user['first_name']} {user['last_name']}\n"
-            f"⏰ زمان: {asyncio.get_event_loop().time()}\n"
+            f"⏰ زمان: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %z')}\n"
             f"📝 وضعیت: رمز عبور اشتباه"
         )
         await send_telegram_notification(notification_message)
@@ -566,12 +558,11 @@ async def login_user(req: LoginRequest):
 
     token = create_access_token({"user_id": user["id"]})
 
-    # Send successful login notification
     notification_message = (
         "✅ <b>ورود موفق</b>\n"
         f"👤 کاربر: {user['first_name']} {user['last_name']}\n"
         f"📱 شماره: {req.phone_number}\n"
-        f"⏰ زمان: {asyncio.get_event_loop().time()}"
+        f"⏰ زمان: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %z')}"
     )
     await send_telegram_notification(notification_message)
 
@@ -594,24 +585,16 @@ async def get_me(user_id: int = Depends(get_current_user_id)):
 @router.post("/verify/ehraz")
 async def verify_with_ehraz(req: EhrazRequest):
     logger.info(f"EHRAZ verification request: {req.nationalCode}, {req.cardNumber[:6]}...")
-    
-    # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
-    
+
     if USE_MOCK_EHRAZ:
-        logger.info("Using mock EHRAZ mode for testing")
-        
-        # Normalize card number: remove spaces
+        logger.warning("Using mock EHRAZ mode")
         normalized_card = req.cardNumber.replace(" ", "")
-        
-        # Basic validation
         if len(req.nationalCode) == 10 and len(normalized_card) == 16:
             logger.info(f"Mock EHRAZ card validation passed: {req.nationalCode}, {normalized_card[:6]}...")
             return {"matched": True}
-        else:
-            logger.info(f"Mock EHRAZ card validation failed: nationalCode={len(req.nationalCode)} digits, card={len(normalized_card)} digits")
-            return {"matched": False}
-    
+        logger.info(f"Mock EHRAZ card validation failed: nationalCode={len(req.nationalCode)} digits, card={len(normalized_card)} digits")
+        return {"matched": False}
+
     data = await _ehraz_post(
         "https://ehraz.io/api/v1/match/card-with-national",
         {
@@ -629,42 +612,25 @@ async def verify_with_ehraz(req: EhrazRequest):
 @router.post("/verify/ehraz-mobile")
 async def verify_mobile_with_ehraz(req: EhrazMobileRequest):
     logger.info(f"EHRAZ mobile verification request: {req.nationalCode}, {req.mobileNumber}")
-    
-    # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
-    
+
     if USE_MOCK_EHRAZ:
-        logger.info("Using mock EHRAZ mode for mobile verification testing")
-        
-        # Normalize mobile number: remove +, spaces, dashes
+        logger.warning("Using mock EHRAZ mode for mobile verification")
         normalized_mobile = req.mobileNumber.replace('+', '').replace(' ', '').replace('-', '')
-        
-        # Handle different formats:
-        # - 09123456789 (11 digits with 0)
-        # - 9123456789 (10 digits without 0)
-        # - 989123456789 (12 digits with country code)
-        
-        # Check if it's a valid Iranian mobile number
+
         is_valid_iran_mobile = False
-        
-        # Format 1: 09123456789 (11 digits, starts with 09)
         if normalized_mobile.startswith('09') and len(normalized_mobile) == 11:
             is_valid_iran_mobile = True
-        # Format 2: 9123456789 (10 digits, starts with 9) - add leading 0
         elif normalized_mobile.startswith('9') and len(normalized_mobile) == 10:
             is_valid_iran_mobile = True
-        # Format 3: 989123456789 (12 digits, starts with 98) - remove country code
         elif normalized_mobile.startswith('98') and len(normalized_mobile) == 12:
             is_valid_iran_mobile = True
-        
-        # Basic validation
+
         if len(req.nationalCode) == 10 and is_valid_iran_mobile:
             logger.info(f"Mock EHRAZ mobile validation passed: {req.nationalCode}, {req.mobileNumber}")
             return {"matched": True}
-        else:
-            logger.info(f"Mock EHRAZ mobile validation failed: nationalCode={len(req.nationalCode)} digits, mobile={req.mobileNumber}")
-            return {"matched": False}
-    
+        logger.info(f"Mock EHRAZ mobile validation failed: nationalCode={len(req.nationalCode)} digits, mobile={req.mobileNumber}")
+        return {"matched": False}
+
     data = await _ehraz_post(
         "https://ehraz.io/api/v1/match/national-with-mobile",
         {
@@ -762,7 +728,6 @@ async def start_password_reset(req: PasswordResetStartRequest):
     normalized_phone = _normalize_iran_phone(req.phone_number)
 
     with get_db() as conn:
-        # generic behavior: do not leak user existence
         user = conn.execute("SELECT id, phone_number FROM users WHERE phone_number = ?", (normalized_phone,)).fetchone()
 
         if user:
@@ -785,18 +750,16 @@ async def start_password_reset(req: PasswordResetStartRequest):
             code = None
 
     if req.channel == "sms" and user and code:
-        # Send real SMS via Ghasedak API
         ok, response_text = await _send_ghasedak_sms(
             normalized_phone,
             f"کد بازیابی رمز عبور: {code} (اعتبار: 10 دقیقه)",
         )
-        
+
         _write_admin_log(
             "password_reset_sms",
             {"phone": normalized_phone, "success": ok, "provider_response": response_text[:300]},
         )
 
-    # For bot channel the reset is handled inside Telegram bot conversation (/resetpassword)
     return {"status": "sent"}
 
 
