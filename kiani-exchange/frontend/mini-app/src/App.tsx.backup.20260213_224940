@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import { Users, ArrowLeftRight, Shield, Activity, Bell, Settings, TrendingUp, DollarSign, AlertCircle, CheckCircle, XCircle, Clock, Search, Filter, Download, RefreshCw, Menu, X, MessageSquare, BarChart3, FileText, Wallet, Gift, AlertTriangle, Code, Zap, Database, Server } from 'lucide-react';
+import { Users, ArrowLeftRight, Shield, Activity, Bell, Settings, TrendingUp, DollarSign, CheckCircle, XCircle, Clock, Search, Filter, Download, RefreshCw, Menu, MessageSquare, BarChart3, FileText } from 'lucide-react';
 import { calculateFee, calculateReceiveAmount, deriveRates } from './exchangeMath';
 import type { ExchangeType, Rates } from './exchangeMath';
 import { normalizeNumberInput, formatFaNumber, normalizePhone, isValidIranPhone, cleanPersianText } from './utils/persian';
@@ -40,116 +40,6 @@ interface Transaction {
 }
 
 type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'admin';
-
-// ─── API Management Component ───────────────────────────────────────────────
-
-const ApiManagementComponent = () => {
-  const [apiKeys, setApiKeys] = useState<any[]>([]);
-  const [externalApis, setExternalApis] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [newKeyName, setNewKeyName] = useState('');
-  const [creating, setCreating] = useState(false);
-
-  const fetchApiKeys = async () => {
-    try {
-      // TODO: Implement actual Supabase Edge Function call
-      // For now, show placeholder
-      setApiKeys([]);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching API keys:', error);
-      setLoading(false);
-    }
-  };
-
-  const createApiKey = async () => {
-    if (!newKeyName.trim()) return;
-    
-    setCreating(true);
-    try {
-      // TODO: Implement actual Supabase Edge Function call
-      alert('API Key creation would call: https://lavhlalqzbkuqjyukgbk.supabase.co/functions/v1/admin-create-api-key');
-      setNewKeyName('');
-      fetchApiKeys();
-    } catch (error) {
-      console.error('Error creating API key:', error);
-      alert('Error creating API key. Check console for details.');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchApiKeys();
-  }, []);
-
-  return (
-    <div className="p-6">
-      <h2 className="text-2xl font-bold mb-6">API Management</h2>
-      
-      {/* API Keys Section */}
-      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4 mb-6">
-        <h3 className="font-bold mb-4 text-white">API Keys</h3>
-        
-        <div className="mb-4">
-          <input
-            type="text"
-            value={newKeyName}
-            onChange={(e) => setNewKeyName(e.target.value)}
-            placeholder="Enter API key name"
-            className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white w-full max-w-md"
-          />
-          <button
-            onClick={createApiKey}
-            disabled={creating || !newKeyName.trim()}
-            className="ml-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:opacity-50"
-          >
-            {creating ? 'Creating...' : 'Create API Key'}
-          </button>
-        </div>
-
-        <div className="space-y-2">
-          {loading ? (
-            <div className="text-gray-400">Loading API keys...</div>
-          ) : apiKeys.length > 0 ? (
-            apiKeys.map((key) => (
-              <div key={key.id} className="border border-gray-700/50 rounded p-3">
-                <div className="flex justify-between items-center">
-                  <span className="font-medium">{key.name}</span>
-                  <span className="text-sm text-gray-400">{key.created_at}</span>
-                </div>
-                <div className="text-sm text-gray-400 mt-1">
-                  Prefix: {key.key_prefix}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="text-gray-400">
-              No API keys found. Create one above or check Supabase setup.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* External APIs Section */}
-      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-        <h3 className="font-bold mb-4 text-white">External API Configuration</h3>
-        <div className="text-gray-400">
-          Configure external APIs like EHRAZ, Wallex, etc.
-          <br />
-          <br />
-          <strong>Setup Required:</strong>
-          <ol className="list-decimal pl-5 mt-2 space-y-1">
-            <li>Run database migration in Supabase dashboard</li>
-            <li>Deploy Edge Functions</li>
-            <li>Create admin user with superadmin role</li>
-            <li>Implement authentication</li>
-          </ol>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // ─── Helper Components ──────────────────────────────────────────────────────
 
@@ -1963,11 +1853,6 @@ function AdminPanelPage() {
   const [logs, setLogs] = useState<any[]>([]);
   const [report, setReport] = useState<any>(null);
   const [faqs, setFaqs] = useState<any[]>([]);
-  const [kycLogs, setKycLogs] = useState<any>({
-    ehraz_logs: [],
-    sms_logs: [],
-    kyc_verification_logs: []
-  });
   const [statusRef, setStatusRef] = useState('');
   const [statusValue, setStatusValue] = useState('Under Review');
   const [faqQuestion, setFaqQuestion] = useState('');
@@ -1983,18 +1868,16 @@ function AdminPanelPage() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('all');
 
   const loadAll = async () => {
     const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    const [u, t, l, r, f, rs, k] = await Promise.all([
+    const [u, t, l, r, f, rs] = await Promise.all([
       fetch(`${API_URL}/admin/users?${qs}`),
       fetch(`${API_URL}/admin/transactions?${qs}`),
       fetch(`${API_URL}/admin/logs?${qs}`),
       fetch(`${API_URL}/admin/reports?${qs}`),
       fetch(`${API_URL}/admin/faqs?${qs}`),
       fetch(`${API_URL}/admin/rates?${qs}`),
-      fetch(`${API_URL}/admin/kyc-logs?${qs}`),
     ]);
     setUsers((await u.json()).users || []);
     setTransactions((await t.json()).transactions || []);
@@ -2002,7 +1885,6 @@ function AdminPanelPage() {
     setReport((await r.json()).report || null);
     setFaqs((await f.json()).faqs || []);
     setAdminRates((await rs.json()).settings || {});
-    setKycLogs((await k.json()) || { ehraz_logs: [], sms_logs: [], kyc_verification_logs: [] });
   };
 
   const login = async () => {
@@ -2018,45 +1900,16 @@ function AdminPanelPage() {
     }
   };
 
-  const categories = [
-    { id: 'all', name: 'All Modules' },
-    { id: 'main', name: 'Main' },
-    { id: 'users', name: 'Users' },
-    { id: 'operations', name: 'Operations' },
-    { id: 'finance', name: 'Finance' },
-    { id: 'compliance', name: 'Compliance' },
-    { id: 'communication', name: 'Communication' },
-    { id: 'marketing', name: 'Marketing' },
-    { id: 'reports', name: 'Reports' },
-    { id: 'developer', name: 'Developer' },
-    { id: 'system', name: 'System' },
-  ];
-
   const navigationItems = [
-    { id: 'dashboard', name: 'Dashboard', icon: BarChart3, category: 'main' },
-    { id: 'users', name: 'User Management', icon: Users, category: 'users' },
-    { id: 'exchanges', name: 'Exchange Requests', icon: ArrowLeftRight, category: 'operations' },
-    { id: 'kyc', name: 'KYC Verification', icon: Shield, category: 'compliance' },
-    { id: 'wallets', name: 'Wallet Management', icon: Wallet, category: 'finance' },
-    { id: 'rates', name: 'Exchange Rates', icon: TrendingUp, category: 'operations' },
-    { id: 'fees', name: 'Fee Configuration', icon: DollarSign, category: 'finance' },
-    { id: 'limits', name: 'Transaction Limits', icon: AlertCircle, category: 'compliance' },
-    { id: 'broadcast', name: 'Broadcast Message', icon: MessageSquare, category: 'communication' },
-    { id: 'support', name: 'Support Tickets', icon: MessageSquare, category: 'communication' },
-    { id: 'referrals', name: 'Referral Program', icon: Users, category: 'marketing' },
-    { id: 'promotions', name: 'Promotions & Rewards', icon: Gift, category: 'marketing' },
-    { id: 'disputes', name: 'Dispute Resolution', icon: AlertTriangle, category: 'operations' },
-    { id: 'transactions', name: 'Transaction Logs', icon: FileText, category: 'reports' },
-    { id: 'audit', name: 'Audit Trail', icon: Shield, category: 'compliance' },
-    { id: 'reports', name: 'Financial Reports', icon: FileText, category: 'reports' },
-    { id: 'analytics', name: 'Analytics Dashboard', icon: Activity, category: 'reports' },
-    { id: 'security', name: 'Security Logs', icon: Shield, category: 'compliance' },
-    { id: 'api', name: 'API Management', icon: Code, category: 'developer' },
-    { id: 'webhooks', name: 'Webhooks', icon: Zap, category: 'developer' },
-    { id: 'backup', name: 'Backup & Recovery', icon: Database, category: 'system' },
-    { id: 'maintenance', name: 'System Maintenance', icon: Server, category: 'system' },
-    { id: 'notifications', name: 'Push Notifications', icon: Bell, category: 'communication' },
-    { id: 'settings', name: 'Settings', icon: Settings, category: 'system' },
+    { id: 'dashboard', name: 'Dashboard', icon: BarChart3 },
+    { id: 'users', name: 'User Management', icon: Users },
+    { id: 'exchanges', name: 'Exchange Requests', icon: ArrowLeftRight },
+    { id: 'kyc', name: 'KYC Management', icon: Shield },
+    { id: 'rates', name: 'Rate Management', icon: TrendingUp },
+    { id: 'broadcast', name: 'Broadcast Message', icon: MessageSquare },
+    { id: 'transactions', name: 'Transaction Logs', icon: FileText },
+    { id: 'analytics', name: 'Analytics', icon: Activity },
+    { id: 'settings', name: 'Settings', icon: Settings },
   ];
 
   const getStatusColor = (status: string) => {
@@ -2073,22 +1926,6 @@ function AdminPanelPage() {
   if (!loggedIn) return <div className="p-6 max-w-md mx-auto"><div className="bg-white p-6 rounded-xl shadow"><h2 className="text-xl font-bold mb-4">ورود ادمین</h2><input className="w-full border p-2 mb-2 rounded" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} /><input type="password" className="w-full border p-2 mb-3 rounded" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} /><button onClick={login} className="w-full bg-blue-600 text-white py-2 rounded">Login</button></div></div>;
 
   const filteredUsers = users.filter((u) => (`${u.first_name} ${u.last_name} ${u.phone_number} ${u.id}`).toLowerCase().includes(searchQuery.toLowerCase()));
-
-  const deleteUserForReregistration = async (userId: number) => {
-    const shouldDelete = window.confirm('Delete this user so they can register again for testing?');
-    if (!shouldDelete) return;
-
-    const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    const res = await fetch(`${API_URL}/admin/users/${userId}?${qs}`, { method: 'DELETE' });
-
-    if (!res.ok) {
-      notifyMessage('حذف کاربر انجام نشد. دوباره تلاش کنید.');
-      return;
-    }
-
-    notifyMessage('کاربر حذف شد و می‌تواند دوباره ثبت‌نام کند.');
-    loadAll();
-  };
 
   const renderDashboard = () => (
     <div className="space-y-6">
@@ -2153,7 +1990,7 @@ function AdminPanelPage() {
                 <td className="px-4 py-3 text-gray-300">{u.bank_card_number}</td>
                 <td className="px-4 py-3 text-gray-300">{u.phone_number}</td>
                 <td className="px-4 py-3">{u.kyc_status === 'Approved' ? <span className="px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/30">Verified</span> : <span className="px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">Pending</span>}</td>
-                <td className="px-4 py-3"><div className="flex items-center gap-2"><button className="px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded text-blue-400">View</button><button onClick={async ()=>{ if(!newUserPassword){notifyMessage('رمز جدید را وارد کنید');return;} await fetch(`${API_URL}/admin/users/${u.id}/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,new_password:newUserPassword})}); notifyMessage('رمز کاربر ریست شد'); }} className="px-2 py-1 bg-red-500/20 border border-red-500/30 rounded text-red-400">Reset Pass</button><button onClick={()=>deleteUserForReregistration(u.id)} className="px-2 py-1 bg-red-900/30 border border-red-500/40 rounded text-red-300" title="Delete user account to allow a fresh registration">Delete & Re-register</button></div></td>
+                <td className="px-4 py-3"><div className="flex items-center gap-2"><button className="px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded text-blue-400">View</button><button onClick={async ()=>{ if(!newUserPassword){notifyMessage('رمز جدید را وارد کنید');return;} await fetch(`${API_URL}/admin/users/${u.id}/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,new_password:newUserPassword})}); notifyMessage('رمز کاربر ریست شد'); }} className="px-2 py-1 bg-red-500/20 border border-red-500/30 rounded text-red-400">Reset Pass</button><button onClick={async ()=>{const qs=`username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/users/${u.id}?${qs}`,{method:'DELETE'}); loadAll();}} className="px-2 py-1 bg-gray-500/20 border border-gray-500/30 rounded text-gray-300">Delete</button></div></td>
               </tr>)}
             </tbody>
           </table>
@@ -2198,6 +2035,16 @@ function AdminPanelPage() {
         </div>
       </div>
 
+      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+        <h3 className="font-bold text-white mb-3">Broadcast Message</h3>
+        <div className="flex gap-2 flex-wrap"><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="User ID (empty for all)" value={targetUserId} onChange={(e)=>setTargetUserId(e.target.value)} /><input className="flex-1 px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="Message" value={messageText} onChange={(e)=>setMessageText(e.target.value)} /><button className="px-4 py-2 bg-purple-600 rounded text-white" onClick={async ()=>{const res=await fetch(`${API_URL}/admin/messages/send`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,message:messageText,user_id:targetUserId?Number(targetUserId):null})});const data=await res.json();notifyMessage(`ارسال شد: ${data.sent ?? 0}`);}}>Send</button></div>
+      </div>
+
+      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+        <h3 className="font-bold text-white mb-3">FAQ</h3>
+        <div className="flex gap-2 mb-2"><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="سوال" value={faqQuestion} onChange={(e)=>setFaqQuestion(e.target.value)} /><input className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" placeholder="پاسخ" value={faqAnswer} onChange={(e)=>setFaqAnswer(e.target.value)} /><button className="px-3 py-2 bg-blue-600 rounded text-white" onClick={async ()=>{await fetch(`${API_URL}/admin/faqs`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,question:faqQuestion,answer:faqAnswer})});setFaqQuestion('');setFaqAnswer('');loadAll();}}>Add</button></div>
+        <div className="max-h-40 overflow-auto text-sm text-gray-300">{faqs.map((f)=><div key={f.id} className="py-1 border-b border-gray-700/40 flex justify-between"><span>{f.question}</span><button className="text-red-400" onClick={async ()=>{const qs=`username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`,{method:'DELETE'}); loadAll();}}>Delete</button></div>)}</div>
+      </div>
     </div>
   );
 
@@ -2206,204 +2053,11 @@ function AdminPanelPage() {
       case 'dashboard': return renderDashboard();
       case 'users': return renderUsers();
       case 'exchanges': return renderExchanges();
-      case 'kyc': return (
-        <div className="space-y-6">
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-            <h3 className="font-bold mb-3 text-white">KYC Verification Flow Logs</h3>
-            <div className="max-h-72 overflow-auto space-y-2">
-              {kycLogs.kyc_verification_logs?.map((log: any) => (
-                <div key={`k${log.id}`} className="text-xs border border-gray-700/50 rounded p-2">
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">{log.created_at}</span>
-                    <span className={`px-2 py-1 rounded ${
-                      log.action?.includes('failed') ? 'bg-red-500/20 text-red-400' :
-                      log.action?.includes('success') ? 'bg-green-500/20 text-green-400' :
-                      'bg-blue-500/20 text-blue-400'
-                    }`}>
-                      {log.action || 'Unknown'}
-                    </span>
-                  </div>
-                  <div className="text-gray-400">
-                    Phone: {log.phone_number || '-'} | NID: {log.national_id || '-'}
-                  </div>
-                  <div className="text-gray-300 break-all mt-1">
-                    Details: {log.details || 'No details'}
-                  </div>
-                </div>
-              ))}
-              {(!kycLogs.kyc_verification_logs || kycLogs.kyc_verification_logs.length === 0) && (
-                <div className="text-center text-gray-500 py-4">No KYC verification logs found</div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-            <h3 className="font-bold mb-3 text-white">EHRAZ API Logs</h3>
-            <div className="max-h-72 overflow-auto space-y-2">
-              {kycLogs.ehraz_logs?.map((log: any) => (
-                <div key={`e${log.id}`} className="text-xs border border-gray-700/50 rounded p-2">
-                  <div className="text-gray-300">
-                    {log.created_at} | {log.endpoint || 'Unknown endpoint'}
-                  </div>
-                  <div className="text-gray-400">
-                    Phone: {log.phone_number || '-'} | NID: {log.national_id || '-'}
-                  </div>
-                  <div className="text-gray-300 break-all mt-1">
-                    Request: {log.request_payload || 'No request data'}
-                  </div>
-                  <div className="text-gray-300 break-all mt-1">
-                    Response: {log.response_payload || 'No response data'}
-                  </div>
-                  <div className={`mt-1 ${log.success ? 'text-green-400' : 'text-red-400'}`}>
-                    {log.error_message || (log.success ? 'Success' : 'Failed')}
-                  </div>
-                </div>
-              ))}
-              {(!kycLogs.ehraz_logs || kycLogs.ehraz_logs.length === 0) && (
-                <div className="text-center text-gray-500 py-4">No EHRAZ API logs found</div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-            <h3 className="font-bold mb-3 text-white">Ghasedak SMS Logs</h3>
-            <div className="max-h-72 overflow-auto space-y-2">
-              {kycLogs.sms_logs?.map((log: any) => (
-                <div key={`s${log.id}`} className="text-xs border border-gray-700/50 rounded p-2">
-                  <div className="text-gray-300">
-                    {log.created_at} | {log.phone_number || 'Unknown phone'}
-                  </div>
-                  <div className="text-gray-300 break-all mt-1">
-                    Request: {log.request_payload || 'No request data'}
-                  </div>
-                  <div className="text-gray-300 break-all mt-1">
-                    Response: {log.response_payload || 'No response data'}
-                  </div>
-                  <div className={`mt-1 ${log.success ? 'text-green-400' : 'text-red-400'}`}>
-                    {log.error_message || (log.success ? 'Success' : 'Failed')}
-                  </div>
-                </div>
-              ))}
-              {(!kycLogs.sms_logs || kycLogs.sms_logs.length === 0) && (
-                <div className="text-center text-gray-500 py-4">No SMS logs found</div>
-              )}
-            </div>
-          </div>
-        </div>
-      );
-      case 'wallets': return <div className="text-white text-center py-20">Wallet Management Coming Soon...</div>;
+      case 'kyc': return <div className="text-white text-center py-20">KYC Management Coming Soon...</div>;
       case 'rates': return <div className="max-w-3xl mx-auto bg-gray-800/50 border border-gray-700/50 rounded-xl p-6 space-y-4"><h3 className="text-xl font-bold text-white">Rate Management</h3><p className="text-gray-400 text-sm">ضرایب فعلی محاسبه نرخ</p><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{Object.entries(adminRates).map(([k,v]) => <label key={k} className="text-sm text-gray-300"><div className="mb-1">{k}</div><input className="w-full px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" value={String(v)} onChange={(e)=>setAdminRates((prev)=>({...prev,[k]: Number(e.target.value || '0')}))} /></label>)}</div><button className="px-4 py-2 bg-blue-600 rounded text-white" onClick={async ()=>{const res=await fetch(`${API_URL}/admin/rates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,...adminRates})}); if(res.ok){notifyMessage('ضرایب نرخ با موفقیت ذخیره شد'); loadAll();} else {notifyMessage('خطا در ذخیره تنظیمات نرخ');}}}>Save Rate Settings</button></div>;
-      case 'fees': return <div className="text-white text-center py-20">Fee Configuration Coming Soon...</div>;
-      case 'limits': return <div className="text-white text-center py-20">Transaction Limits Coming Soon...</div>;
-      case 'broadcast': return (
-        <div className="space-y-6">
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-            <h3 className="font-bold text-white mb-3">Broadcast Message</h3>
-            <div className="flex gap-2 flex-wrap">
-              <input 
-                className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
-                placeholder="User ID (empty for all)" 
-                value={targetUserId} 
-                onChange={(e)=>setTargetUserId(e.target.value)} 
-              />
-              <input 
-                className="flex-1 px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
-                placeholder="Message" 
-                value={messageText} 
-                onChange={(e)=>setMessageText(e.target.value)} 
-              />
-              <button 
-                className="px-4 py-2 bg-purple-600 rounded text-white" 
-                onClick={async ()=>{
-                  const res = await fetch(`${API_URL}/admin/messages/send`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                      username,
-                      password,
-                      message: messageText,
-                      user_id: targetUserId ? Number(targetUserId) : null
-                    })
-                  });
-                  const data = await res.json();
-                  notifyMessage(`ارسال شد: ${data.sent ?? 0}`);
-                }}
-              >
-                Send
-              </button>
-            </div>
-          </div>
-
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-            <h3 className="font-bold text-white mb-3">FAQ Management</h3>
-            <div className="flex gap-2 mb-2">
-              <input 
-                className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
-                placeholder="سوال" 
-                value={faqQuestion} 
-                onChange={(e)=>setFaqQuestion(e.target.value)} 
-              />
-              <input 
-                className="px-3 py-2 rounded bg-gray-900/50 border border-gray-700 text-white" 
-                placeholder="پاسخ" 
-                value={faqAnswer} 
-                onChange={(e)=>setFaqAnswer(e.target.value)} 
-              />
-              <button 
-                className="px-3 py-2 bg-blue-600 rounded text-white" 
-                onClick={async ()=>{
-                  await fetch(`${API_URL}/admin/faqs`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                      username,
-                      password,
-                      question: faqQuestion,
-                      answer: faqAnswer
-                    })
-                  });
-                  setFaqQuestion('');
-                  setFaqAnswer('');
-                  loadAll();
-                }}
-              >
-                Add FAQ
-              </button>
-            </div>
-            <div className="max-h-40 overflow-auto text-sm text-gray-300">
-              {faqs.map((f) => (
-                <div key={f.id} className="py-1 border-b border-gray-700/40 flex justify-between">
-                  <span>{f.question}</span>
-                  <button 
-                    className="text-red-400" 
-                    onClick={async ()=>{
-                      const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-                      await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`, {method: 'DELETE'});
-                      loadAll();
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
-      case 'support': return <div className="text-white text-center py-20">Support Tickets Coming Soon...</div>;
-      case 'referrals': return <div className="text-white text-center py-20">Referral Program Coming Soon...</div>;
-      case 'promotions': return <div className="text-white text-center py-20">Promotions & Rewards Coming Soon...</div>;
-      case 'disputes': return <div className="text-white text-center py-20">Dispute Resolution Coming Soon...</div>;
+      case 'broadcast': return <div className="text-white text-center py-20">Broadcast Message Coming Soon...</div>;
       case 'transactions': return <div className="text-white text-center py-20"><div className="max-w-3xl mx-auto bg-gray-800/50 rounded-xl p-4 text-left">{logs.slice(0,200).map((l)=><div key={l.id} className="border-b border-gray-700/40 py-2 text-sm">{l.created_at} - {l.action}</div>)}</div></div>;
-      case 'audit': return <div className="text-white text-center py-20">Audit Trail Coming Soon...</div>;
-      case 'reports': return <div className="text-white text-center py-20">Financial Reports Coming Soon...</div>;
-      case 'analytics': return <div className="text-white text-center py-20">Analytics Dashboard Coming Soon...</div>;
-      case 'security': return <div className="text-white text-center py-20">Security Logs Coming Soon...</div>;
-      case 'api': return <ApiManagementComponent />;
-      case 'webhooks': return <div className="text-white text-center py-20">Webhooks Coming Soon...</div>;
-      case 'backup': return <div className="text-white text-center py-20">Backup & Recovery Coming Soon...</div>;
-      case 'maintenance': return <div className="text-white text-center py-20">System Maintenance Coming Soon...</div>;
-      case 'notifications': return <div className="text-white text-center py-20">Push Notifications Coming Soon...</div>;
+      case 'analytics': return <div className="text-white text-center py-20">Analytics Coming Soon...</div>;
       case 'settings': return <div className="text-white text-center py-20">Settings Coming Soon...</div>;
       default: return renderDashboard();
     }
@@ -2414,35 +2068,17 @@ function AdminPanelPage() {
       <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900/95 backdrop-blur-xl border-r border-gray-700/50 transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center justify-between p-6 border-b border-gray-700/50">
           <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Kiani Admin</h1>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-gray-400 hover:text-white">
-            <X className="w-6 h-6" />
-          </button>
         </div>
-
-        <div className="p-4 border-b border-gray-700/50">
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="w-full px-3 py-2 bg-gray-800/50 border border-gray-700/50 rounded-lg text-white text-sm focus:border-blue-500/50 focus:outline-none"
-          >
-            {categories.map((cat) => (
-              <option key={cat.id} value={cat.id}>{cat.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <nav className="p-4 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)]">
-          {navigationItems
-            .filter((item) => selectedCategory === 'all' || item.category === selectedCategory)
-            .map((item) => {
-              const Icon = item.icon;
-              return (
-                <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === item.id ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-gray-400 hover:bg-gray-800/50 hover:text-white'}`}>
-                  <Icon className="w-5 h-5" />
-                  <span className="font-medium text-sm">{item.name}</span>
-                </button>
-              );
-            })}
+        <nav className="p-4 space-y-2">
+          {navigationItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === item.id ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-gray-400 hover:bg-gray-800/50 hover:text-white'}`}>
+                <Icon className="w-5 h-5" />
+                <span className="font-medium">{item.name}</span>
+              </button>
+            );
+          })}
         </nav>
       </div>
 
