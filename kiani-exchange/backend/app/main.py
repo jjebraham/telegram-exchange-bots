@@ -3,14 +3,14 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load the backend .env explicitly. This is more reliable than python-dotenv's
-# automatic stack-frame discovery (which can fail in stdin/embedded execution).
-ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
-load_dotenv(dotenv_path=ENV_PATH)
+# Always load the backend .env from its known location before importing modules
+# that read configuration at import time.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_DIR / ".env")
 
-# This backend uses the admin bot for registration/login/transaction notifications.
-# Keep TELEGRAM_BOT_TOKEN available for the user-facing bot, but map the dedicated
-# admin token into the legacy variable expected by existing backend modules.
+# Keep the normal user bot token separate from the dedicated admin bot token.
+# Older backend helpers may still read TELEGRAM_BOT_TOKEN, so map the admin token
+# only for this FastAPI process when a dedicated admin token is configured.
 admin_bot_token = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "").strip()
 if admin_bot_token:
     os.environ["TELEGRAM_BOT_TOKEN"] = admin_bot_token
@@ -18,7 +18,7 @@ if admin_bot_token:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
-from .api import rates, users, transactions
+from .api import rates, users, transactions, kyc
 from .price_cache import price_cache
 
 logging.basicConfig(
@@ -27,9 +27,9 @@ logging.basicConfig(
 )
 
 app = FastAPI(
-    title="Kiani Exchange API",
-    description="Backend API for Kiani Exchange Telegram Mini App",
-    version="1.0.0",
+    title="Exchange API",
+    description="Backend API for the Telegram Mini App",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -43,6 +43,7 @@ app.add_middleware(
 app.include_router(rates.router, prefix="/api", tags=["rates"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])
+app.include_router(kyc.router, prefix="/api", tags=["kyc"])
 
 
 @app.on_event("startup")
