@@ -11,10 +11,10 @@ class CalculatedOrder:
 
 def calculate_fee(exchange_type: str, send_amount: float) -> tuple[float, str]:
     if exchange_type == "sell_lira":  # TL -> Toman
-        return (80.0 if send_amount < 5000 else 0.0, "TL")
+        return (160.0 if send_amount < 5000 else 0.0, "TL")
 
     if exchange_type == "buy_lira":  # Toman -> TL
-        return (80.0 if send_amount < 15_000_000 else 0.0, "TL")
+        return (160.0 if send_amount < 15_000_000 else 0.0, "TL")
 
     if exchange_type in {"buy_usdt", "sell_usdt", "convert_usdt_to_lira", "convert_lira_to_usdt"}:
         return (5.0, "USDT")
@@ -54,13 +54,59 @@ def calculate_order(exchange_type: str, send_amount: float, rates: dict[str, flo
     )
 
 
-def derive_rates(usdt_irr: float, usdt_try: float) -> dict[str, float]:
+def _effective_rate(raw_rate: float, manual_rate: float, percentage: float, decimals: int | None) -> float:
+    base = manual_rate if manual_rate and manual_rate > 0 else raw_rate
+    effective = base * (1 + (percentage / 100.0))
+    if decimals is None:
+        return round(effective / 10) * 10
+    return round(effective, decimals)
+
+
+def derive_rates(
+    usdt_irr: float,
+    usdt_try: float,
+    settings: dict[str, float] | None = None,
+) -> dict[str, float]:
+    settings = settings or {}
     eff_toman = usdt_irr / 10
+    raw_toman_per_tl = eff_toman / usdt_try
+
     return {
-        "buy_lira": round(((eff_toman / usdt_try) * 1.02) / 10) * 10,
-        "sell_lira": round(((eff_toman / usdt_try) * 0.97) / 10) * 10,
-        "buy_usdt": round((eff_toman * 1.01) / 10) * 10,
-        "sell_usdt": round((eff_toman * 0.99) / 10) * 10,
-        "usdt_to_lira": round(usdt_try * 0.98, 2),
-        "lira_to_usdt": round(usdt_try * 1.02, 2),
+        "buy_lira": _effective_rate(
+            raw_toman_per_tl,
+            float(settings.get("toman_to_tl_manual_rate", 0) or 0),
+            float(settings.get("toman_to_tl_percentage", -0.5) or 0),
+            None,
+        ),
+        "sell_lira": _effective_rate(
+            raw_toman_per_tl,
+            float(settings.get("tl_to_toman_manual_rate", 0) or 0),
+            float(settings.get("tl_to_toman_percentage", -6.0) or 0),
+            None,
+        ),
+        "buy_usdt": _effective_rate(
+            eff_toman,
+            float(settings.get("toman_to_usdt_manual_rate", 0) or 0),
+            float(settings.get("toman_to_usdt_percentage", 1.0) or 0),
+            None,
+        ),
+        "sell_usdt": _effective_rate(
+            eff_toman,
+            float(settings.get("usdt_to_toman_manual_rate", 0) or 0),
+            float(settings.get("usdt_to_toman_percentage", -1.0) or 0),
+            None,
+        ),
+        "usdt_to_lira": _effective_rate(
+            usdt_try,
+            float(settings.get("usdt_to_tl_manual_rate", 0) or 0),
+            float(settings.get("usdt_to_tl_percentage", -2.0) or 0),
+            2,
+        ),
+        "lira_to_usdt": _effective_rate(
+            usdt_try,
+            float(settings.get("tl_to_usdt_manual_rate", 0) or 0),
+            float(settings.get("tl_to_usdt_percentage", 2.0) or 0),
+            2,
+        ),
+        "foreign_payment": round((eff_toman * 1.05) / 10) * 10,
     }
