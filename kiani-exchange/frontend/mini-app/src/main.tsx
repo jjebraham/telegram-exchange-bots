@@ -4,15 +4,24 @@ import App from './App'
 import ErrorBoundary from './ErrorBoundary'
 import KycGate from './KycGate'
 import AdminKycReview from './AdminKycReview'
+import BrandSanitizer from './BrandSanitizer'
 import './index.css'
 
 const rootElement = document.getElementById('root')!
 const root = ReactDOM.createRoot(rootElement)
 
+const cleanBrand = (value: unknown) => String(value ?? '')
+  .replace(/صرافی\s*کیانی/g, 'صرافی')
+  .replace(/کیانی/g, '')
+  .replace(/KIANI\s*Exchange/gi, 'Exchange')
+  .replace(/KIANI/gi, '')
+  .replace(/ {2,}/g, ' ')
+  .trim()
+
 // Telegram's WebApp script is loaded even when the mini app is opened
 // in a normal browser. In that case Telegram.WebApp can exist while native
 // methods such as showPopup are not actually usable. Make popup notifications
-// non-fatal so they can never interrupt application navigation.
+// non-fatal and also remove legacy branding from popup titles/messages.
 const hardenTelegramPopup = () => {
   const tg = (window as any)?.Telegram?.WebApp
   if (!tg || typeof tg.showPopup !== 'function') return
@@ -20,12 +29,17 @@ const hardenTelegramPopup = () => {
   const originalShowPopup = tg.showPopup.bind(tg)
 
   tg.showPopup = (params: any, callback?: (buttonId?: string) => void) => {
+    const sanitizedParams = {
+      ...params,
+      title: cleanBrand(params?.title) || 'صرافی',
+      message: cleanBrand(params?.message),
+    }
     const insideTelegram = Boolean(tg.initData)
     const popupSupported =
       typeof tg.isVersionAtLeast !== 'function' || tg.isVersionAtLeast('6.2')
 
     const browserFallback = () => {
-      window.alert(String(params?.message || ''))
+      window.alert(String(sanitizedParams.message || ''))
       callback?.('ok')
     }
 
@@ -35,7 +49,7 @@ const hardenTelegramPopup = () => {
     }
 
     try {
-      originalShowPopup(params, callback)
+      originalShowPopup(sanitizedParams, callback)
     } catch (error) {
       console.warn('Telegram showPopup failed; falling back to browser alert:', error)
       browserFallback()
@@ -63,6 +77,7 @@ const renderApp = () => {
     <React.StrictMode>
       <ErrorBoundary>
         <App />
+        <BrandSanitizer />
         <KycGate />
         <AdminKycReview />
       </ErrorBoundary>
