@@ -1,14 +1,15 @@
 import logging
 import os
+from dotenv import load_dotenv
+
+# Load environment variables before importing modules that read them at import time.
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 from .database import init_db
 from .api import rates, users, transactions
 from .price_cache import price_cache
-
-# Load environment variables from .env file
-load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
