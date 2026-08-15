@@ -7,6 +7,18 @@ const replacements: Array<[RegExp, string]> = [
   [/KIANI/gi, ''],
   [/۸۰\s*TL/g, '۱۶۰ TL'],
   [/80\s*TL/gi, '160 TL'],
+  [/toman_to_tl_manual_rate/g, 'Toman → TL — نرخ دستی (۰ = نرخ بازار)'],
+  [/toman_to_tl_percentage/g, 'Toman → TL — درصد تعدیل'],
+  [/tl_to_toman_manual_rate/g, 'TL → Toman — نرخ دستی (۰ = نرخ بازار)'],
+  [/tl_to_toman_percentage/g, 'TL → Toman — درصد تعدیل'],
+  [/tl_to_usdt_manual_rate/g, 'TL → USDT — نرخ دستی (۰ = نرخ بازار)'],
+  [/tl_to_usdt_percentage/g, 'TL → USDT — درصد تعدیل'],
+  [/usdt_to_tl_manual_rate/g, 'USDT → TL — نرخ دستی (۰ = نرخ بازار)'],
+  [/usdt_to_tl_percentage/g, 'USDT → TL — درصد تعدیل'],
+  [/toman_to_usdt_manual_rate/g, 'Toman → USDT — نرخ دستی (۰ = نرخ بازار)'],
+  [/toman_to_usdt_percentage/g, 'Toman → USDT — درصد تعدیل'],
+  [/usdt_to_toman_manual_rate/g, 'USDT → Toman — نرخ دستی (۰ = نرخ بازار)'],
+  [/usdt_to_toman_percentage/g, 'USDT → Toman — درصد تعدیل'],
 ]
 
 const cleanBrand = (value: string) => {
