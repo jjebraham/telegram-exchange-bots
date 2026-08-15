@@ -1,4 +1,5 @@
 import aiohttp
+import logging
 import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
@@ -9,9 +10,11 @@ from ..auth import get_current_user_id
 from ..price_cache import price_cache
 from ..exchange_math import calculate_order, derive_rates
 
-ADMIN_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
-ADMIN_CHAT_ID = 2043363119
-PROXY_URL = "http://jjebraham-25:Amir1234@p.webshare.io:80"
+logger = logging.getLogger(__name__)
+
+ADMIN_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+ADMIN_CHAT_ID = int(os.getenv("TELEGRAM_ADMIN_CHAT_ID", "0") or 0)
+PROXY_URL = os.getenv("TRANSACTION_PROXY_URL", "").strip() or None
 
 router = APIRouter()
 
@@ -44,12 +47,9 @@ class NotifyTransactionRequest(BaseModel):
     expires_at: str
     fee: Optional[float] = None
     total_amount: Optional[float] = None
-    # Optional manual payload (server also backfills from DB)
     national_id: Optional[str] = None
     date_of_birth: Optional[str] = None
     bank_card_number: Optional[str] = None
-
-
 
 
 class StatusUpdateRequest(BaseModel):
@@ -60,11 +60,20 @@ class StatusUpdateRequest(BaseModel):
     receipt_description: Optional[str] = None
     payment_link: Optional[str] = None
 
+
 async def _send_telegram_message(chat_id: int, message: str):
+    if not ADMIN_BOT_TOKEN:
+        logger.warning("TELEGRAM_BOT_TOKEN is not configured; skipping Telegram message")
+        return
     admin_url = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": message}
     async with aiohttp.ClientSession() as session:
-        await session.post(admin_url, json=payload, proxy=PROXY_URL, timeout=aiohttp.ClientTimeout(total=10))
+        await session.post(
+            admin_url,
+            json=payload,
+            proxy=PROXY_URL,
+            timeout=aiohttp.ClientTimeout(total=10),
+        )
 
 
 async def _notify_status_change(user_id: int, reference_number: str, status: str):
@@ -73,25 +82,26 @@ async def _notify_status_change(user_id: int, reference_number: str, status: str
         await _send_telegram_message(user_id, msg)
     except Exception:
         pass
-    try:
-        await _send_telegram_message(ADMIN_CHAT_ID, f"🔔 وضعیت سفارش {reference_number} => {status}")
-    except Exception:
-        pass
+    if ADMIN_CHAT_ID:
+        try:
+            await _send_telegram_message(ADMIN_CHAT_ID, f"🔔 وضعیت سفارش {reference_number} => {status}")
+        except Exception:
+            pass
 
 
 def _admin_role(username: str, password: str) -> str | None:
-    admin_user = os.getenv("ADMIN_PANEL_USERNAME", "admin")
-    admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
-    support_user = os.getenv("SUPPORT_PANEL_USERNAME", "support")
-    support_pass = os.getenv("SUPPORT_PANEL_PASSWORD", "support123")
-    viewer_user = os.getenv("VIEWER_PANEL_USERNAME", "viewer")
-    viewer_pass = os.getenv("VIEWER_PANEL_PASSWORD", "viewer123")
+    admin_user = os.getenv("ADMIN_PANEL_USERNAME", "").strip()
+    admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "")
+    support_user = os.getenv("SUPPORT_PANEL_USERNAME", "").strip()
+    support_pass = os.getenv("SUPPORT_PANEL_PASSWORD", "")
+    viewer_user = os.getenv("VIEWER_PANEL_USERNAME", "").strip()
+    viewer_pass = os.getenv("VIEWER_PANEL_PASSWORD", "")
 
-    if username == admin_user and password == admin_pass:
+    if admin_user and admin_pass and username == admin_user and password == admin_pass:
         return "admin"
-    if username == support_user and password == support_pass:
+    if support_user and support_pass and username == support_user and password == support_pass:
         return "support"
-    if username == viewer_user and password == viewer_pass:
+    if viewer_user and viewer_pass and username == viewer_user and password == viewer_pass:
         return "viewer"
     return None
 
@@ -113,12 +123,10 @@ async def create_transaction(
     rates = derive_rates(usdt_irr, usdt_try)
     calculated = calculate_order(req.exchange_type, req.send_amount, rates)
 
-    # Prevent negative-net USDT sends
     if req.exchange_type in {"sell_usdt", "convert_usdt_to_lira"} and calculated.net_send_amount <= 0:
         raise HTTPException(status_code=400, detail="send_amount_too_low_for_fee")
 
     with get_db() as conn:
-        # Check for duplicate reference number
         existing = conn.execute(
             "SELECT id FROM transactions WHERE reference_number = ?",
             (req.reference_number,),
@@ -187,6 +195,9 @@ async def get_user_transactions(
 
 @router.post("/admin/notify-transaction")
 async def notify_admin_transaction(req: NotifyTransactionRequest):
+    if not ADMIN_BOT_TOKEN or not ADMIN_CHAT_ID:
+        raise HTTPException(status_code=503, detail="Telegram admin notification is not configured")
+
     national_id = req.national_id
     date_of_birth = req.date_of_birth
     bank_card_number = req.bank_card_number
@@ -201,7 +212,6 @@ async def notify_admin_transaction(req: NotifyTransactionRequest):
             date_of_birth = user_row["dob"]
             bank_card_number = user_row["bank_card_number"]
 
-    # Build message with user's 3 factors for admin
     message = (
         "🆕 درخواست معامله جدید\n\n"
         f"👤 نام: {req.user_name}\n"
@@ -214,8 +224,7 @@ async def notify_admin_transaction(req: NotifyTransactionRequest):
         f"📅 تاریخ: {req.timestamp}\n"
         f"⏰ انقضا: {req.expires_at}"
     )
-    
-    # Add user's 3 factors if available (for admin only)
+
     if national_id or date_of_birth or bank_card_number:
         message += "\n\n🔐 اطلاعات احراز کاربر:\n"
         if national_id:
@@ -260,25 +269,23 @@ async def cancel_transaction(
     user_id: int = Depends(get_current_user_id),
 ):
     with get_db() as conn:
-        # Check if transaction exists and belongs to user
         transaction = conn.execute(
-            """SELECT id, status FROM transactions 
+            """SELECT id, status FROM transactions
                WHERE reference_number = ? AND user_id = ?""",
             (reference_number, user_id),
         ).fetchone()
-        
+
         if not transaction:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        
-        # Update status to "Canceled by User"
+
         conn.execute(
-            """UPDATE transactions 
+            """UPDATE transactions
                SET status = 'Canceled by User'
                WHERE reference_number = ? AND user_id = ?""",
             (reference_number, user_id),
         )
         conn.commit()
-    
+
     await _notify_status_change(user_id, reference_number, "Canceled by User")
     return {"status": "success", "message": "Transaction canceled"}
 
