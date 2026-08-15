@@ -5,6 +5,8 @@ const replacements: Array<[RegExp, string]> = [
   [/کیانی/g, ''],
   [/KIANI\s*Exchange/gi, 'Exchange'],
   [/KIANI/gi, ''],
+  [/۸۰\s*TL/g, '۱۶۰ TL'],
+  [/80\s*TL/gi, '160 TL'],
 ]
 
 const cleanBrand = (value: string) => {
