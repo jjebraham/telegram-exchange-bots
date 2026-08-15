@@ -18,10 +18,22 @@ const cleanBrand = (value: unknown) => String(value ?? '')
   .replace(/ {2,}/g, ' ')
   .trim()
 
+const normalizeUiMessage = (value: unknown) => {
+  const cleaned = cleanBrand(value)
+  if (cleaned.includes('ثبت نام شما با موفقیت انجام شد')) {
+    return 'ثبت‌نام شما با موفقیت انجام شد و سطح ۱ احراز هویت را با موفقیت گذراندید. اکنون وارد حساب شوید تا تصاویر روی و پشت کارت ملی را برای سطح ۲ ارسال کنید.'
+  }
+  return cleaned
+}
+
+// Also sanitize the browser fallback when Telegram.WebApp is unavailable.
+const originalAlert = window.alert.bind(window)
+window.alert = (message?: any) => originalAlert(normalizeUiMessage(message))
+
 // Telegram's WebApp script is loaded even when the mini app is opened
 // in a normal browser. In that case Telegram.WebApp can exist while native
 // methods such as showPopup are not actually usable. Make popup notifications
-// non-fatal and also remove legacy branding from popup titles/messages.
+// non-fatal and remove legacy branding from popup titles/messages.
 const hardenTelegramPopup = () => {
   const tg = (window as any)?.Telegram?.WebApp
   if (!tg || typeof tg.showPopup !== 'function') return
@@ -32,14 +44,14 @@ const hardenTelegramPopup = () => {
     const sanitizedParams = {
       ...params,
       title: cleanBrand(params?.title) || 'صرافی',
-      message: cleanBrand(params?.message),
+      message: normalizeUiMessage(params?.message),
     }
     const insideTelegram = Boolean(tg.initData)
     const popupSupported =
       typeof tg.isVersionAtLeast !== 'function' || tg.isVersionAtLeast('6.2')
 
     const browserFallback = () => {
-      window.alert(String(sanitizedParams.message || ''))
+      originalAlert(String(sanitizedParams.message || ''))
       callback?.('ok')
     }
 
