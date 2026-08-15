@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import aiohttp
@@ -6,7 +7,7 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-# List of proxy servers
+# List of proxy servers. Credentials are loaded from environment variables.
 PROXY_LIST = [
     "45.159.53.29:7401",
     "107.181.142.146:5739",
@@ -110,13 +111,21 @@ PROXY_LIST = [
     "50.114.99.125:6866"
 ]
 
-def get_random_proxy():
-    """Get a random proxy from the list"""
-    proxy = random.choice(PROXY_LIST)
-    return f"http://jjebraham:Amir1234@{proxy}"
-
-WALLEX_API_KEY = "15064|7tVDd4NDBYmATAe4lWTUQSTzj0v7ceTELEv6u6zG"
+PROXY_USERNAME = os.getenv("PROXY_USERNAME", "").strip()
+PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "").strip()
+WALLEX_API_KEY = os.getenv("WALLEX_API_KEY", "").strip()
 WALLEX_BASE_URL = "https://api.wallex.ir/v1"
+
+
+def build_proxy_url(proxy: str) -> str:
+    if PROXY_USERNAME and PROXY_PASSWORD:
+        return f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{proxy}"
+    return f"http://{proxy}"
+
+
+def get_random_proxy():
+    """Get a random proxy using credentials from the environment."""
+    return build_proxy_url(random.choice(PROXY_LIST))
 
 
 class PriceCache:
@@ -130,17 +139,16 @@ class PriceCache:
     async def _fetch_with_proxy_retry(self, url, headers=None, is_json=True, max_retries=2):
         """Helper method to fetch with proxy retry logic"""
         tried_proxies = set()
-        
+
         for attempt in range(max_retries):
-            # Get a proxy we haven't tried yet
             available_proxies = [p for p in PROXY_LIST if p not in tried_proxies]
             if not available_proxies:
                 break
-                
+
             proxy = random.choice(available_proxies)
-            proxy_url = f"http://jjebraham:Amir1234@{proxy}"
+            proxy_url = build_proxy_url(proxy)
             tried_proxies.add(proxy)
-            
+
             try:
                 async with aiohttp.ClientSession() as sess:
                     async with sess.get(
@@ -151,19 +159,15 @@ class PriceCache:
                     ) as resp:
                         resp.raise_for_status()
                         if is_json:
-                            data = await resp.json()
-                            return data
-                        else:
-                            text = await resp.text()
-                            return text
+                            return await resp.json()
+                        return await resp.text()
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} with proxy {proxy} failed: {e}")
                 continue
-        
+
         raise Exception(f"All {max_retries} proxy attempts failed for {url}")
 
     async def fetch_usdt_irr(self) -> float:
-        # Primary: flask proxy
         primary_url = "https://flask-9l1dbb.chbk.app/proxy/usdt-to-rls"
         try:
             async with aiohttp.ClientSession() as sess:
@@ -179,9 +183,12 @@ class PriceCache:
         except Exception as e:
             logger.warning(f"Primary USDT-IRR failed: {e}")
 
-        # Fallback: Wallex API
         try:
-            headers = {"X-API-KEY": WALLEX_API_KEY, "User-Agent": "Mozilla/5.0"}
+            headers = {"User-Agent": "Mozilla/5.0"}
+            if WALLEX_API_KEY:
+                headers["X-API-KEY"] = WALLEX_API_KEY
+            else:
+                logger.warning("WALLEX_API_KEY is not configured")
             data = await self._fetch_with_proxy_retry(
                 f"{WALLEX_BASE_URL}/markets",
                 headers=headers,
@@ -194,7 +201,7 @@ class PriceCache:
             stats = usdt_data.get("stats", {})
             last_price = stats.get("lastPrice")
             if last_price:
-                return float(last_price) * 10  # Convert Toman to Rial
+                return float(last_price) * 10
             raise ValueError("No lastPrice in Wallex data")
         except Exception as e:
             logger.error(f"Wallex USDT-IRR fallback failed: {e}")
