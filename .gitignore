@@ -26,6 +26,10 @@ venv/
 kyc_uploads/
 **/kyc_uploads/
 
+# Private profile images
+profile_uploads/
+**/profile_uploads/
+
 # Node
 node_modules/
 dist/
