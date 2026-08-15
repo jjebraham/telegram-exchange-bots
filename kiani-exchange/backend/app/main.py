@@ -22,7 +22,7 @@ if admin_bot_token:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
-from .api import rates, users, transactions, kyc
+from .api import rates, users, transactions, kyc, activity
 from .price_cache import price_cache
 
 logging.basicConfig(
@@ -33,7 +33,7 @@ logging.basicConfig(
 app = FastAPI(
     title="Exchange API",
     description="Backend API for the Telegram Mini App",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 app.add_middleware(
@@ -48,6 +48,7 @@ app.include_router(rates.router, prefix="/api", tags=["rates"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])
 app.include_router(kyc.router, prefix="/api", tags=["kyc"])
+app.include_router(activity.router, prefix="/api", tags=["activity"])
 
 
 @app.on_event("startup")
