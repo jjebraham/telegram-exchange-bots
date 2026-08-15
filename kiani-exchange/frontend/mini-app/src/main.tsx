@@ -5,6 +5,7 @@ import ErrorBoundary from './ErrorBoundary'
 import KycGate from './KycGate'
 import AdminKycReview from './AdminKycReview'
 import BrandSanitizer from './BrandSanitizer'
+import UserActivityReporter from './UserActivityReporter'
 import './index.css'
 
 const rootElement = document.getElementById('root')!
@@ -92,6 +93,7 @@ const renderApp = () => {
         <BrandSanitizer />
         <KycGate />
         <AdminKycReview />
+        <UserActivityReporter />
       </ErrorBoundary>
     </React.StrictMode>,
   )
