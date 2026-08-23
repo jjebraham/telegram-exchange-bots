@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from .database import get_db
 
@@ -30,6 +31,29 @@ def _env_list(name: str) -> list[str]:
             logger.warning("%s contains invalid JSON; falling back to delimiter parsing", name)
     delimiter = ";" if ";" in raw else ","
     return [item.strip() for item in raw.split(delimiter) if item.strip()]
+
+
+def _clean_proxy_list(values: list[str]) -> list[str]:
+    """Drop empty/placeholder proxy values before they reach network clients."""
+    cleaned: list[str] = []
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            logger.warning("Ignoring invalid proxy URL from configuration")
+            continue
+        host = (parsed.hostname or "").lower()
+        if not parsed.scheme or not host:
+            logger.warning("Ignoring malformed proxy URL from configuration")
+            continue
+        if host == "example.com" or host.endswith(".example.com"):
+            logger.warning("Ignoring placeholder proxy host from configuration")
+            continue
+        cleaned.append(value)
+    return cleaned
 
 
 def init_settings() -> None:
@@ -73,18 +97,28 @@ def get_ghasedak_settings() -> dict[str, Any]:
 
 
 def get_ehraz_token() -> str:
+    # Environment wins for secrets so a stale database value cannot silently
+    # override the deployment's current credential.
+    env_token = os.getenv("EHRAZ_TOKEN", "").strip()
+    if env_token:
+        return env_token
     settings = get_ehraz_settings()
-    return str(settings.get("token") or os.getenv("EHRAZ_TOKEN", "")).strip()
+    return str(settings.get("token") or "").strip()
 
 
 def get_ehraz_proxies() -> list[str]:
+    # Environment wins for deployment/runtime network configuration. This also
+    # lets operations recover from stale admin-panel settings without writing
+    # proxy credentials back into SQLite.
+    env_proxies = _clean_proxy_list(_env_list("EHRAZ_PROXY_LIST"))
+    if env_proxies:
+        return env_proxies
+
     settings = get_ehraz_settings()
     value = settings.get("proxy_list")
     if isinstance(value, list):
-        proxies = [str(item).strip() for item in value if str(item).strip()]
-        if proxies:
-            return proxies
-    return _env_list("EHRAZ_PROXY_LIST")
+        return _clean_proxy_list([str(item) for item in value])
+    return []
 
 
 def get_ehraz_test_mode() -> bool:
