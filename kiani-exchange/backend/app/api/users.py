@@ -836,7 +836,7 @@ async def register_user(req: RegisterRequest):
                (first_name, last_name, national_id, dob,
                 bank_card_number, phone_number, password_hash,
                 accepted_terms, kyc_status, verification_level)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Approved', 2)""",  # Level 2 for full KYC verification
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Approved', 1)""",  # Registration completes Level 1 only
             (
                 req.first_name,
                 req.last_name,

@@ -2,10 +2,45 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import ErrorBoundary from './ErrorBoundary'
+import KycGate from './KycGate'
+import AdminKycReview from './AdminKycReview'
 import './index.css'
 
 const rootElement = document.getElementById('root')!
 const root = ReactDOM.createRoot(rootElement)
+
+// Telegram's WebApp object may exist when this site is opened in a normal
+// browser even though native Telegram popup methods are not actually usable.
+const hardenTelegramBrowserFallback = () => {
+  const tg = (window as any)?.Telegram?.WebApp
+
+  if (!tg || typeof tg.showPopup !== 'function') return
+
+  const originalShowPopup = tg.showPopup.bind(tg)
+
+  tg.showPopup = (
+    params: any,
+    callback?: (buttonId?: string) => void,
+  ) => {
+    const insideTelegram = Boolean(tg.initData)
+
+    if (!insideTelegram) {
+      window.alert(String(params?.message || ''))
+      callback?.('ok')
+      return
+    }
+
+    try {
+      originalShowPopup(params, callback)
+    } catch (error) {
+      console.warn('Telegram popup unavailable; using browser alert:', error)
+      window.alert(String(params?.message || ''))
+      callback?.('ok')
+    }
+  }
+}
+
+hardenTelegramBrowserFallback()
 
 const renderFatalFallback = (message: string) => {
   rootElement.innerHTML = `
@@ -25,22 +60,23 @@ const renderApp = () => {
     <React.StrictMode>
       <ErrorBoundary>
         <App />
+        <KycGate />
+        <AdminKycReview />
       </ErrorBoundary>
     </React.StrictMode>,
   )
 }
 
 window.addEventListener('error', (event) => {
+  // Browser extensions, wallet providers and Telegram's browser shim can
+  // generate global errors that are unrelated to the React application.
+  // Log them instead of replacing the whole app with the fatal fallback.
   console.error('Global runtime error:', event.error || event.message)
-  renderFatalFallback(String(event.error?.message || event.message || 'runtime_error'))
 })
 
 window.addEventListener('unhandledrejection', (event) => {
+  // Same rule for rejected promises originating outside our React tree.
   console.error('Unhandled promise rejection:', event.reason)
-  const message = typeof event.reason === 'string'
-    ? event.reason
-    : (event.reason?.message || 'unhandled_rejection')
-  renderFatalFallback(String(message))
 })
 
 renderApp()
