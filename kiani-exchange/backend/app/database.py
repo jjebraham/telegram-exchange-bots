@@ -119,5 +119,47 @@ def init_db():
             c.execute("ALTER TABLE transactions ADD COLUMN payment_link TEXT")
         if "status_updated_at" not in existing_transaction_columns:
             c.execute("ALTER TABLE transactions ADD COLUMN status_updated_at TEXT")
+
+        # KYC invariant: registration completes Level 1 only.  A user must stay
+        # Pending until a Level 2 submission is explicitly approved by an admin.
+        # Older registration code inserted ('Approved', 1), which made a fresh
+        # account look fully verified even though no Level 2 documents had been
+        # reviewed. Repair those rows and enforce the invariant at DB level so a
+        # future regression in an API handler cannot silently auto-approve them.
+        c.execute(
+            """
+            UPDATE users
+               SET kyc_status = 'Pending', verification_level = 1
+             WHERE COALESCE(verification_level, 1) <= 1
+               AND LOWER(COALESCE(kyc_status, '')) = 'approved'
+            """
+        )
+        c.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_users_level1_kyc_guard_insert
+            AFTER INSERT ON users
+            WHEN COALESCE(NEW.verification_level, 1) <= 1
+             AND LOWER(COALESCE(NEW.kyc_status, '')) = 'approved'
+            BEGIN
+                UPDATE users
+                   SET kyc_status = 'Pending', verification_level = 1
+                 WHERE id = NEW.id;
+            END
+            """
+        )
+        c.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_users_level1_kyc_guard_update
+            AFTER UPDATE OF kyc_status, verification_level ON users
+            WHEN COALESCE(NEW.verification_level, 1) <= 1
+             AND LOWER(COALESCE(NEW.kyc_status, '')) = 'approved'
+            BEGIN
+                UPDATE users
+                   SET kyc_status = 'Pending', verification_level = 1
+                 WHERE id = NEW.id;
+            END
+            """
+        )
+
         conn.commit()
     logger.info("Database initialized.")
