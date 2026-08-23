@@ -11,10 +11,10 @@ class CalculatedOrder:
 
 def calculate_fee(exchange_type: str, send_amount: float) -> tuple[float, str]:
     if exchange_type == "sell_lira":  # TL -> Toman
-        return (160.0 if send_amount < 5000 else 0.0, "TL")
+        return (80.0 if send_amount < 5000 else 0.0, "TL")
 
     if exchange_type == "buy_lira":  # Toman -> TL
-        return (160.0 if send_amount < 15_000_000 else 0.0, "TL")
+        return (80.0 if send_amount < 15_000_000 else 0.0, "TL")
 
     if exchange_type in {"buy_usdt", "sell_usdt", "convert_usdt_to_lira", "convert_lira_to_usdt"}:
         return (5.0, "USDT")
