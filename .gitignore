@@ -20,3 +20,18 @@ venv/
 node_modules/
 dist/
 
+
+# Kiani runtime/private files
+# Kiani runtime/private files
+kiani-exchange/backend/users.db
+kiani-exchange/backend/kyc_uploads/
+kiani-exchange/backend/.env
+kiani-exchange/backend/.env.backup*
+kiani-exchange/backend/.venv/
+kiani-exchange/backend/backups/
+kiani-exchange/backups/
+kiani-exchange/frontend/mini-app/dist.backup*/
+kiani-exchange/frontend/mini-app/src/*.before-*
+kiani-exchange/backend/app/**/*.before-*
+kiani-exchange/backend/app/**/*.backup-*
+test_miniapp.html
