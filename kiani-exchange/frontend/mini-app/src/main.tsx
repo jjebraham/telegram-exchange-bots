@@ -8,6 +8,7 @@ import BrandSanitizer from './BrandSanitizer'
 import UserActivityReporter from './UserActivityReporter'
 import AdminRateEditorFix from './AdminRateEditorFix'
 import ProfilePageOverlay from './ProfilePageOverlay'
+import AdminUserViewOverlay from './AdminUserViewOverlay'
 import './index.css'
 
 const rootElement = document.getElementById('root')!
@@ -98,6 +99,7 @@ const renderApp = () => {
         <UserActivityReporter />
         <AdminRateEditorFix />
         <ProfilePageOverlay />
+        <AdminUserViewOverlay />
       </ErrorBoundary>
     </React.StrictMode>,
   )
