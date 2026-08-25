@@ -1,5 +1,5 @@
 import hashlib
-import json
+import html
 import logging
 import mimetypes
 import os
@@ -7,9 +7,7 @@ import time
 from pathlib import Path
 
 import aiohttp
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from ..auth import get_current_user_id
 from ..database import get_db
@@ -29,30 +27,14 @@ ADMIN_BOT_TOKEN = (
 ADMIN_CHAT_ID = int(os.getenv("TELEGRAM_ADMIN_CHAT_ID", "0") or 0)
 
 
-class AdminKycDecision(BaseModel):
-    username: str
-    password: str
-    reason: str | None = None
+def _mask_phone(value: str | None) -> str:
+    value = str(value or "")
+    return f"{value[:4]}***{value[-4:]}" if len(value) >= 8 else "***"
 
 
-def _admin_role(username: str, password: str) -> str | None:
-    pairs = (
-        ("admin", os.getenv("ADMIN_PANEL_USERNAME", ""), os.getenv("ADMIN_PANEL_PASSWORD", "")),
-        ("support", os.getenv("SUPPORT_PANEL_USERNAME", ""), os.getenv("SUPPORT_PANEL_PASSWORD", "")),
-        ("viewer", os.getenv("VIEWER_PANEL_USERNAME", ""), os.getenv("VIEWER_PANEL_PASSWORD", "")),
-    )
-    for role, configured_user, configured_password in pairs:
-        if configured_user and configured_password and username == configured_user and password == configured_password:
-            return role
-    return None
-
-
-def _require_admin(username: str, password: str, allow_support: bool = False) -> str:
-    role = _admin_role(username, password)
-    allowed = {"admin", "support"} if allow_support else {"admin"}
-    if role not in allowed:
-        raise HTTPException(status_code=401, detail="unauthorized")
-    return role
+def _mask_national_id(value: str | None) -> str:
+    value = str(value or "")
+    return f"***{value[-4:]}" if value else "***"
 
 
 def _ensure_schema() -> None:
@@ -127,12 +109,16 @@ async def _read_image(upload: UploadFile, field_name: str) -> tuple[bytes, str, 
 
 def _save_image(user_id: int, level: int, label: str, data: bytes, extension: str) -> str:
     user_dir = UPLOAD_ROOT / str(user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
+    user_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     filename = f"level{level}_{int(time.time() * 1000)}_{label}{extension}"
     target = (user_dir / filename).resolve()
     if UPLOAD_ROOT not in target.parents:
         raise HTTPException(status_code=400, detail="invalid_upload_path")
     target.write_bytes(data)
+    try:
+        target.chmod(0o600)
+    except OSError:
+        logger.warning("Could not chmod KYC upload %s", target.name)
     return str(target)
 
 
@@ -151,11 +137,11 @@ async def _telegram_request(method: str, *, data=None, json_body=None) -> bool:
             ) as response:
                 if response.status != 200:
                     body = await response.text()
-                    logger.error("Telegram %s failed: %s %s", method, response.status, body[:500])
+                    logger.error("Telegram %s failed: %s %s", method, response.status, body[:300])
                     return False
                 return True
     except Exception as exc:
-        logger.exception("Telegram %s error: %s", method, exc)
+        logger.warning("Telegram %s error: %s", method, type(exc).__name__)
         return False
 
 
@@ -168,46 +154,43 @@ async def _send_admin_text(text: str) -> bool:
 
 async def _send_admin_photo(path: str, caption: str) -> bool:
     if not ADMIN_BOT_TOKEN or not ADMIN_CHAT_ID:
-        logger.warning("KYC admin photo skipped: admin bot token/chat ID not configured")
         return False
-    url = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendPhoto"
     try:
         async with aiohttp.ClientSession() as session:
-            with open(path, "rb") as fh:
+            with open(path, "rb") as file_handle:
                 form = aiohttp.FormData()
                 form.add_field("chat_id", str(ADMIN_CHAT_ID))
                 form.add_field("caption", caption)
                 form.add_field("parse_mode", "HTML")
-                form.add_field("photo", fh, filename=Path(path).name)
-                async with session.post(url, data=form, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status != 200:
-                        body = await response.text()
-                        logger.error("Telegram sendPhoto failed: %s %s", response.status, body[:500])
-                        return False
-                    return True
+                form.add_field("photo", file_handle, filename=Path(path).name)
+                async with session.post(
+                    f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendPhoto",
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    return response.status == 200
     except Exception as exc:
-        logger.exception("Telegram sendPhoto error: %s", exc)
+        logger.warning("Telegram KYC photo send failed: %s", type(exc).__name__)
         return False
 
 
-async def _notify_admin_submission(submission_id: int, user, level: int, paths: list[tuple[str, str]]) -> None:
+async def _notify_admin_submission(
+    submission_id: int,
+    user,
+    level: int,
+    paths: list[tuple[str, str]],
+) -> None:
     text = (
         f"🪪 <b>KYC سطح {level} - درخواست جدید</b>\n"
-        f"👤 {user['first_name']} {user['last_name']}\n"
-        f"📱 {user['phone_number']}\n"
-        f"🆔 {user['national_id']}\n"
+        f"👤 {html.escape(str(user['first_name']))} {html.escape(str(user['last_name']))}\n"
+        f"📱 {_mask_phone(user['phone_number'])}\n"
+        f"🆔 {_mask_national_id(user['national_id'])}\n"
         f"🔢 Submission ID: {submission_id}\n\n"
-        "برای تایید یا رد، از بخش KYC پنل ادمین استفاده کنید."
+        "برای تایید یا رد، از پنل ادمین استفاده کنید."
     )
     await _send_admin_text(text)
     for path, label in paths:
         await _send_admin_photo(path, f"KYC سطح {level} | {label} | Submission #{submission_id}")
-
-
-async def _notify_admin_decision(submission_id: int, level: int, status: str, reason: str | None) -> None:
-    emoji = "✅" if status == "approved" else "❌"
-    suffix = f"\nدلیل: {reason}" if reason else ""
-    await _send_admin_text(f"{emoji} KYC سطح {level} | Submission #{submission_id} => {status}{suffix}")
 
 
 @router.get("/kyc/status")
@@ -215,7 +198,7 @@ async def get_kyc_status(user_id: int = Depends(get_current_user_id)):
     _ensure_schema()
     with get_db() as conn:
         user = conn.execute(
-            "SELECT id, first_name, last_name, phone_number, national_id, verification_level FROM users WHERE id = ?",
+            "SELECT id, verification_level FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
         if not user:
@@ -240,7 +223,6 @@ async def submit_level2(
     _ensure_schema()
     front_data, front_hash, front_ext = await _read_image(front, "front")
     back_data, back_hash, back_ext = await _read_image(back, "back")
-
     if front_hash == back_hash:
         raise HTTPException(status_code=400, detail="front_and_back_must_be_different_files")
 
@@ -248,25 +230,33 @@ async def submit_level2(
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user:
             raise HTTPException(status_code=404, detail="user_not_found")
-        level = int(user["verification_level"] or 1)
-        if level < 1:
+        if int(user["verification_level"] or 1) < 1:
             raise HTTPException(status_code=403, detail="level1_required")
         existing = _latest_submission(conn, user_id, 2)
         if existing and existing["status"] == "pending":
             raise HTTPException(status_code=409, detail="level2_already_pending")
 
     front_path = _save_image(user_id, 2, "front", front_data, front_ext)
-    back_path = _save_image(user_id, 2, "back", back_data, back_ext)
+    try:
+        back_path = _save_image(user_id, 2, "back", back_data, back_ext)
+    except Exception:
+        Path(front_path).unlink(missing_ok=True)
+        raise
 
-    with get_db() as conn:
-        cursor = conn.execute(
-            """INSERT INTO kyc_submissions
-               (user_id, level, status, front_path, back_path, front_sha256, back_sha256)
-               VALUES (?, 2, 'pending', ?, ?, ?, ?)""",
-            (user_id, front_path, back_path, front_hash, back_hash),
-        )
-        submission_id = cursor.lastrowid
-        user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    try:
+        with get_db() as conn:
+            cursor = conn.execute(
+                """INSERT INTO kyc_submissions
+                   (user_id, level, status, front_path, back_path, front_sha256, back_sha256)
+                   VALUES (?, 2, 'pending', ?, ?, ?, ?)""",
+                (user_id, front_path, back_path, front_hash, back_hash),
+            )
+            submission_id = int(cursor.lastrowid)
+            user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    except Exception:
+        Path(front_path).unlink(missing_ok=True)
+        Path(back_path).unlink(missing_ok=True)
+        raise
 
     await _notify_admin_submission(
         submission_id,
@@ -289,23 +279,26 @@ async def submit_level3(
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user:
             raise HTTPException(status_code=404, detail="user_not_found")
-        level = int(user["verification_level"] or 1)
-        if level < 2:
+        if int(user["verification_level"] or 1) < 2:
             raise HTTPException(status_code=403, detail="level2_required")
         existing = _latest_submission(conn, user_id, 3)
         if existing and existing["status"] == "pending":
             raise HTTPException(status_code=409, detail="level3_already_pending")
 
     selfie_path = _save_image(user_id, 3, "selfie", selfie_data, selfie_ext)
-    with get_db() as conn:
-        cursor = conn.execute(
-            """INSERT INTO kyc_submissions
-               (user_id, level, status, selfie_path, selfie_sha256)
-               VALUES (?, 3, 'pending', ?, ?)""",
-            (user_id, selfie_path, selfie_hash),
-        )
-        submission_id = cursor.lastrowid
-        user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    try:
+        with get_db() as conn:
+            cursor = conn.execute(
+                """INSERT INTO kyc_submissions
+                   (user_id, level, status, selfie_path, selfie_sha256)
+                   VALUES (?, 3, 'pending', ?, ?)""",
+                (user_id, selfie_path, selfie_hash),
+            )
+            submission_id = int(cursor.lastrowid)
+            user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    except Exception:
+        Path(selfie_path).unlink(missing_ok=True)
+        raise
 
     await _notify_admin_submission(
         submission_id,
@@ -314,156 +307,3 @@ async def submit_level3(
         [(selfie_path, "سلفی همراه کارت ملی در دست")],
     )
     return {"status": "pending", "submission_id": submission_id, "message": "level3_submitted"}
-
-
-@router.get("/admin/kyc/submissions")
-async def admin_list_kyc_submissions(username: str, password: str, status: str | None = None):
-    _require_admin(username, password, allow_support=True)
-    _ensure_schema()
-    query = """
-        SELECT k.*, u.first_name, u.last_name, u.phone_number, u.national_id, u.verification_level
-        FROM kyc_submissions k
-        JOIN users u ON u.id = k.user_id
-    """
-    params: tuple = ()
-    if status:
-        query += " WHERE k.status = ?"
-        params = (status,)
-    query += " ORDER BY k.id DESC LIMIT 300"
-    with get_db() as conn:
-        rows = conn.execute(query, params).fetchall()
-    return {
-        "submissions": [
-            {
-                **_submission_dict(row),
-                "first_name": row["first_name"],
-                "last_name": row["last_name"],
-                "phone_number": row["phone_number"],
-                "national_id": row["national_id"],
-                "verification_level": row["verification_level"],
-            }
-            for row in rows
-        ]
-    }
-
-
-@router.get("/admin/kyc/submissions/{submission_id}/file/{kind}")
-async def admin_kyc_file_metadata(submission_id: int, kind: str, username: str, password: str):
-    """Return the server-side file path for controlled admin diagnostics.
-
-    The file itself is deliberately not exposed as a public static URL. Admins receive
-    the images through Telegram and can review state here without making KYC documents public.
-    """
-    _require_admin(username, password, allow_support=True)
-    if kind not in {"front", "back", "selfie"}:
-        raise HTTPException(status_code=400, detail="invalid_file_kind")
-    _ensure_schema()
-    column = {"front": "front_path", "back": "back_path", "selfie": "selfie_path"}[kind]
-    with get_db() as conn:
-        row = conn.execute(
-            f"SELECT {column} AS path FROM kyc_submissions WHERE id = ?",
-            (submission_id,),
-        ).fetchone()
-    if not row or not row["path"]:
-        raise HTTPException(status_code=404, detail="file_not_found")
-    return {"exists": Path(row["path"]).is_file(), "filename": Path(row["path"]).name}
-
-
-
-@router.post("/admin/kyc/submissions/{submission_id}/file/{kind}")
-async def admin_kyc_file(
-    submission_id: int,
-    kind: str,
-    req: AdminKycDecision,
-):
-    """Securely return a KYC image to an authenticated admin/support user."""
-    _require_admin(req.username, req.password, allow_support=True)
-
-    if kind not in {"front", "back", "selfie"}:
-        raise HTTPException(status_code=400, detail="invalid_file_kind")
-
-    _ensure_schema()
-
-    column = {
-        "front": "front_path",
-        "back": "back_path",
-        "selfie": "selfie_path",
-    }[kind]
-
-    with get_db() as conn:
-        row = conn.execute(
-            f"SELECT {column} AS path FROM kyc_submissions WHERE id = ?",
-            (submission_id,),
-        ).fetchone()
-
-    if not row or not row["path"]:
-        raise HTTPException(status_code=404, detail="file_not_found")
-
-    file_path = Path(row["path"]).resolve()
-
-    # Never allow this endpoint to read files outside the private KYC directory.
-    if UPLOAD_ROOT not in file_path.parents:
-        raise HTTPException(status_code=403, detail="invalid_file_path")
-
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="file_not_found")
-
-    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-
-    return FileResponse(
-        path=str(file_path),
-        media_type=media_type,
-    )
-
-
-@router.post("/admin/kyc/submissions/{submission_id}/approve")
-async def admin_approve_kyc(submission_id: int, req: AdminKycDecision):
-    reviewer = _require_admin(req.username, req.password)
-    _ensure_schema()
-    with get_db() as conn:
-        submission = conn.execute("SELECT * FROM kyc_submissions WHERE id = ?", (submission_id,)).fetchone()
-        if not submission:
-            raise HTTPException(status_code=404, detail="submission_not_found")
-        if submission["status"] != "pending":
-            raise HTTPException(status_code=409, detail="submission_already_reviewed")
-        level = int(submission["level"])
-        if level not in {2, 3}:
-            raise HTTPException(status_code=400, detail="invalid_kyc_level")
-        conn.execute(
-            "UPDATE kyc_submissions SET status='approved', rejection_reason=NULL, reviewed_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (reviewer, submission_id),
-        )
-        conn.execute(
-            "UPDATE users SET verification_level = CASE WHEN verification_level < ? THEN ? ELSE verification_level END, kyc_status='Approved' WHERE id=?",
-            (level, level, submission["user_id"]),
-        )
-        conn.execute(
-            "INSERT INTO admin_logs (action, details) VALUES (?, ?)",
-            ("kyc_approved", json.dumps({"submission_id": submission_id, "level": level, "user_id": submission["user_id"]})),
-        )
-    await _notify_admin_decision(submission_id, level, "approved", None)
-    return {"status": "approved", "verification_level": level}
-
-
-@router.post("/admin/kyc/submissions/{submission_id}/reject")
-async def admin_reject_kyc(submission_id: int, req: AdminKycDecision):
-    reviewer = _require_admin(req.username, req.password)
-    reason = (req.reason or "مدارک قابل تایید نیست؛ لطفاً دوباره بارگذاری کنید.").strip()
-    _ensure_schema()
-    with get_db() as conn:
-        submission = conn.execute("SELECT * FROM kyc_submissions WHERE id = ?", (submission_id,)).fetchone()
-        if not submission:
-            raise HTTPException(status_code=404, detail="submission_not_found")
-        if submission["status"] != "pending":
-            raise HTTPException(status_code=409, detail="submission_already_reviewed")
-        level = int(submission["level"])
-        conn.execute(
-            "UPDATE kyc_submissions SET status='rejected', rejection_reason=?, reviewed_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (reason, reviewer, submission_id),
-        )
-        conn.execute(
-            "INSERT INTO admin_logs (action, details) VALUES (?, ?)",
-            ("kyc_rejected", json.dumps({"submission_id": submission_id, "level": level, "user_id": submission["user_id"], "reason": reason}, ensure_ascii=False)),
-        )
-    await _notify_admin_decision(submission_id, level, "rejected", reason)
-    return {"status": "rejected", "reason": reason}

@@ -1,6 +1,7 @@
 # Secrets & sensitive data
 .env
 *.env
+*.env.backup*
 config.py
 
 # Logs
@@ -11,17 +12,22 @@ config.py
 # Python cache
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Virtual env
+# Virtual environments
 venv/
+.venv/
 .env/
 
 # Node
 node_modules/
 dist/
 
+# Editor / source backups
+*.backup
+*.backup.*
+*.before-*
 
-# Kiani runtime/private files
 # Kiani runtime/private files
 kiani-exchange/backend/users.db
 kiani-exchange/backend/kyc_uploads/
@@ -31,7 +37,4 @@ kiani-exchange/backend/.venv/
 kiani-exchange/backend/backups/
 kiani-exchange/backups/
 kiani-exchange/frontend/mini-app/dist.backup*/
-kiani-exchange/frontend/mini-app/src/*.before-*
-kiani-exchange/backend/app/**/*.before-*
-kiani-exchange/backend/app/**/*.backup-*
 test_miniapp.html
