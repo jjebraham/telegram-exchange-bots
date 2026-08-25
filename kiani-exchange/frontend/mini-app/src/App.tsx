@@ -1312,7 +1312,7 @@ function RegistrationPage({
   };
 
 
-   const handleSubmit = async () => {
+  const handleSubmit = async () => {
     if (!validateForm()) return;
 
     if (attempts >= 5) {
@@ -1322,42 +1322,98 @@ function RegistrationPage({
 
     setSubmitting(true);
     setProgress(0);
+
     const progressTimer = window.setInterval(() => {
       setProgress((prev) => (prev >= 95 ? prev : prev + 5));
     }, 1000);
 
+    const readJson = async (response: Response) => {
+      return response.json().catch(() => ({}));
+    };
+
+    const isTemporaryVerificationFailure = (
+      response: Response,
+      data: { detail?: string }
+    ) =>
+      response.status >= 500 ||
+      data?.detail === 'verification_service_unavailable' ||
+      data?.detail === 'ehraz_not_configured';
+
+    const showVerificationServiceUnavailable = () => {
+      notifyMessage(
+        'سرویس احراز هویت موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
+      );
+    };
+
     try {
       const normalizedPhone = normalizePhone(formData.phoneNumber);
 
-      // 1) check conflicts first (no ehraz call if already registered)
+      // 1) Check whether the phone/national ID is already registered.
       const checkRes = await fetch(`${API_URL}/users/register/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: normalizedPhone, national_id: formData.nationalId }),
-      });
-      const checkData = await checkRes.json().catch(() => ({}));
-      if (checkData.exists_phone || checkData.exists_national_id) {
-        notifyMessage('شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.');
-        return;
-      }
-
-      // 2) verify mobile + national id
-      const mobileMatchResponse = await fetch(`${API_URL}/verify/ehraz-mobile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          nationalCode: formData.nationalId,
-          mobileNumber: normalizedPhone,
+          phone_number: normalizedPhone,
+          national_id: formData.nationalId,
         }),
       });
-      const mobileMatchData = await mobileMatchResponse.json();
-      if (!mobileMatchData.matched) {
-        incrementAttempts();
-        notifyMessage('شماره موبایل و کد ملی با هم تطابق ندارند. لطفاً فقط شماره‌ای را وارد کنید که به نام خودتان است.');
+
+      const checkData = await readJson(checkRes);
+
+      if (!checkRes.ok) {
+        notifyMessage(
+          'سرویس ثبت نام موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
+        );
         return;
       }
 
-      // 3) verify national id + dob + card
+      if (checkData.exists_phone || checkData.exists_national_id) {
+        notifyMessage(
+          'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.'
+        );
+        return;
+      }
+
+      // 2) Verify mobile number + national ID.
+      const mobileMatchResponse = await fetch(
+        `${API_URL}/verify/ehraz-mobile`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nationalCode: formData.nationalId,
+            mobileNumber: normalizedPhone,
+          }),
+        }
+      );
+
+      const mobileMatchData = await readJson(mobileMatchResponse);
+
+      if (!mobileMatchResponse.ok) {
+        if (
+          isTemporaryVerificationFailure(
+            mobileMatchResponse,
+            mobileMatchData
+          )
+        ) {
+          showVerificationServiceUnavailable();
+        } else {
+          notifyMessage(
+            'خطا در بررسی شماره موبایل و کد ملی. لطفاً دوباره تلاش کنید.'
+          );
+        }
+        return;
+      }
+
+      if (mobileMatchData.matched !== true) {
+        incrementAttempts();
+        notifyMessage(
+          'شماره موبایل و کد ملی با هم تطابق ندارند. لطفاً فقط شماره‌ای را وارد کنید که به نام خودتان است.'
+        );
+        return;
+      }
+
+      // 3) Verify bank card + date of birth + national ID.
       const ehrazResponse = await fetch(`${API_URL}/verify/ehraz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1368,15 +1424,28 @@ function RegistrationPage({
         }),
       });
 
-      const ehrazData = await ehrazResponse.json();
+      const ehrazData = await readJson(ehrazResponse);
 
-      if (!ehrazData.matched) {
-        incrementAttempts();
-        notifyMessage('کارت بانکی، تاریخ تولد و کد ملی با هم تطابق ندارند. لطفاً اطلاعات صحیح را وارد کنید.');
+      if (!ehrazResponse.ok) {
+        if (isTemporaryVerificationFailure(ehrazResponse, ehrazData)) {
+          showVerificationServiceUnavailable();
+        } else {
+          notifyMessage(
+            'خطا در بررسی اطلاعات هویتی و کارت بانکی. لطفاً دوباره تلاش کنید.'
+          );
+        }
         return;
       }
 
-      // 4) register
+      if (ehrazData.matched !== true) {
+        incrementAttempts();
+        notifyMessage(
+          'کارت بانکی، تاریخ تولد و کد ملی با هم تطابق ندارند. لطفاً اطلاعات صحیح را وارد کنید.'
+        );
+        return;
+      }
+
+      // 4) Register. Backend performs authoritative verification again.
       const registerResponse = await fetch(`${API_URL}/users/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1392,25 +1461,62 @@ function RegistrationPage({
       });
 
       if (registerResponse.ok) {
-        notifyMessage('ثبت نام شما با موفقیت انجام شد، تبریک! اکنون می‌توانید وارد شوید.');
+        notifyMessage(
+          'ثبت نام شما با موفقیت انجام شد، تبریک! اکنون می‌توانید وارد شوید.'
+        );
         onLoginRedirect();
-      } else {
-        const errorData = await registerResponse.json().catch(() => null);
-        incrementAttempts();
-
-        let errorMessage = 'خطا در ثبت نام. لطفاً دوباره تلاش کنید.';
-        if (errorData?.detail === 'already_registered_phone' || errorData?.detail === 'already_registered_national_id') {
-          errorMessage = 'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.';
-        } else if (errorData?.detail === 'already_registered_card') {
-          errorMessage = 'این شماره کارت قبلاً ثبت شده است.';
-        }
-
-        notifyMessage(errorMessage);
+        return;
       }
+
+      const errorData = await readJson(registerResponse);
+
+      if (
+        isTemporaryVerificationFailure(registerResponse, errorData)
+      ) {
+        showVerificationServiceUnavailable();
+        return;
+      }
+
+      if (
+        errorData?.detail === 'already_registered_phone' ||
+        errorData?.detail === 'already_registered_national_id'
+      ) {
+        notifyMessage(
+          'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.'
+        );
+        return;
+      }
+
+      if (errorData?.detail === 'already_registered_card') {
+        notifyMessage('این شماره کارت قبلاً ثبت شده است.');
+        return;
+      }
+
+      if (errorData?.detail === 'phone_national_mismatch') {
+        incrementAttempts();
+        notifyMessage(
+          'شماره موبایل و کد ملی با هم تطابق ندارند. لطفاً فقط شماره‌ای را وارد کنید که به نام خودتان است.'
+        );
+        return;
+      }
+
+      if (errorData?.detail === 'card_national_mismatch') {
+        incrementAttempts();
+        notifyMessage(
+          'کارت بانکی، تاریخ تولد و کد ملی با هم تطابق ندارند. لطفاً اطلاعات صحیح را وارد کنید.'
+        );
+        return;
+      }
+
+      notifyMessage(
+        'خطا در ثبت نام. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
+      );
     } catch (error) {
-      incrementAttempts();
+      // Network/server failures are not failed identity-verification attempts.
       console.error('Registration error:', error);
-      notifyMessage('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.');
+      notifyMessage(
+        'خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.'
+      );
     } finally {
       clearInterval(progressTimer);
       setProgress(100);
