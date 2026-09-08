@@ -44,6 +44,10 @@ const hardenTelegramBrowserFallback = () => {
 
 hardenTelegramBrowserFallback()
 
+const telegramWebApp = (window as any)?.Telegram?.WebApp
+telegramWebApp?.ready?.()
+telegramWebApp?.expand?.()
+
 const renderApp = () => {
   root.render(
     <React.StrictMode>
