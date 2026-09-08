@@ -3,6 +3,7 @@ import { Users, ArrowLeftRight, Shield, Activity, Bell, Settings, TrendingUp, Do
 import { calculateFee, calculateReceiveAmount, deriveRates } from './exchangeMath';
 import type { ExchangeType, Rates } from './exchangeMath';
 import { normalizeNumberInput, formatFaNumber, normalizePhone, isValidIranPhone, cleanPersianText } from './utils/persian';
+import BlockingProgressModal, { type ProgressStep } from './BlockingProgressModal';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -1142,6 +1143,15 @@ function RegistrationPage({
   const [attempts, setAttempts] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [verificationStage, setVerificationStage] = useState<
+    'precheck' | 'mobile' | 'identity' | 'creating' | 'done'
+  >('precheck');
+  const [verificationModalStatus, setVerificationModalStatus] = useState<
+    'idle' | 'working' | 'success' | 'error'
+  >('idle');
+  const [verificationMessage, setVerificationMessage] = useState('');
+  const [registrationCompleted, setRegistrationCompleted] = useState(false);
+  const progressCeilingRef = useRef(18);
   const [showTerms, setShowTerms] = useState(false);
   const [formData, setFormData] = useState<RegistrationFormData>({
     firstName: '',
@@ -1159,6 +1169,21 @@ function RegistrationPage({
   useEffect(() => {
     checkAttemptLimit();
   }, []);
+
+  useEffect(() => {
+    if (!submitting) return;
+
+    const preventLeave = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', preventLeave);
+
+    return () => {
+      window.removeEventListener('beforeunload', preventLeave);
+    };
+  }, [submitting]);
 
   const isValidNationalId = (nid: string) => {
     // Exactly 10 digits and not all same digits
@@ -1316,16 +1341,33 @@ function RegistrationPage({
     if (!validateForm()) return;
 
     if (attempts >= 5) {
-      notifyMessage('شما بیش از 5 بار امروز تلاش کرده‌اید. لطفاً فردا دوباره تلاش کنید.');
+      notifyMessage(
+        'شما بیش از 5 بار امروز تلاش کرده‌اید. لطفاً فردا دوباره تلاش کنید.'
+      );
       return;
     }
 
     setSubmitting(true);
-    setProgress(0);
+    setRegistrationCompleted(false);
+    setVerificationModalStatus('working');
+    setVerificationStage('precheck');
+    setVerificationMessage('در حال بررسی اولیه اطلاعات واردشده...');
+    setProgress(5);
+    progressCeilingRef.current = 18;
 
+    // EHRAZ does not expose an exact percentage.
+    // Progress moves only inside the current real verification stage.
     const progressTimer = window.setInterval(() => {
-      setProgress((prev) => (prev >= 95 ? prev : prev + 5));
-    }, 1000);
+      setProgress((prev) => {
+        const ceiling = progressCeilingRef.current;
+
+        if (prev >= ceiling) {
+          return prev;
+        }
+
+        return Math.min(ceiling, prev + 1);
+      });
+    }, 350);
 
     const readJson = async (response: Response) => {
       return response.json().catch(() => ({}));
@@ -1339,16 +1381,21 @@ function RegistrationPage({
       data?.detail === 'verification_service_unavailable' ||
       data?.detail === 'ehraz_not_configured';
 
-    const showVerificationServiceUnavailable = () => {
-      notifyMessage(
-        'سرویس احراز هویت موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
-      );
+    const failVerification = (message: string) => {
+      setVerificationModalStatus('error');
+      setVerificationMessage(message);
     };
 
     try {
       const normalizedPhone = normalizePhone(formData.phoneNumber);
 
-      // 1) Check whether the phone/national ID is already registered.
+      // Stage 1 — check duplicate registration.
+      setVerificationStage('precheck');
+      setVerificationMessage(
+        'در حال بررسی کد ملی و شماره موبایل در سامانه...'
+      );
+      progressCeilingRef.current = 18;
+
       const checkRes = await fetch(`${API_URL}/users/register/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1361,20 +1408,27 @@ function RegistrationPage({
       const checkData = await readJson(checkRes);
 
       if (!checkRes.ok) {
-        notifyMessage(
+        failVerification(
           'سرویس ثبت نام موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
         );
         return;
       }
 
       if (checkData.exists_phone || checkData.exists_national_id) {
-        notifyMessage(
-          'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.'
+        failVerification(
+          'این اطلاعات قبلاً در سیستم ثبت شده‌اند. اگر حساب دارید، از صفحه ورود استفاده کنید.'
         );
         return;
       }
 
-      // 2) Verify mobile number + national ID.
+      // Stage 2 — mobile number + national ID.
+      setProgress((prev) => Math.max(prev, 25));
+      setVerificationStage('mobile');
+      setVerificationMessage(
+        'در حال تطبیق شماره موبایل با کد ملی از طریق سرویس احراز...'
+      );
+      progressCeilingRef.current = 48;
+
       const mobileMatchResponse = await fetch(
         `${API_URL}/verify/ehraz-mobile`,
         {
@@ -1396,24 +1450,36 @@ function RegistrationPage({
             mobileMatchData
           )
         ) {
-          showVerificationServiceUnavailable();
+          failVerification(
+            'سرویس احراز هویت موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
+          );
         } else {
-          notifyMessage(
+          failVerification(
             'خطا در بررسی شماره موبایل و کد ملی. لطفاً دوباره تلاش کنید.'
           );
         }
+
         return;
       }
 
       if (mobileMatchData.matched !== true) {
         incrementAttempts();
-        notifyMessage(
-          'شماره موبایل و کد ملی با هم تطابق ندارند. لطفاً فقط شماره‌ای را وارد کنید که به نام خودتان است.'
+
+        failVerification(
+          'شماره موبایل و کد ملی با هم تطابق ندارند. فقط شماره‌ای را وارد کنید که به نام خودتان است.'
         );
+
         return;
       }
 
-      // 3) Verify bank card + date of birth + national ID.
+      // Stage 3 — bank card + date of birth + national ID.
+      setProgress((prev) => Math.max(prev, 52));
+      setVerificationStage('identity');
+      setVerificationMessage(
+        'شماره موبایل تایید شد. اکنون کارت بانکی و تاریخ تولد بررسی می‌شوند...'
+      );
+      progressCeilingRef.current = 72;
+
       const ehrazResponse = await fetch(`${API_URL}/verify/ehraz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1427,25 +1493,42 @@ function RegistrationPage({
       const ehrazData = await readJson(ehrazResponse);
 
       if (!ehrazResponse.ok) {
-        if (isTemporaryVerificationFailure(ehrazResponse, ehrazData)) {
-          showVerificationServiceUnavailable();
+        if (
+          isTemporaryVerificationFailure(
+            ehrazResponse,
+            ehrazData
+          )
+        ) {
+          failVerification(
+            'سرویس احراز هویت موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
+          );
         } else {
-          notifyMessage(
+          failVerification(
             'خطا در بررسی اطلاعات هویتی و کارت بانکی. لطفاً دوباره تلاش کنید.'
           );
         }
+
         return;
       }
 
       if (ehrazData.matched !== true) {
         incrementAttempts();
-        notifyMessage(
-          'کارت بانکی، تاریخ تولد و کد ملی با هم تطابق ندارند. لطفاً اطلاعات صحیح را وارد کنید.'
+
+        failVerification(
+          'کارت بانکی، تاریخ تولد و کد ملی با هم تطابق ندارند. لطفاً اطلاعات را بررسی و دوباره تلاش کنید.'
         );
+
         return;
       }
 
-      // 4) Register. Backend performs authoritative verification again.
+      // Stage 4 — backend registration performs authoritative verification.
+      setProgress((prev) => Math.max(prev, 76));
+      setVerificationStage('creating');
+      setVerificationMessage(
+        'اطلاعات هویتی تایید شد. در حال ایجاد حساب کاربری شما...'
+      );
+      progressCeilingRef.current = 94;
+
       const registerResponse = await fetch(`${API_URL}/users/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1454,26 +1537,36 @@ function RegistrationPage({
           last_name: cleanPersianText(formData.lastName),
           national_id: formData.nationalId,
           date_of_birth: normalizeNumberInput(formData.dateOfBirth),
-          bank_card_number: normalizeNumberInput(formData.bankCardNumber),
+          bank_card_number: normalizeNumberInput(
+            formData.bankCardNumber
+          ),
           phone_number: normalizedPhone,
           password: formData.password,
         }),
       });
 
       if (registerResponse.ok) {
-        notifyMessage(
-          'ثبت نام شما با موفقیت انجام شد، تبریک! اکنون می‌توانید وارد شوید.'
+        setProgress(100);
+        setVerificationStage('done');
+        setRegistrationCompleted(true);
+        setVerificationModalStatus('success');
+        setVerificationMessage(
+          'ثبت نام با موفقیت انجام شد و سطح ۱ احراز هویت شما تایید شد. اکنون می‌توانید وارد حساب کاربری شوید.'
         );
-        onLoginRedirect();
         return;
       }
 
       const errorData = await readJson(registerResponse);
 
       if (
-        isTemporaryVerificationFailure(registerResponse, errorData)
+        isTemporaryVerificationFailure(
+          registerResponse,
+          errorData
+        )
       ) {
-        showVerificationServiceUnavailable();
+        failVerification(
+          'سرویس احراز هویت موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
+        );
         return;
       }
 
@@ -1481,49 +1574,103 @@ function RegistrationPage({
         errorData?.detail === 'already_registered_phone' ||
         errorData?.detail === 'already_registered_national_id'
       ) {
-        notifyMessage(
-          'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.'
+        failVerification(
+          'این اطلاعات قبلاً در سیستم ثبت شده‌اند. لطفاً وارد حساب کاربری خود شوید.'
         );
         return;
       }
 
       if (errorData?.detail === 'already_registered_card') {
-        notifyMessage('این شماره کارت قبلاً ثبت شده است.');
+        failVerification(
+          'این شماره کارت قبلاً در سیستم ثبت شده است.'
+        );
         return;
       }
 
       if (errorData?.detail === 'phone_national_mismatch') {
         incrementAttempts();
-        notifyMessage(
-          'شماره موبایل و کد ملی با هم تطابق ندارند. لطفاً فقط شماره‌ای را وارد کنید که به نام خودتان است.'
+
+        failVerification(
+          'شماره موبایل و کد ملی با هم تطابق ندارند. فقط شماره‌ای را وارد کنید که به نام خودتان است.'
         );
+
         return;
       }
 
       if (errorData?.detail === 'card_national_mismatch') {
         incrementAttempts();
-        notifyMessage(
+
+        failVerification(
           'کارت بانکی، تاریخ تولد و کد ملی با هم تطابق ندارند. لطفاً اطلاعات صحیح را وارد کنید.'
         );
+
         return;
       }
 
-      notifyMessage(
-        'خطا در ثبت نام. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
+      failVerification(
+        'ثبت نام انجام نشد. لطفاً چند دقیقه دیگر دوباره تلاش کنید.'
       );
     } catch (error) {
-      // Network/server failures are not failed identity-verification attempts.
       console.error('Registration error:', error);
-      notifyMessage(
-        'خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.'
+
+      failVerification(
+        'ارتباط با سرور قطع شد. لطفاً اتصال اینترنت خود را بررسی کرده و دوباره تلاش کنید.'
       );
     } finally {
-      clearInterval(progressTimer);
-      setProgress(100);
-      setTimeout(() => setProgress(0), 400);
+      window.clearInterval(progressTimer);
       setSubmitting(false);
     }
   };
+
+  const registrationStageOrder = {
+    precheck: 0,
+    mobile: 1,
+    identity: 2,
+    creating: 3,
+    done: 4,
+  } as const;
+
+  const currentRegistrationStage =
+    registrationStageOrder[verificationStage];
+
+  const registrationSteps: ProgressStep[] = [
+    'بررسی اولیه اطلاعات',
+    'تطبیق موبایل و کد ملی',
+    'تطبیق کارت و تاریخ تولد',
+    'ایجاد حساب کاربری',
+  ].map((label, index) => {
+    if (
+      verificationModalStatus === 'error' &&
+      index === currentRegistrationStage
+    ) {
+      return {
+        label,
+        state: 'error',
+      };
+    }
+
+    if (
+      verificationStage === 'done' ||
+      index < currentRegistrationStage
+    ) {
+      return {
+        label,
+        state: 'done',
+      };
+    }
+
+    if (index === currentRegistrationStage) {
+      return {
+        label,
+        state: 'active',
+      };
+    }
+
+    return {
+      label,
+      state: 'pending',
+    };
+  });
 
   // Terms and Conditions Popup Component
   const TermsPopup = () => (
@@ -1571,8 +1718,51 @@ function RegistrationPage({
   );
 
   return (
-    <div className="p-4">
-      {showTerms && <TermsPopup />}
+    <>
+      <BlockingProgressModal
+        open={verificationModalStatus !== 'idle'}
+        title={
+          verificationModalStatus === 'success'
+            ? 'ثبت نام با موفقیت انجام شد'
+            : verificationModalStatus === 'error'
+              ? 'بررسی اطلاعات انجام نشد'
+              : 'در حال بررسی اطلاعات شما'
+        }
+        description={
+          verificationModalStatus === 'working'
+            ? 'این فرآیند ممکن است حدود ۲۰ تا ۴۰ ثانیه طول بکشد.'
+            : undefined
+        }
+        progress={progress}
+        status={
+          verificationModalStatus === 'success'
+            ? 'success'
+            : verificationModalStatus === 'error'
+              ? 'error'
+              : 'working'
+        }
+        message={verificationMessage}
+        steps={registrationSteps}
+        closeLabel={
+          registrationCompleted
+            ? 'رفتن به صفحه ورود'
+            : 'بستن و اصلاح اطلاعات'
+        }
+        onClose={
+          verificationModalStatus === 'working'
+            ? undefined
+            : () => {
+                setVerificationModalStatus('idle');
+
+                if (registrationCompleted) {
+                  onLoginRedirect();
+                }
+              }
+        }
+      />
+
+      <div className="px-3 py-4 sm:p-6">
+        {showTerms && <TermsPopup />}
       <div className="bg-white rounded-2xl p-6 shadow-lg max-w-md mx-auto">
         <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
           ثبت نام
@@ -1726,15 +1916,6 @@ function RegistrationPage({
             >
               {submitting ? 'در حال ثبت نام...' : 'ثبت نام'}
             </button>
-            {submitting && (
-              <div className="w-full mt-2">
-                <div className="text-xs text-gray-600 mb-1">در حال بررسی اطلاعات... {progress}%</div>
-                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} />
-                </div>
-              </div>
-            )}
-
             {/* Login Link */}
             <p className="text-center text-sm text-gray-600">
               قبلاً ثبت نام کرده‌اید؟{' '}
@@ -1749,6 +1930,7 @@ function RegistrationPage({
         )}
       </div>
     </div>
+    </>
   );
 }
 

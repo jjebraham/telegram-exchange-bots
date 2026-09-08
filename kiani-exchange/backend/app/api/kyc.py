@@ -17,8 +17,12 @@ router = APIRouter()
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 UPLOAD_ROOT = Path(os.getenv("KYC_UPLOAD_DIR", str(BASE_DIR / "kyc_uploads"))).resolve()
-MAX_IMAGE_BYTES = int(os.getenv("KYC_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
-ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_UPLOAD_BYTES = int(
+    os.getenv(
+        "KYC_MAX_UPLOAD_BYTES",
+        os.getenv("KYC_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)),
+    )
+)
 
 ADMIN_BOT_TOKEN = (
     os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "").strip()
@@ -89,25 +93,89 @@ def _latest_submission(conn, user_id: int, level: int):
     ).fetchone()
 
 
-async def _read_image(upload: UploadFile, field_name: str) -> tuple[bytes, str, str]:
-    content_type = (upload.content_type or "").lower()
-    if content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail=f"{field_name}_must_be_jpeg_png_or_webp")
+def _detect_upload_format(data: bytes) -> tuple[str, str] | None:
+    """Return canonical MIME type and extension from the actual file signature."""
 
-    data = await upload.read(MAX_IMAGE_BYTES + 1)
+    # JPEG: FF D8 FF
+    if len(data) >= 3 and data[:3].hex() == "ffd8ff":
+        return "image/jpeg", ".jpg"
+
+    # PNG: 89 50 4E 47 0D 0A 1A 0A
+    if len(data) >= 8 and data[:8].hex() == "89504e470d0a1a0a":
+        return "image/png", ".png"
+
+    # WebP: RIFF....WEBP
+    if (
+        len(data) >= 12
+        and data[:4] == b"RIFF"
+        and data[8:12] == b"WEBP"
+    ):
+        return "image/webp", ".webp"
+
+    # PDF
+    if data.startswith(b"%PDF-"):
+        return "application/pdf", ".pdf"
+
+    # HEIC / HEIF use an ISO Base Media File Format container.
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        brand = data[8:12]
+
+        heic_brands = {
+            b"heic",
+            b"heix",
+            b"hevc",
+            b"hevx",
+            b"heim",
+            b"heis",
+        }
+
+        heif_brands = {
+            b"mif1",
+            b"msf1",
+        }
+
+        if brand in heic_brands:
+            return "image/heic", ".heic"
+
+        if brand in heif_brands:
+            return "image/heif", ".heif"
+
+    return None
+
+
+async def _read_upload(
+    upload: UploadFile,
+    field_name: str,
+) -> tuple[bytes, str, str]:
+    data = await upload.read(MAX_UPLOAD_BYTES + 1)
+
     if not data:
-        raise HTTPException(status_code=400, detail=f"{field_name}_is_empty")
-    if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail=f"{field_name}_too_large")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name}_is_empty",
+        )
 
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{field_name}_too_large",
+        )
+
+    detected = _detect_upload_format(data)
+
+    if detected is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name}_unsupported_file_type",
+        )
+
+    _mime_type, extension = detected
     digest = hashlib.sha256(data).hexdigest()
-    extension = mimetypes.guess_extension(content_type) or ".jpg"
-    if extension == ".jpe":
-        extension = ".jpg"
+
     return data, digest, extension
 
 
-def _save_image(user_id: int, level: int, label: str, data: bytes, extension: str) -> str:
+def _save_upload(user_id: int, level: int, label: str, data: bytes, extension: str) -> str:
     user_dir = UPLOAD_ROOT / str(user_id)
     user_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     filename = f"level{level}_{int(time.time() * 1000)}_{label}{extension}"
@@ -152,25 +220,54 @@ async def _send_admin_text(text: str) -> bool:
     )
 
 
-async def _send_admin_photo(path: str, caption: str) -> bool:
+async def _send_admin_file(path: str, caption: str) -> bool:
     if not ADMIN_BOT_TOKEN or not ADMIN_CHAT_ID:
         return False
+
+    file_path = Path(path)
+    extension = file_path.suffix.lower()
+
+    # Telegram photo previews are convenient for common browser-safe images.
+    # PDF, HEIC, HEIF and WebP are sent as documents instead.
+    send_as_photo = extension in {".jpg", ".jpeg", ".png"}
+    method = "sendPhoto" if send_as_photo else "sendDocument"
+    field_name = "photo" if send_as_photo else "document"
+
     try:
         async with aiohttp.ClientSession() as session:
-            with open(path, "rb") as file_handle:
+            with open(file_path, "rb") as file_handle:
                 form = aiohttp.FormData()
                 form.add_field("chat_id", str(ADMIN_CHAT_ID))
                 form.add_field("caption", caption)
                 form.add_field("parse_mode", "HTML")
-                form.add_field("photo", file_handle, filename=Path(path).name)
+                form.add_field(
+                    field_name,
+                    file_handle,
+                    filename=file_path.name,
+                )
+
                 async with session.post(
-                    f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendPhoto",
+                    f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/{method}",
                     data=form,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
-                    return response.status == 200
+                    if response.status != 200:
+                        body = await response.text()
+                        logger.error(
+                            "Telegram KYC %s failed: %s %s",
+                            method,
+                            response.status,
+                            body[:300],
+                        )
+                        return False
+
+                    return True
+
     except Exception as exc:
-        logger.warning("Telegram KYC photo send failed: %s", type(exc).__name__)
+        logger.warning(
+            "Telegram KYC file send failed: %s",
+            type(exc).__name__,
+        )
         return False
 
 
@@ -190,7 +287,7 @@ async def _notify_admin_submission(
     )
     await _send_admin_text(text)
     for path, label in paths:
-        await _send_admin_photo(path, f"KYC سطح {level} | {label} | Submission #{submission_id}")
+        await _send_admin_file(path, f"KYC سطح {level} | {label} | Submission #{submission_id}")
 
 
 @router.get("/kyc/status")
@@ -221,8 +318,8 @@ async def submit_level2(
     user_id: int = Depends(get_current_user_id),
 ):
     _ensure_schema()
-    front_data, front_hash, front_ext = await _read_image(front, "front")
-    back_data, back_hash, back_ext = await _read_image(back, "back")
+    front_data, front_hash, front_ext = await _read_upload(front, "front")
+    back_data, back_hash, back_ext = await _read_upload(back, "back")
     if front_hash == back_hash:
         raise HTTPException(status_code=400, detail="front_and_back_must_be_different_files")
 
@@ -236,9 +333,9 @@ async def submit_level2(
         if existing and existing["status"] == "pending":
             raise HTTPException(status_code=409, detail="level2_already_pending")
 
-    front_path = _save_image(user_id, 2, "front", front_data, front_ext)
+    front_path = _save_upload(user_id, 2, "front", front_data, front_ext)
     try:
-        back_path = _save_image(user_id, 2, "back", back_data, back_ext)
+        back_path = _save_upload(user_id, 2, "back", back_data, back_ext)
     except Exception:
         Path(front_path).unlink(missing_ok=True)
         raise
@@ -273,7 +370,7 @@ async def submit_level3(
     user_id: int = Depends(get_current_user_id),
 ):
     _ensure_schema()
-    selfie_data, selfie_hash, selfie_ext = await _read_image(selfie, "selfie")
+    selfie_data, selfie_hash, selfie_ext = await _read_upload(selfie, "selfie")
 
     with get_db() as conn:
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -285,7 +382,7 @@ async def submit_level3(
         if existing and existing["status"] == "pending":
             raise HTTPException(status_code=409, detail="level3_already_pending")
 
-    selfie_path = _save_image(user_id, 3, "selfie", selfie_data, selfie_ext)
+    selfie_path = _save_upload(user_id, 3, "selfie", selfie_data, selfie_ext)
     try:
         with get_db() as conn:
             cursor = conn.execute(

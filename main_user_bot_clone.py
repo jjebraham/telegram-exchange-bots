@@ -31,9 +31,6 @@ ADMIN_BOT_TOKEN  = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
 ADMIN_CHAT_ID    = 2043363119
 PROXY_URL        = "http://jjebraham-25:Amir1234@p.webshare.io:80"
 
-# Import BotCommand for command registration
-from aiogram.types import BotCommand
-
 # WALLEX CONFIG
 WALLEX_API_KEY  = "15064|7tVDd4NDBYmATAe4lWTUQSTzj0v7ceTELEv6u6zG"
 WALLEX_BASE_URL = "https://api.wallex.ir/v1"
@@ -76,17 +73,6 @@ async def log_to_admin(message: str):
         logging.error(f"Failed to log to admin: {e}")
         traceback.print_exc()
 
-
-
-def write_admin_panel_log(action: str, details: str):
-    try:
-        with get_db_connection() as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS admin_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, details TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
-            conn.execute("INSERT INTO admin_logs(action, details) VALUES (?, ?)", (action, details[:1000]))
-            conn.commit()
-    except Exception as e:
-        logging.error(f"failed admin panel log: {e}")
-
 class AdminLogMiddleware:
     async def __call__(self, handler, event, data):
         try:
@@ -106,7 +92,6 @@ class AdminLogMiddleware:
                 else:
                     action = "performed an interaction"
                 await log_to_admin(f"👤 User: {uid} ({uname})\n🔍 Action: {action}")
-                write_admin_panel_log("bot_user_interaction", f"uid={uid}; action={action}")
                 result = await handler(event, data)
                 if isinstance(result, types.Message) and result.text:
                     await log_to_admin(f"🤖 Bot response: {result.text}")
@@ -131,9 +116,7 @@ class AdminLogMiddleware:
 # DATABASE FUNCTIONS
 ###############################################################################
 def get_db_connection():
-    # Use the same database as the backend
-    db_path = "/home/kianirad2020/telegram_bot_repo/kiani-exchange/backend/users.db"
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn = sqlite3.connect("users.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -171,28 +154,6 @@ def init_db():
         ''')
         conn.commit()
     logging.debug("Database initialized for main bot.")
-
-
-
-def _get_rate_adjustments():
-    defaults = {"buy_lira":0.0,"sell_lira":0.0,"buy_usdt":0.0,"sell_usdt":0.0,"usdt_to_lira":0.0,"lira_to_usdt":0.0}
-    try:
-        with get_db_connection() as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS rate_adjustments (pair_key TEXT PRIMARY KEY, percent REAL NOT NULL DEFAULT 0, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
-            rows = conn.execute("SELECT pair_key, percent FROM rate_adjustments").fetchall()
-            for row in rows:
-                if row['pair_key'] in defaults:
-                    defaults[row['pair_key']] = float(row['percent'])
-    except Exception:
-        pass
-    return defaults
-
-def adjusted_rate(base: float, key: str, decimals: int = 0):
-    percent = _get_rate_adjustments().get(key, 0.0)
-    value = base * (1 + percent/100)
-    if decimals == 0:
-        return round_to_nearest_10(value)
-    return round(value, decimals)
 
 ###############################################################################
 # PRICE CACHE CLASS (with Wallex fallback)
@@ -429,7 +390,7 @@ class ResetPasswordState(StatesGroup):
 ###############################################################################
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🌐 مینی اپ"), KeyboardButton(text="ℹ️ راهنما")],
+        [KeyboardButton(text="ثبت نام ✍️"), KeyboardButton(text="🚪 ورود")],
         [KeyboardButton(text="نرخ خرید لیر از ما\n🇮🇷 ➡️ 🇹🇷"), KeyboardButton(text="نرخ فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")],
         [KeyboardButton(text="نرخ خرید تتر از ما\n🇮🇷 ➡️ 💰"), KeyboardButton(text="نرخ فروش تتر به ما\n💰 ➡️ 🇮🇷")],
         [KeyboardButton(text="نرخ تبدیل لیر به تتر\n🇹🇷 ➡️ 💰"), KeyboardButton(text="نرخ تبدیل تتر به لیر\n💰 ➡️ 🇹🇷")],
@@ -689,130 +650,13 @@ async def finish_registration_info(message: types.Message, state: FSMContext):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("به صرافی کیانی خوش آمدید.\nبرای ثبت‌نام و ورود فقط از مینی‌اپ استفاده کنید.", reply_markup=main_menu)
-    await log_to_admin("🤖 Bot response: به صرافی کیانی خوش آمدید. برای ثبت‌نام و ورود فقط از مینی‌اپ استفاده کنید.")
-    write_admin_panel_log("bot_response", "/start response sent")
+    await message.answer("به صرافی کیانی خوش آمدید.\nبرای شروع ثبت نام کنید یا وارد حساب کاربری شوید.", reply_markup=main_menu)
 
 
 @dp.message(Command("cancel"))
 async def cmd_cancel_any(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("عملیات لغو شد.", reply_markup=main_menu)
-
-@dp.message(Command("rates"))
-async def cmd_rates(message: types.Message):
-    """Show current exchange rates"""
-    wait_msg = await message.answer("در حال دریافت آخرین نرخ‌ها... ⏳")
-    
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    
-    await wait_msg.delete()
-    
-    if not usdt_irr or not usdt_try:
-        await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
-        return
-    
-    eff_toman = usdt_irr / 10
-    
-    # Calculate all rates
-    buy_lira_rate = adjusted_rate((eff_toman / usdt_try) * 1.02, "buy_lira")
-    sell_lira_rate = adjusted_rate((eff_toman / usdt_try) * 0.97, "sell_lira")
-    buy_usdt_rate = adjusted_rate(eff_toman * 1.01, "buy_usdt")
-    sell_usdt_rate = adjusted_rate(eff_toman * 0.99, "sell_usdt")
-    lira_to_usdt_rate = adjusted_rate(usdt_try * 1.02, "lira_to_usdt", 2)
-    usdt_to_lira_rate = adjusted_rate(usdt_try * 0.98, "usdt_to_lira", 2)
-    
-    rates_text = (
-        "💰 **نرخ‌های فعلی صرافی کیانی:**\n\n"
-        f"🇮🇷 ➡️ 🇹🇷 خرید لیر: **{buy_lira_rate:,}** تومان\n"
-        f"🇹🇷 ➡️ 🇮🇷 فروش لیر: **{sell_lira_rate:,}** تومان\n"
-        f"🇮🇷 ➡️ 💰 خرید تتر: **{buy_usdt_rate:,}** تومان\n"
-        f"💰 ➡️ 🇮🇷 فروش تتر: **{sell_usdt_rate:,}** تومان\n"
-        f"🇹🇷 ➡️ 💰 تبدیل لیر به تتر: **{lira_to_usdt_rate}** لیر\n"
-        f"💰 ➡️ 🇹🇷 تبدیل تتر به لیر: **{usdt_to_lira_rate}** لیر\n\n"
-        "📊 *آخرین بروزرسانی: همین لحظه*"
-    )
-    
-    await message.answer(rates_text, parse_mode="Markdown")
-
-@dp.message(Command("balance"))
-async def cmd_balance(message: types.Message):
-    """Show user balance"""
-    user_id = message.from_user.id
-    
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        # Check if user exists
-        user = c.execute("SELECT id, first_name, last_name FROM users WHERE id=?", (user_id,)).fetchone()
-        
-        if not user:
-            await message.answer("شما ثبت نام نکرده‌اید. لطفاً ابتدا ثبت نام کنید.")
-            return
-        
-        # Get user balances (placeholder - need transactions table)
-        # For now, show user info
-        full_name = f"{user['first_name']} {user['last_name']}"
-        
-        balance_text = (
-            f"👤 **اطلاعات حساب:** {full_name}\n"
-            f"🆔 **کد کاربری:** {user_id}\n\n"
-            "💰 **موجودی‌ها:**\n"
-            "💎 تتر: 0.00 USDT\n"
-            "🇹🇷 لیر: 0.00 TRY\n"
-            "🇮🇷 تومان: 0 تومان\n\n"
-            "📝 *سیستم تراکنش در حال توسعه است*"
-        )
-        
-        await message.answer(balance_text, parse_mode="Markdown")
-
-@dp.message(Command("history"))
-async def cmd_history(message: types.Message):
-    """Show transaction history"""
-    user_id = message.from_user.id
-    
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        user = c.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
-        
-        if not user:
-            await message.answer("شما ثبت نام نکرده‌اید. لطفاً ابتدا ثبت نام کنید.")
-            return
-    
-    history_text = (
-        "📜 **تاریخچه تراکنش‌ها**\n\n"
-        "🕒 **آخرین تراکنش‌ها:**\n"
-        "• در حال حاضر تراکنشی ثبت نشده است.\n\n"
-        "📊 **آمار کلی:**\n"
-        "✅ تراکنش‌های موفق: 0\n"
-        "❌ تراکنش‌های ناموفق: 0\n"
-        "💰 مجموع مبادلات: 0 تومان\n\n"
-        "📝 *سیستم تراکنش در حال توسعه است*"
-    )
-    
-    await message.answer(history_text, parse_mode="Markdown")
-
-@dp.message(Command("support"))
-async def cmd_support(message: types.Message):
-    """Show support contact information"""
-    support_text = (
-        "📞 **تماس با پشتیبانی**\n\n"
-        "🕒 **ساعات کاری:**\n"
-        "شنبه تا پنجشنبه: ۹ صبح تا ۹ شب\n"
-        "جمعه: ۱۰ صبح تا ۶ عصر\n\n"
-        "📱 **روش‌های ارتباطی:**\n"
-        "• تلگرام: @TL905411603664\n"
-        "• تلفن: ۰۹۱۲۱۹۵۸۲۹۶\n"
-        "• ایمیل: support@kiani-exchange.com\n\n"
-        "📍 **آدرس دفتر:**\n"
-        "تهران، خیابان ولیعصر\n\n"
-        "⚠️ **توجه:**\n"
-        "• برای امنیت بیشتر، از ارسال اطلاعات حساس در چت عمومی خودداری کنید.\n"
-        "• پشتیبانی فقط از طریق کانال‌های رسمی پاسخگو است.\n"
-        "• زمان پاسخگویی معمولاً کمتر از ۱ ساعت است."
-    )
-    
-    await message.answer(support_text, parse_mode="Markdown")
 
 
 @dp.message(Command("resetpassword"))
@@ -827,8 +671,6 @@ async def cmd_reset_password(message: types.Message, state: FSMContext):
         "برای بازیابی رمز عبور، شماره موبایل ثبت‌شده را با دکمه Share Contact ارسال کنید.",
         reply_markup=kb,
     )
-    await log_to_admin("🤖 Bot response: برای بازیابی رمز عبور، شماره موبایل ثبت‌شده را با دکمه Share Contact ارسال کنید.")
-    write_admin_panel_log("bot_response", "/resetpassword response sent")
 
 
 @dp.message(ResetPasswordState.wait_contact, F.contact)
@@ -912,16 +754,6 @@ async def reset_password_pass2(message: types.Message, state: FSMContext):
 ###############################################################################
 # REGISTRATION FLOW
 ###############################################################################
-
-
-@dp.message(F.text=="🌐 مینی اپ")
-async def mini_app_redirect(message: types.Message):
-    await message.answer("برای ثبت‌نام و ورود، مینی‌اپ را از منوی تلگرام باز کنید.")
-
-
-@dp.message(F.text=="ℹ️ راهنما")
-async def help_redirect(message: types.Message):
-    await message.answer("برای مشاهده نرخ‌ها /rates و برای بازیابی رمز /resetpassword را ارسال کنید.")
 @dp.message(F.text=="ثبت نام ✍️")
 async def register_start(message: types.Message, state: FSMContext):
     await state.set_state(RegisterState.first_name)
@@ -1207,7 +1039,7 @@ async def buy_lira_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate((eff_toman / usdt_try) * 1.02, "buy_lira")
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "buy_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1223,7 +1055,7 @@ async def main_menu_buy_lira_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate((eff_toman / usdt_try) * 1.02, "buy_lira")
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.02)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
@@ -1236,7 +1068,7 @@ async def sell_lira_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate((eff_toman / usdt_try) * 0.97, "sell_lira")
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
     await message.answer(f"هر واحد لیر ترکیه ��🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "sell_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1252,7 +1084,7 @@ async def main_menu_sell_lira_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate((eff_toman / usdt_try) * 0.97, "sell_lira")
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 
@@ -1266,7 +1098,7 @@ async def buy_tether_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate(eff_toman * 1.01, "buy_usdt")
+    rate = round_to_nearest_10(eff_toman * 1.01)
     await message.answer(f"هر واحد تتر 💰 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     await message.answer("لطفاً وجه را از حساب خودتان واریز کنید و قبل از واریز هماهنگ کنید.")
     await message.answer(
@@ -1288,7 +1120,7 @@ async def main_menu_buy_tether_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate(eff_toman * 1.01, "buy_usdt")
+    rate = round_to_nearest_10(eff_toman * 1.01)
     await message.answer(f"هر واحد تتر 💰 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش تتر به ما\n💰 ➡️ 🇮🇷")
@@ -1300,7 +1132,7 @@ async def sell_tether_user(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate(eff_toman * 0.99, "sell_usdt")
+    rate = round_to_nearest_10(eff_toman * 0.99)
     await message.answer(f"هر واحد تتر 💰 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="TRC20", callback_data="trc20_selltether"),
@@ -1317,7 +1149,7 @@ async def main_menu_sell_tether_rate(message: types.Message):
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
     eff_toman = usdt_irr / 10
-    rate = adjusted_rate(eff_toman * 0.99, "sell_usdt")
+    rate = round_to_nearest_10(eff_toman * 0.99)
     await message.answer(f"هر واحد تتر 💰 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 
@@ -1341,7 +1173,7 @@ async def lira_to_tether_user(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = adjusted_rate(usdt_try * 1.02, "lira_to_usdt", 2)
+    rate = usdt_try * 1.02
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل لیر به تتر)", parse_mode="Markdown")
     await message.answer("لطفاً قبل از واریز هماهنگ کنید.")
     await message.answer(
@@ -1360,7 +1192,7 @@ async def main_menu_lira_to_tether_rate(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = adjusted_rate(usdt_try * 1.02, "lira_to_usdt", 2)
+    rate = usdt_try * 1.02
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل لیر به تتر)", parse_mode="Markdown")
 
 
@@ -1372,7 +1204,7 @@ async def tether_to_lira_user(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = adjusted_rate(usdt_try * 0.98, "usdt_to_lira", 2)
+    rate = usdt_try * 0.98
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل تتر به لیر)", parse_mode="Markdown")
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="TRC20", callback_data="trc20_tether2lira"),
@@ -1388,7 +1220,7 @@ async def main_menu_tether_to_lira_rate(message: types.Message):
     if not usdt_try:
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    rate = adjusted_rate(usdt_try * 0.98, "usdt_to_lira", 2)
+    rate = usdt_try * 0.98
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل تتر به لیر)", parse_mode="Markdown")
 
 
@@ -1588,26 +1420,11 @@ async def contact_us_cmd(message: types.Message):
 ###############################################################################
 # BOT STARTUP
 ###############################################################################
-async def set_bot_commands():
-    """Set the bot commands menu in Telegram"""
-    commands = [
-        BotCommand(command="start", description="منوی اصلی"),
-        BotCommand(command="resetpassword", description="بازیابی رمز عبور"),
-        BotCommand(command="rates", description="نرخ‌های فعلی"),
-        BotCommand(command="balance", description="موجودی حساب"),
-        BotCommand(command="history", description="تاریخچه تراکنش‌ها"),
-        BotCommand(command="support", description="تماس با پشتیبانی"),
-    ]
-    await bot.set_my_commands(commands)
-
 async def main():
     init_db()
     logging.debug("Starting MAIN user bot…")
     dp.message.middleware.register(AdminLogMiddleware())
     dp.callback_query.middleware.register(AdminLogMiddleware())
-    
-    # Set bot commands
-    await set_bot_commands()
     
     # Start background tasks
     kyc_task = asyncio.create_task(check_kyc_loop())

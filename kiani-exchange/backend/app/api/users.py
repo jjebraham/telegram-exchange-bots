@@ -289,12 +289,28 @@ async def _ehraz_post(
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     attempts: list[str | None] = [None]
     proxies = get_ehraz_proxies()
-    if proxies:
-        sample_count = min(2, len(proxies))
-        attempts.extend(secrets.SystemRandom().sample(proxies, sample_count))
+
+    # Direct connection is always tried first. Then retry through several
+    # different proxies because individual proxy availability is intermittent.
+    # Keep the value bounded so a bad upstream cannot hold registration open
+    # indefinitely.
+    try:
+        proxy_retry_count = int(
+            os.getenv("EHRAZ_PROXY_RETRY_COUNT", "4").strip()
+        )
+    except ValueError:
+        proxy_retry_count = 4
+
+    proxy_retry_count = max(0, min(proxy_retry_count, 8))
+
+    if proxies and proxy_retry_count:
+        sample_count = min(proxy_retry_count, len(proxies))
+        attempts.extend(
+            secrets.SystemRandom().sample(proxies, sample_count)
+        )
 
     last_error = "all_attempts_failed"
-    for proxy_url in attempts:
+    for attempt_number, proxy_url in enumerate(attempts, start=1):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -311,12 +327,18 @@ async def _ehraz_post(
                         data = {}
                     ok = response.status == 200 and isinstance(data, dict) and bool(data)
                     last_error = f"http_{response.status}" if response.status != 200 else "invalid_response"
+                    safe_response = _safe_ehraz_response(data)
+                    safe_response["route"] = (
+                        "direct" if proxy_url is None else "proxy"
+                    )
+                    safe_response["attempt"] = attempt_number
+
                     _write_ehraz_log(
                         phone_number,
                         national_id,
                         url,
                         payload,
-                        _safe_ehraz_response(data),
+                        safe_response,
                         ok,
                         None if ok else last_error,
                     )
@@ -324,12 +346,18 @@ async def _ehraz_post(
                         return data
         except (aiohttp.ClientError, TimeoutError) as exc:
             last_error = type(exc).__name__
+            route = "direct" if proxy_url is None else "proxy"
+
             _write_ehraz_log(
                 phone_number,
                 national_id,
                 url,
                 payload,
-                {"network_error": type(exc).__name__},
+                {
+                    "network_error": type(exc).__name__,
+                    "route": route,
+                    "attempt": attempt_number,
+                },
                 False,
                 last_error,
             )

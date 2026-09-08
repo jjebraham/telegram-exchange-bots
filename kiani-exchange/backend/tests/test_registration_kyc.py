@@ -77,12 +77,25 @@ def test_level2_upload_stays_pending_until_admin_approval(isolated_db, tmp_path,
 
     user_token = create_access_token({"user_id": user_id})
     user_client = _user_app()
+
+    # Real PNG signature: the KYC API validates file contents,
+    # not merely the browser-provided MIME type.
+    png_signature = bytes.fromhex("89504e470d0a1a0a")
+
     response = user_client.post(
         "/api/kyc/level2",
         headers={"Authorization": f"Bearer {user_token}"},
         files={
-            "front": ("front.png", b"front-image-content", "image/png"),
-            "back": ("back.png", b"back-image-content", "image/png"),
+            "front": (
+                "front.png",
+                png_signature + b"front-image-content",
+                "image/png",
+            ),
+            "back": (
+                "back.png",
+                png_signature + b"back-image-content",
+                "image/png",
+            ),
         },
     )
     assert response.status_code == 200, response.text
@@ -112,7 +125,7 @@ def test_level2_upload_stays_pending_until_admin_approval(isolated_db, tmp_path,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert file_response.status_code == 200
-    assert file_response.content == b"front-image-content"
+    assert file_response.content == png_signature + b"front-image-content"
     assert "no-store" in file_response.headers.get("cache-control", "")
 
     approve = admin_client.post(
@@ -130,3 +143,46 @@ def test_level2_upload_stays_pending_until_admin_approval(isolated_db, tmp_path,
     assert submission["status"] == "approved"
 
     assert Path(kyc.UPLOAD_ROOT / str(user_id)).is_dir()
+
+
+
+def test_kyc_supported_file_signatures():
+    samples = {
+        "jpeg": (
+            bytes.fromhex("ffd8ffe0") + b"jpeg-content",
+            ("image/jpeg", ".jpg"),
+        ),
+        "png": (
+            bytes.fromhex("89504e470d0a1a0a") + b"png-content",
+            ("image/png", ".png"),
+        ),
+        "webp": (
+            b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"webp-content",
+            ("image/webp", ".webp"),
+        ),
+        "pdf": (
+            b"%PDF-1.7\n" + b"pdf-content",
+            ("application/pdf", ".pdf"),
+        ),
+        "heic": (
+            b"\x00\x00\x00\x18ftypheic" + b"heic-content",
+            ("image/heic", ".heic"),
+        ),
+        "heif": (
+            b"\x00\x00\x00\x18ftypmif1" + b"heif-content",
+            ("image/heif", ".heif"),
+        ),
+    }
+
+    for _name, (content, expected) in samples.items():
+        assert kyc._detect_upload_format(content) == expected
+
+    # MIME/extension spoofing must not be enough to pass validation.
+    assert kyc._detect_upload_format(
+        b"this is not really an image"
+    ) is None
+
+    # SVG is intentionally not accepted because it can contain active content.
+    assert kyc._detect_upload_format(
+        b'<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+    ) is None
