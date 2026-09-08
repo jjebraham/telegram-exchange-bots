@@ -2065,32 +2065,78 @@ function LoginPage({
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [resetSending, setResetSending] = useState(false);
+  const [resetNotice, setResetNotice] = useState('');
   const [resetMode, setResetMode] = useState<'' | 'bot' | 'sms'>('');
   const [resetCode, setResetCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
   const startReset = async (channel: 'bot' | 'sms') => {
+    setError('');
+    setResetNotice('');
+
     if (!phoneNumber) {
       setError('ابتدا شماره موبایل را وارد کنید');
       return;
     }
 
     if (channel === 'bot') {
-      notifyMessage('در تلگرام به ربات پیام /resetpassword بدهید و شماره خود را با Share Contact ارسال کنید.');
+      notifyMessage(
+        'در تلگرام به ربات پیام /resetpassword بدهید و شماره خود را با دکمه ارسال شماره تلفن من ارسال کنید.'
+      );
       return;
     }
 
-    const response = await fetch(`${API_URL}/users/password-reset/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone_number: normalizePhone(phoneNumber), channel }),
-    });
+    setResetSending(true);
+    setResetNotice('در حال ارسال کد بازیابی به شماره موبایل شما...');
 
-    if (response.ok) {
-      setResetMode(channel);
-      notifyMessage('در صورت معتبر بودن شماره، کد بازیابی پیامک شد.');
-    } else {
-      setError('در ارسال درخواست بازیابی خطا رخ داد');
+    try {
+      const response = await fetch(`${API_URL}/users/password-reset/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone_number: normalizePhone(phoneNumber),
+          channel: 'sms',
+        }),
+      });
+
+      if (response.ok) {
+        setResetMode('sms');
+        setResetNotice(
+          'در صورت معتبر بودن شماره، کد بازیابی ارسال شد. لطفاً کد ۶ رقمی و رمز عبور جدید را وارد کنید.'
+        );
+
+        notifyMessage(
+          'کد بازیابی درخواست شد. لطفاً کد پیامک‌شده را وارد کنید.'
+        );
+      } else {
+        let detail = '';
+
+        try {
+          const data = await response.json();
+          detail = data?.detail || '';
+        } catch {
+          detail = '';
+        }
+
+        setResetNotice('');
+
+        if (detail === 'sms_service_unavailable') {
+          setError(
+            'سرویس پیامک موقتاً در دسترس نیست. لطفاً کمی بعد دوباره تلاش کنید یا از بازیابی رمز از طریق ربات استفاده کنید.'
+          );
+        } else {
+          setError('در ارسال درخواست بازیابی خطا رخ داد');
+        }
+      }
+    } catch (error) {
+      console.error('Password reset SMS error:', error);
+      setResetNotice('');
+      setError(
+        'ارتباط با سرور برقرار نشد. لطفاً دوباره تلاش کنید.'
+      );
+    } finally {
+      setResetSending(false);
     }
   };
 
@@ -2198,9 +2244,32 @@ function LoginPage({
           )}
 
           <div className="text-center text-sm">
-            <button onClick={() => startReset('bot')} className="text-blue-600 ml-3">فراموشی رمز (از طریق ربات)</button>
-            <button onClick={() => startReset('sms')} className="text-blue-600">فراموشی رمز (پیامک)</button>
+            <button
+              onClick={() => startReset('bot')}
+              disabled={resetSending}
+              className="text-blue-600 ml-3 disabled:opacity-50"
+            >
+              فراموشی رمز (از طریق ربات)
+            </button>
+
+            <button
+              onClick={() => startReset('sms')}
+              disabled={resetSending}
+              className="text-blue-600 disabled:opacity-50"
+            >
+              {resetSending
+                ? 'در حال ارسال پیامک...'
+                : 'فراموشی رمز (پیامک)'}
+            </button>
           </div>
+
+          {resetNotice && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+              <p className="text-blue-700 text-sm">
+                {resetNotice}
+              </p>
+            </div>
+          )}
 
           {resetMode && (
             <div className="bg-gray-50 border rounded-xl p-3 space-y-2">

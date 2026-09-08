@@ -607,8 +607,33 @@ async def start_password_reset(req: PasswordResetStartRequest):
 
     if req.channel == "sms" and code:
         ok, _provider_response = await _send_ghasedak_sms(phone_number, code)
+
         if not ok:
-            logger.warning("Password reset SMS delivery failed for %s", _mask_phone(phone_number))
+            logger.warning(
+                "Password reset SMS delivery failed for %s",
+                _mask_phone(phone_number),
+            )
+
+            # Do not keep a reset token when its SMS was never delivered.
+            digest = _reset_code_digest(phone_number, code)
+
+            with get_db() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM password_reset_tokens
+                    WHERE phone_number = ?
+                      AND channel = 'sms'
+                      AND code = ?
+                      AND used = 0
+                    """,
+                    (phone_number, digest),
+                )
+
+            raise HTTPException(
+                status_code=503,
+                detail="sms_service_unavailable",
+            )
+
     return {"status": "sent"}
 
 
