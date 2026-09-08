@@ -419,14 +419,10 @@ async def _send_ghasedak_sms(phone_number: str, code: str) -> tuple[bool, str]:
         if line_number:
             payload["linenumber"] = line_number
 
-    proxy_format = get_ghasedak_proxy_format()
-    proxy_start, proxy_end = get_ghasedak_proxy_pool()
+    # Direct route only for now.
+    # The configured Ghasedak proxy pool was verified unreachable.
+    # A working relay/proxy can be enabled here later.
     proxies: list[str | None] = [None]
-    if proxy_format:
-        proxies.extend(
-            proxy_format.format(n=secrets.randbelow(proxy_end - proxy_start + 1) + proxy_start)
-            for _ in range(2)
-        )
 
     last_response = "sms_delivery_failed"
     for proxy_url in proxies:
