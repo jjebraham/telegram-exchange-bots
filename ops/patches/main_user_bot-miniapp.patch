@@ -1,0 +1,42 @@
+--- a/main_user_bot.py
++++ b/main_user_bot.py
+@@ -20 +20,2 @@
+-    InlineKeyboardButton, ReplyKeyboardRemove, FSInputFile, BufferedInputFile
++    InlineKeyboardButton, ReplyKeyboardRemove, FSInputFile, BufferedInputFile,
++    WebAppInfo, MenuButtonWebApp
+@@ -29,0 +31,5 @@
++MINIAPP_URL = os.getenv(
++    "MINIAPP_URL",
++    "https://miniapp.kiani.exchange",
++)
++
+@@ -414,0 +421,6 @@
++        [
++            KeyboardButton(
++                text="🌐 صرافی کیانی",
++                web_app=WebAppInfo(url=MINIAPP_URL),
++            )
++        ],
+@@ -426,0 +439,6 @@
++        [
++            KeyboardButton(
++                text="🌐 صرافی کیانی",
++                web_app=WebAppInfo(url=MINIAPP_URL),
++            )
++        ],
+@@ -1350,0 +1369,15 @@
++
++    # Persistent Telegram Mini App button
++    try:
++        await bot.set_chat_menu_button(
++            menu_button=MenuButtonWebApp(
++                text="صرافی کیانی",
++                web_app=WebAppInfo(url=MINIAPP_URL),
++            )
++        )
++        logging.info("Telegram Mini App menu button configured.")
++    except Exception as e:
++        logging.error(
++            "Failed to configure Telegram Mini App menu button: %s",
++            e,
++        )
