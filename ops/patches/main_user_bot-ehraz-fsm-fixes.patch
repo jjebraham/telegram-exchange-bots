@@ -1,0 +1,269 @@
+--- /home/kianirad2020/backups/main_user_bot-before-local-ehraz-20260909-121027.py	2026-09-08 22:56:37.048978349 +0000
++++ main_user_bot.py	2026-09-09 12:36:07.093986026 +0000
+@@ -331,29 +331,111 @@
+     ehraz_attempts[user_id] = rec
+     logging.debug(f"EHRAZ: Incremented attempts for user {user_id} to {rec['count']}")
+ 
+-async def match_card_with_national(card_number: str, national_id: str, dob: str) -> bool:
+-    url = "https://ehraz.io/api/v1/match/card-with-national"
+-    headers = {
+-        "Authorization": f"Token {EHRAZ_API_TOKEN}",
+-        "Content-Type": "application/json"
++async def match_card_with_national(
++    card_number: str,
++    national_id: str,
++    dob: str,
++):
++    """
++    Returns:
++        True  -> Ehraz explicitly confirmed a match
++        False -> Ehraz explicitly confirmed a mismatch
++        None  -> backend/network/provider failure
++    """
++
++    url = "http://127.0.0.1:8000/api/verify/ehraz"
++
++    payload = {
++        "cardNumber": re.sub(
++            r"\D",
++            "",
++            convert_persian_digits_to_english(card_number or ""),
++        ),
++        "nationalCode": re.sub(
++            r"\D",
++            "",
++            convert_persian_digits_to_english(national_id or ""),
++        ),
++        "birthDate": re.sub(
++            r"\D",
++            "",
++            convert_persian_digits_to_english(dob or ""),
++        ),
+     }
+-    proxy_url_for_sync = PROXY_URL
++
+     try:
+-        async with aiohttp.ClientSession() as session:
+-            async with session.post(url, json={
+-                "cardNumber": card_number,
+-                "nationalCode": national_id,
+-                "birthDate": dob
+-            }, headers=headers, proxy=proxy_url_for_sync, timeout=20) as resp:
+-                text = await resp.text()
+-                logging.debug(f"EHRAZ API response (status {resp.status}): {text}")
++        timeout = aiohttp.ClientTimeout(total=40)
++
++        async with aiohttp.ClientSession(timeout=timeout) as session:
++            async with session.post(
++                url,
++                json=payload,
++            ) as resp:
++
++                try:
++                    data = await resp.json(content_type=None)
++                except Exception:
++                    logging.error(
++                        "Local Ehraz backend returned non-JSON response "
++                        "HTTP %s",
++                        resp.status,
++                    )
++                    return None
++
+                 if resp.status != 200:
++                    detail = (
++                        data.get("detail")
++                        if isinstance(data, dict)
++                        else None
++                    )
++
++                    logging.error(
++                        "Local Ehraz verification failed: "
++                        "HTTP %s detail=%s",
++                        resp.status,
++                        detail,
++                    )
++                    return None
++
++                if not isinstance(data, dict):
++                    logging.error(
++                        "Local Ehraz backend returned invalid JSON"
++                    )
++                    return None
++
++                matched = data.get("matched")
++
++                if matched is True:
++                    logging.info(
++                        "Ehraz verification result: matched"
++                    )
++                    return True
++
++                if matched is False:
++                    logging.info(
++                        "Ehraz verification result: mismatch"
++                    )
+                     return False
+-                data = await resp.json()
+-                return bool(data.get("matched", False))
+-    except Exception as e:
+-        logging.error(f"Error calling EHRAZ: {e}")
+-        return False
++
++                logging.error(
++                    "Local Ehraz response missing matched boolean"
++                )
++                return None
++
++    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
++        logging.error(
++            "Local Ehraz backend unavailable: %s",
++            type(exc).__name__,
++        )
++        return None
++
++    except Exception as exc:
++        logging.error(
++            "Unexpected local Ehraz error: %s",
++            type(exc).__name__,
++        )
++        return None
++
+ 
+ ###############################################################################
+ # HELPER FUNCTIONS
+@@ -430,6 +512,42 @@
+     wait_pass1 = State()
+     wait_pass2 = State()
+ 
++
++###############################################################################
++# GLOBAL FSM CONTROL COMMANDS
++#
++# These handlers MUST remain before registration/correction state handlers.
++# Otherwise a state such as RegistrationReview.edit_card may consume /start
++# as ordinary form input.
++###############################################################################
++
++@dp.message(Command("start"))
++async def global_start(message: types.Message, state: FSMContext):
++    await state.clear()
++    await message.answer(
++        "به صرافی کیانی خوش آمدید.\n"
++        "برای شروع ثبت نام کنید یا وارد حساب کاربری شوید.",
++        reply_markup=main_menu,
++    )
++
++
++@dp.message(Command("cancel"))
++async def global_cancel(message: types.Message, state: FSMContext):
++    await state.clear()
++    await message.answer(
++        "عملیات فعلی لغو شد.",
++        reply_markup=main_menu,
++    )
++
++
++@dp.message(Command("exit"))
++async def global_exit(message: types.Message, state: FSMContext):
++    await state.clear()
++    await message.answer(
++        "از عملیات فعلی خارج شدید.",
++        reply_markup=main_menu,
++    )
++
+ ###############################################################################
+ # MENUS - CORRECTED AND STANDARDIZED
+ ###############################################################################
+@@ -862,11 +980,34 @@
+         return
+     increment_ehraz(user_id)
+     matched = await match_card_with_national(cnum, nid, dob)
+-    if matched:
+-        await message.answer("شما مرحله اول احراز هویت را با موفقیت تکمیل کردید✅\nلطفاً تصویر روی کارت ملی تان را آپلود کنید🪪")
++
++    current_state = await state.get_state()
++    if current_state not in {
++        RegistrationReview.edit_nid.state,
++        RegistrationReview.edit_dob.state,
++        RegistrationReview.edit_card.state,
++    }:
++        logging.info(
++            "Ignoring stale Ehraz correction result because FSM state changed"
++        )
++        return
++
++    if matched is None:
++        await message.answer(
++            "سرویس احراز هویت موقتاً در دسترس نیست. "
++            "لطفاً چند دقیقه دیگر دوباره تلاش کنید."
++        )
++        return
++
++    if matched is True:
++        await message.answer(
++            "شما مرحله اول احراز هویت را با موفقیت تکمیل کردید✅\n"
++            "لطفاً تصویر روی کارت ملی تان را آپلود کنید🪪"
++        )
+         await state.set_state(RegisterState.front_id)
+-    else:
+-        await ask_for_corrections(message, state)
++        return
++
++    await ask_for_corrections(message, state)
+ 
+ ###############################################################################
+ # FINISH REGISTRATION & ADMIN NOTIFICATION
+@@ -1054,12 +1195,28 @@
+     increment_ehraz(user_id)
+     matched = await match_card_with_national(cnum, nid, dob)
+ 
+-    if not matched:
++    if await state.get_state() != RegisterState.bank_card_number.state:
++        logging.info(
++            "Ignoring stale registration Ehraz result because FSM state changed"
++        )
++        return
++
++    if matched is None:
++        await message.answer(
++            "سرویس احراز هویت موقتاً در دسترس نیست. "
++            "لطفاً چند دقیقه دیگر دوباره تلاش کنید."
++        )
++        return
++
++    if matched is False:
+         await state.set_state(RegistrationReview.waiting)
+         await ask_for_corrections(message, state)
+         return
+ 
+-    await message.answer("شما مرحله اول احراز هویت را با موفقیت تکمیل کردید✅\nلطفاً تصویر روی کارت ملی تان را آپلود کنید🪪")
++    await message.answer(
++        "شما مرحله اول احراز هویت را با موفقیت تکمیل کردید✅\n"
++        "لطفاً تصویر روی کارت ملی تان را آپلود کنید🪪"
++    )
+     await state.set_state(RegisterState.front_id)
+ 
+ @dp.message(RegisterState.front_id, F.photo)
+@@ -1204,7 +1361,21 @@
+ 
+     increment_ehraz(user_id)
+     matched = await match_card_with_national(card, nid, dob)
+-    if not matched:
++
++    if await state.get_state() != BankCardState.adding.state:
++        logging.info(
++            "Ignoring stale add-card Ehraz result because FSM state changed"
++        )
++        return
++
++    if matched is None:
++        await message.answer(
++            "سرویس احراز هویت موقتاً در دسترس نیست. "
++            "لطفاً چند دقیقه دیگر دوباره تلاش کنید."
++        )
++        return
++
++    if matched is False:
+         await message.answer("اطلاعات کارتی که وارد کردید یا اشتباه است یا با کد ملی شما تطابق ندارد\nلطفاً دوباره سعی کنید و در نظر داشته باشید فقط کارت به نام خودتان قابل قبول است")
+         return
+ 
