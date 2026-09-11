@@ -1,0 +1,168 @@
+/* Daylight shell overrides for the existing React customer UI.
+   Loaded after daylight.css. No selectors apply without [data-ke]. */
+
+[data-ke] > .min-h-screen.bg-gray-100 {
+  background: var(--ke-bg) !important;
+  color: var(--ke-ink);
+}
+
+/* Replace the old blue/purple brand bar with a quiet exchange header. */
+[data-ke] header.bg-gradient-to-r {
+  background: var(--ke-surface) !important;
+  background-image: none !important;
+  color: var(--ke-ink) !important;
+  border-bottom: 1px solid var(--ke-line);
+  box-shadow: var(--ke-sh) !important;
+}
+
+[data-ke] header.bg-gradient-to-r h1,
+[data-ke] header.bg-gradient-to-r span {
+  color: var(--ke-ink) !important;
+}
+
+[data-ke] header .bg-white\/20 {
+  min-height: 36px;
+  background: var(--ke-accent-soft) !important;
+  color: var(--ke-accent) !important;
+  border: 0;
+  box-shadow: none !important;
+  font-weight: 600;
+}
+
+/* Home heading and refresh chip */
+[data-ke] main > div > .p-4:first-child {
+  padding-top: 18px !important;
+}
+
+[data-ke] main h2.text-xl.font-bold.text-gray-800 {
+  color: var(--ke-ink) !important;
+  font-size: var(--ke-t-title) !important;
+  font-weight: 600 !important;
+}
+
+[data-ke] button.text-sm.text-blue-600.bg-blue-50 {
+  min-height: 36px;
+  padding: 7px 12px !important;
+  background: var(--ke-accent-soft) !important;
+  color: var(--ke-accent) !important;
+  border: 0;
+  border-radius: var(--ke-r-pill) !important;
+  font-weight: 600;
+}
+
+/* Give the rate list a cleaner financial-table rhythm. */
+[data-ke] main .bg-white.rounded-xl.p-4.shadow-md.mb-3 {
+  position: relative;
+  overflow: hidden;
+}
+
+[data-ke] main .bg-white.rounded-xl.p-4.shadow-md.mb-3::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--ke-accent);
+  opacity: .85;
+}
+
+[data-ke] main .bg-white.rounded-xl.p-4.shadow-md.mb-3:nth-of-type(even)::before {
+  background: var(--ke-sell);
+}
+
+/* Action grid: flat semantic tiles instead of six unrelated gradients. */
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button {
+  border: 1px solid transparent !important;
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button:not(.from-red-500):not(.from-orange-500) {
+  background-color: var(--ke-accent) !important;
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button.from-red-500,
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button.from-orange-500 {
+  background-color: var(--ke-sell) !important;
+}
+
+/* Exchange page */
+[data-ke] main > .p-4,
+[data-ke] main > div > .p-4 {
+  max-width: 620px;
+  margin-inline: auto;
+}
+
+[data-ke] main button.mb-4.text-blue-600 {
+  min-height: 38px;
+  color: var(--ke-accent) !important;
+  padding-inline: 4px;
+  font-weight: 600 !important;
+}
+
+[data-ke] main .bg-white.rounded-2xl.p-6.shadow-lg {
+  border: 1px solid var(--ke-line);
+  box-shadow: var(--ke-sh) !important;
+  border-radius: var(--ke-r) !important;
+}
+
+[data-ke] main .bg-white.rounded-2xl.p-6.shadow-lg h2 {
+  color: var(--ke-ink) !important;
+  font-weight: 600 !important;
+}
+
+[data-ke] main label {
+  color: var(--ke-ink-2) !important;
+  font-size: var(--ke-t-body) !important;
+  font-weight: 500 !important;
+}
+
+[data-ke] main input.text-lg {
+  font-size: var(--ke-t-amount) !important;
+  font-weight: 400;
+  min-height: 60px;
+}
+
+[data-ke] main .bg-green-50.border-2 {
+  background: var(--ke-accent-soft) !important;
+  border-color: transparent !important;
+  border-radius: var(--ke-r) !important;
+}
+
+[data-ke] main .bg-green-50.border-2 p {
+  color: var(--ke-accent) !important;
+  font-weight: 400 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Login and registration cards inherit the same quiet surface. */
+[data-ke] main .max-w-md.mx-auto.bg-white,
+[data-ke] main .bg-white.max-w-md.mx-auto {
+  border: 1px solid var(--ke-line);
+  box-shadow: var(--ke-sh) !important;
+}
+
+/* Bottom navigation */
+[data-ke] nav.fixed.bottom-0 {
+  box-shadow: 0 -1px 0 var(--ke-line), 0 -8px 28px -24px rgba(21, 36, 44, .45) !important;
+}
+
+[data-ke] nav.fixed.bottom-0 > .flex {
+  max-width: 620px;
+  margin-inline: auto;
+}
+
+[data-ke] nav.fixed.bottom-0 button {
+  color: var(--ke-muted);
+  transition: color var(--ke-fast), transform var(--ke-fast);
+}
+
+[data-ke] nav.fixed.bottom-0 button.text-blue-600 {
+  color: var(--ke-accent) !important;
+}
+
+[data-ke] nav.fixed.bottom-0 button:active {
+  transform: translateY(1px);
+}
+
+[data-ke][data-scheme="dark"] header.bg-gradient-to-r,
+[data-ke][data-scheme="dark"] nav.fixed.bottom-0 {
+  box-shadow: 0 1px 0 var(--ke-line) !important;
+}
