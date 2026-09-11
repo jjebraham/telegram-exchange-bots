@@ -102,10 +102,13 @@ export default function KycGate() {
     <button
       type="button"
       onClick={() => setOpen(true)}
-      className="flex flex-col items-center px-4 py-1 text-emerald-600"
+      className="ke-kyc-nav-button flex flex-col items-center px-4 py-1 text-emerald-600"
       title={`احراز هویت - سطح ${level || 1}`}
+      aria-label={`احراز هویت - سطح ${level || 1}`}
+      aria-haspopup="dialog"
+      aria-expanded={open}
     >
-      <span className="text-xl">🪪</span>
+      <span className="text-xl" aria-hidden="true">🪪</span>
       <span className="mt-1 text-xs font-medium">احراز هویت</span>
     </button>
   )
@@ -117,13 +120,20 @@ export default function KycGate() {
         : <div className="fixed bottom-2 left-1/2 z-[70] -translate-x-1/2">{menuButton}</div>}
 
       {open && (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/60 p-4" dir="rtl">
-          <div className="mx-auto mt-6 max-w-2xl">
+        <div
+          className="ke-kyc-overlay fixed inset-0 z-[80] overflow-y-auto bg-black/60 p-4"
+          dir="rtl"
+          role="dialog"
+          aria-modal="true"
+          aria-label="احراز هویت"
+        >
+          <div className="ke-kyc-sheet mx-auto mt-6 max-w-2xl">
             <div className="mb-2 flex justify-end">
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-lg bg-white px-4 py-2 font-bold text-gray-800 shadow"
+                className="ke-kyc-close rounded-lg bg-white px-4 py-2 font-bold text-gray-800 shadow"
+                aria-label="بستن پنجره احراز هویت"
               >
                 بستن
               </button>
