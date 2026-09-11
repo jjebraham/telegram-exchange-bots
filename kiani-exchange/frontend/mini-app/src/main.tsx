@@ -10,6 +10,7 @@ import './daylight.css'
 import './daylight-shell.css'
 import './daylight-phase2.css'
 import './daylight-phase2-auth.css'
+import './daylight-phase3.css'
 
 const rootElement = document.getElementById('root')!
 const root = ReactDOM.createRoot(rootElement)
@@ -63,6 +64,22 @@ const applyCustomerScheme = (scheme: 'light' | 'dark') => {
   telegramWebApp?.setBackgroundColor?.(background)
 }
 
+const syncCustomerViewport = () => {
+  if (isAdminHost) return
+
+  const viewportHeight = window.visualViewport?.height || window.innerHeight
+  rootElement.style.setProperty('--ke-viewport-height', `${Math.round(viewportHeight)}px`)
+}
+
+const initializeCustomerViewport = () => {
+  if (isAdminHost) return
+
+  syncCustomerViewport()
+  window.addEventListener('resize', syncCustomerViewport, { passive: true })
+  window.visualViewport?.addEventListener('resize', syncCustomerViewport, { passive: true })
+  window.visualViewport?.addEventListener('scroll', syncCustomerViewport, { passive: true })
+}
+
 const initializeCustomerChrome = () => {
   if (isAdminHost) return
 
@@ -95,6 +112,7 @@ const initializeCustomerChrome = () => {
 }
 
 initializeCustomerChrome()
+initializeCustomerViewport()
 
 // Keep the existing Telegram lifecycle calls for compatibility with clients
 // where the customer theme wrapper is not active (for example the admin host).
