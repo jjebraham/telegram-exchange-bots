@@ -7,6 +7,7 @@ import AdminKycReview from './AdminKycReview'
 import SecureAdminPanel from './SecureAdminPanel'
 import './index.css'
 import './daylight.css'
+import './daylight-shell.css'
 
 const rootElement = document.getElementById('root')!
 const root = ReactDOM.createRoot(rootElement)
