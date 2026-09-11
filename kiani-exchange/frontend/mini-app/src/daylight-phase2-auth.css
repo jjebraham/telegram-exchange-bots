@@ -1,0 +1,341 @@
+/* Kiani Exchange — Daylight Phase 2B
+   Login, registration/KYC and history layouts. Scoped to customer [data-ke]. */
+
+/* --------------------------------------------------------------------------
+   Registration
+   -------------------------------------------------------------------------- */
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 18px 14px calc(30px + var(--ke-safe-bottom)) !important;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) > .bg-white.rounded-2xl {
+  padding: 20px !important;
+  border: 1px solid var(--ke-line);
+  border-radius: 22px !important;
+  background: var(--ke-surface) !important;
+  box-shadow: var(--ke-sh-lift) !important;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) > .bg-white.rounded-2xl > h2 {
+  margin-bottom: 5px !important;
+  text-align: right !important;
+  font-size: 21px !important;
+  font-weight: 650 !important;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) > .bg-white.rounded-2xl > h2::after {
+  content: "اطلاعات باید متعلق به خود شما باشد";
+  display: block;
+  margin-top: 4px;
+  color: var(--ke-muted);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) .space-y-4 {
+  gap: 0 !important;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) .space-y-4 > div:not(.flex):not(.bg-yellow-50):not(.bg-red-50) {
+  margin-top: 14px;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) label.block {
+  margin-bottom: 6px !important;
+  color: var(--ke-ink-2) !important;
+  font-size: 11.5px !important;
+  font-weight: 550 !important;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) input:not([type="checkbox"]) {
+  min-height: 52px;
+  padding: 10px 13px !important;
+  border-width: 1px !important;
+  border-radius: 14px !important;
+  font-size: 14px;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) input[dir="ltr"] {
+  font-size: 16px;
+  letter-spacing: .01em;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) .flex.items-start.gap-3 {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--ke-line);
+  border-radius: 14px;
+  background: var(--ke-surface-2);
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) input[type="checkbox"] {
+  accent-color: var(--ke-accent);
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) .bg-yellow-50.border.border-yellow-200.rounded-xl.p-3 {
+  margin-top: 12px;
+  padding: 9px 11px !important;
+  border-radius: 12px !important;
+  background: var(--ke-sell-soft) !important;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) button.w-full.bg-gradient-to-r {
+  min-height: 54px;
+  margin-top: 16px;
+  border-radius: 15px !important;
+  font-size: 15px !important;
+  font-weight: 650 !important;
+}
+
+[data-ke] main > .px-3.py-4:has(input[type="password"]) p.text-center.text-sm.text-gray-600 {
+  margin-top: 15px;
+  padding-top: 14px;
+  border-top: 1px solid var(--ke-line);
+  font-size: 12px !important;
+}
+
+/* Terms sheet */
+[data-ke] .fixed.inset-0.bg-black.bg-opacity-50 > .bg-white.rounded-2xl {
+  border: 1px solid var(--ke-line);
+  border-radius: 22px !important;
+  background: var(--ke-surface) !important;
+  box-shadow: var(--ke-sh-lift) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Login
+   -------------------------------------------------------------------------- */
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 24px 14px calc(32px + var(--ke-safe-bottom)) !important;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) > .bg-white.rounded-2xl {
+  padding: 22px !important;
+  border: 1px solid var(--ke-line);
+  border-radius: 22px !important;
+  background: var(--ke-surface) !important;
+  box-shadow: var(--ke-sh-lift) !important;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) h2 {
+  margin-bottom: 6px !important;
+  text-align: right !important;
+  font-size: 22px !important;
+  font-weight: 650 !important;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) h2::after {
+  content: "به حساب صرافی کیانی وارد شوید";
+  display: block;
+  margin-top: 4px;
+  color: var(--ke-muted);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) .space-y-4 > div > label {
+  margin-bottom: 6px !important;
+  color: var(--ke-ink-2) !important;
+  font-size: 11.5px !important;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) input {
+  min-height: 52px;
+  border-width: 1px !important;
+  border-radius: 14px !important;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) .text-center.text-sm:has(button) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) .text-center.text-sm:has(button) > button {
+  min-height: 40px !important;
+  margin: 0 !important;
+  padding: 7px 8px;
+  border: 1px solid var(--ke-line);
+  border-radius: 12px;
+  background: var(--ke-surface-2);
+  color: var(--ke-ink-2) !important;
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) .bg-gray-50.border.rounded-xl.p-3.space-y-2 {
+  padding: 12px !important;
+  border: 1px solid var(--ke-line) !important;
+  border-radius: 14px !important;
+  background: var(--ke-surface-2) !important;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) button.w-full.bg-gradient-to-r {
+  min-height: 54px;
+  border-radius: 15px !important;
+  font-size: 15px !important;
+  font-weight: 650 !important;
+}
+
+[data-ke] main > .p-4:has(> .bg-white input[type="password"]) p.text-center.text-sm.text-gray-600 {
+  padding-top: 14px;
+  border-top: 1px solid var(--ke-line);
+}
+
+/* --------------------------------------------------------------------------
+   Registration verification modal
+   -------------------------------------------------------------------------- */
+
+[data-ke] .fixed.inset-0[role="dialog"] {
+  background: rgba(7, 17, 21, .62) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+[data-ke] .fixed.inset-0[role="dialog"] > .max-w-lg {
+  border: 1px solid var(--ke-line);
+  border-radius: 24px !important;
+  background: var(--ke-surface) !important;
+  color: var(--ke-ink);
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, .5) !important;
+}
+
+[data-ke] .fixed.inset-0[role="dialog"] .h-20.w-20.rounded-full {
+  width: 62px !important;
+  height: 62px !important;
+}
+
+[data-ke] .fixed.inset-0[role="dialog"] .bg-blue-100,
+[data-ke] .fixed.inset-0[role="dialog"] .bg-emerald-100 {
+  background: var(--ke-accent-soft) !important;
+  color: var(--ke-accent) !important;
+}
+
+[data-ke] .fixed.inset-0[role="dialog"] .border-blue-200.bg-blue-50,
+[data-ke] .fixed.inset-0[role="dialog"] .border-emerald-200.bg-emerald-50 {
+  border-color: color-mix(in srgb, var(--ke-accent) 25%, var(--ke-line)) !important;
+  background: var(--ke-accent-soft) !important;
+  color: var(--ke-ink) !important;
+}
+
+[data-ke] .fixed.inset-0[role="dialog"] .bg-blue-600,
+[data-ke] .fixed.inset-0[role="dialog"] .bg-emerald-500,
+[data-ke] .fixed.inset-0[role="dialog"] .bg-emerald-600 {
+  background: var(--ke-accent) !important;
+  color: var(--ke-on-accent) !important;
+}
+
+[data-ke] .fixed.inset-0[role="dialog"] .text-blue-700,
+[data-ke] .fixed.inset-0[role="dialog"] .text-emerald-700,
+[data-ke] .fixed.inset-0[role="dialog"] .text-emerald-900 {
+  color: var(--ke-accent) !important;
+}
+
+/* --------------------------------------------------------------------------
+   KYC gate overlay
+   -------------------------------------------------------------------------- */
+
+[data-ke] .fixed.inset-0.overflow-y-auto[dir="rtl"] {
+  background: rgba(7, 17, 21, .62) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+[data-ke] .fixed.inset-0.overflow-y-auto[dir="rtl"] > .mx-auto {
+  padding-bottom: calc(20px + var(--ke-safe-bottom));
+}
+
+[data-ke] .fixed.inset-0.overflow-y-auto[dir="rtl"] .mb-2.flex.justify-end > button {
+  border: 1px solid var(--ke-line);
+  background: var(--ke-surface) !important;
+  color: var(--ke-ink) !important;
+  box-shadow: var(--ke-sh) !important;
+}
+
+/* --------------------------------------------------------------------------
+   History
+   -------------------------------------------------------------------------- */
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 18px 14px calc(30px + var(--ke-safe-bottom)) !important;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) > h2 {
+  margin-bottom: 14px !important;
+  font-size: 21px !important;
+  font-weight: 650 !important;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) > .space-y-3 {
+  display: grid;
+  gap: 10px !important;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) .bg-white.rounded-xl.p-4.shadow-md {
+  padding: 14px !important;
+  border: 1px solid var(--ke-line);
+  border-radius: 17px !important;
+  background: var(--ke-surface) !important;
+  box-shadow: var(--ke-sh) !important;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) .bg-white.rounded-xl.p-4.shadow-md .font-semibold.text-gray-800 {
+  font-size: 14px;
+  font-weight: 600 !important;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) .grid.grid-cols-2.gap-2.text-sm {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border-radius: 13px;
+  background: var(--ke-surface-2);
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) .grid.grid-cols-2.gap-2.text-sm span {
+  color: var(--ke-muted) !important;
+  font-size: 10.5px;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) .grid.grid-cols-2.gap-2.text-sm p {
+  margin-top: 2px;
+  color: var(--ke-ink);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) .mt-3.pt-3.border-t {
+  border-color: var(--ke-line) !important;
+}
+
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) .animate-spin {
+  border-color: var(--ke-accent-soft) !important;
+  border-top-color: var(--ke-accent) !important;
+}
+
+/* Empty history */
+[data-ke] main > .p-4:has(> h2.text-2xl.font-bold.text-gray-800) > .bg-white.rounded-2xl.p-8 {
+  border: 1px dashed var(--ke-line);
+  background: var(--ke-surface) !important;
+  box-shadow: none !important;
+}
+
+@media (min-width: 600px) {
+  [data-ke] main > .px-3.py-4:has(input[type="password"]) > .bg-white.rounded-2xl {
+    padding: 24px !important;
+  }
+}
+
+@media (max-width: 360px) {
+  [data-ke] main > .p-4:has(> .bg-white input[type="password"]) .text-center.text-sm:has(button) {
+    grid-template-columns: 1fr;
+  }
+}

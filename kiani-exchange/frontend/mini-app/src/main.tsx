@@ -9,6 +9,7 @@ import './index.css'
 import './daylight.css'
 import './daylight-shell.css'
 import './daylight-phase2.css'
+import './daylight-phase2-auth.css'
 
 const rootElement = document.getElementById('root')!
 const root = ReactDOM.createRoot(rootElement)
