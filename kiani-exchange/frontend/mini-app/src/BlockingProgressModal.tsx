@@ -33,22 +33,27 @@ export default function BlockingProgressModal({
 
   return (
     <div
-      className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-6"
+      className="ke-progress-overlay fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-6"
       dir="rtl"
       role="dialog"
       aria-modal="true"
       aria-busy={working}
+      aria-live="polite"
     >
-      <div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
+      <div
+        className="ke-progress-card max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-7"
+        data-status={status}
+      >
         <div className="text-center">
           <div
-            className={`mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full ${
+            className={`ke-progress-icon mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full ${
               status === 'success'
                 ? 'bg-emerald-100 text-emerald-700'
                 : status === 'error'
                   ? 'bg-red-100 text-red-700'
                   : 'bg-blue-100 text-blue-700'
             }`}
+            aria-hidden="true"
           >
             {status === 'success' ? (
               <span className="text-4xl">✓</span>
@@ -80,15 +85,22 @@ export default function BlockingProgressModal({
             </span>
           </div>
 
-          <div className="h-3 w-full overflow-hidden rounded-full bg-gray-200">
+          <div
+            className="ke-progress-track h-3 w-full overflow-hidden rounded-full bg-gray-200"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={safeProgress}
+          >
             <div
-              className={`h-full rounded-full transition-[width] duration-300 ${
+              className={`ke-progress-fill h-full rounded-full transition-[width] duration-300 ${
                 status === 'error'
                   ? 'bg-red-500'
                   : status === 'success'
                     ? 'bg-emerald-500'
                     : 'bg-blue-600'
               }`}
+              data-status={status}
               style={{ width: `${safeProgress}%` }}
             />
           </div>
@@ -99,7 +111,7 @@ export default function BlockingProgressModal({
             {steps.map((step, index) => (
               <div
                 key={`${step.label}-${index}`}
-                className={`flex items-center gap-3 rounded-xl border p-3 text-sm ${
+                className={`ke-progress-step flex items-center gap-3 rounded-xl border p-3 text-sm ${
                   step.state === 'done'
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
                     : step.state === 'active'
@@ -108,8 +120,9 @@ export default function BlockingProgressModal({
                         ? 'border-red-200 bg-red-50 text-red-900'
                         : 'border-gray-200 bg-gray-50 text-gray-500'
                 }`}
+                data-step-state={step.state}
               >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white font-black shadow-sm">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white font-black shadow-sm" aria-hidden="true">
                   {step.state === 'done'
                     ? '✓'
                     : step.state === 'error'
@@ -126,7 +139,7 @@ export default function BlockingProgressModal({
 
         {message && (
           <div
-            className={`mt-5 rounded-2xl p-4 text-sm leading-6 ${
+            className={`ke-progress-message mt-5 rounded-2xl p-4 text-sm leading-6 ${
               status === 'error'
                 ? 'bg-red-50 text-red-800'
                 : status === 'success'
