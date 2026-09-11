@@ -1,0 +1,397 @@
+/* Kiani Exchange — Daylight customer UI
+   Scoped under [data-ke] so the admin host remains untouched. */
+
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap');
+
+[data-ke] {
+  --ke-bg: #F4F6F7;
+  --ke-surface: #FFFFFF;
+  --ke-surface-2: #EDF1F3;
+  --ke-ink: #15242C;
+  --ke-ink-2: #405663;
+  --ke-muted: #72858F;
+  --ke-line: #E6EBEE;
+  --ke-accent: #0C9C8C;
+  --ke-accent-press: #0A8478;
+  --ke-accent-soft: #E4F4F2;
+  --ke-on-accent: #FFFFFF;
+  --ke-sell: #E9964A;
+  --ke-sell-soft: #FDF0E4;
+  --ke-danger: #D4544B;
+  --ke-danger-soft: #FBEAE9;
+  --ke-success: var(--ke-accent);
+
+  --ke-r-sm: 12px;
+  --ke-r: 18px;
+  --ke-r-lg: 24px;
+  --ke-r-pill: 100px;
+  --ke-sh: 0 1px 3px rgba(21, 36, 44, .05);
+  --ke-sh-lift: 0 8px 24px -12px rgba(21, 36, 44, .28);
+  --ke-sh-accent: 0 8px 20px -8px rgba(12, 156, 140, .55);
+  --ke-ease: cubic-bezier(.2, .8, .3, 1);
+  --ke-fast: .15s var(--ke-ease);
+  --ke-slow: .28s var(--ke-ease);
+
+  --ke-font: 'Vazirmatn', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ke-t-caption: 12px;
+  --ke-t-small: 12.5px;
+  --ke-t-body: 13.5px;
+  --ke-t-ui: 14px;
+  --ke-t-cta: 15.5px;
+  --ke-t-title: 19px;
+  --ke-t-amount: 27px;
+  --ke-t-hero: 46px;
+
+  --ke-safe-top: var(--tg-safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --ke-safe-bottom: var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-family: var(--ke-font);
+  background: var(--ke-bg);
+  color: var(--ke-ink);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color var(--ke-slow), color var(--ke-slow);
+}
+
+[data-ke][data-scheme="dark"] {
+  --ke-bg: #0F171C;
+  --ke-surface: #17222A;
+  --ke-surface-2: #1F2C35;
+  --ke-ink: #E9EFF2;
+  --ke-ink-2: #B4C3CC;
+  --ke-muted: #8A9BA5;
+  --ke-line: #26343D;
+  --ke-accent: #18B7A5;
+  --ke-accent-press: #12A092;
+  --ke-accent-soft: #12342F;
+  --ke-on-accent: #06201D;
+  --ke-sell: #F0A461;
+  --ke-sell-soft: #33261A;
+  --ke-danger: #E2726A;
+  --ke-danger-soft: #341F1E;
+  --ke-sh: 0 1px 3px rgba(0, 0, 0, .4);
+  --ke-sh-lift: 0 10px 28px -14px rgba(0, 0, 0, .8);
+  --ke-sh-accent: 0 8px 20px -10px rgba(24, 183, 165, .5);
+}
+
+[data-ke] *,
+[data-ke] *::before,
+[data-ke] *::after {
+  box-sizing: border-box;
+}
+
+[data-ke] button,
+[data-ke] input,
+[data-ke] textarea,
+[data-ke] select {
+  font-family: var(--ke-font);
+}
+
+[data-ke] button,
+[data-ke] [role="button"] {
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+[data-ke] :focus-visible {
+  outline: 2px solid var(--ke-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+[data-ke] .ke-num,
+[data-ke] input[dir="ltr"],
+[data-ke] .direction-ltr {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: -.015em;
+}
+
+[data-ke] .ke-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: right;
+}
+
+/* --------------------------------------------------------------------------
+   Legacy React/Tailwind adapter
+   This maps the existing production markup onto the Daylight palette without
+   touching exchange calculations, registration, KYC, authentication or APIs.
+   -------------------------------------------------------------------------- */
+
+[data-ke] .bg-white {
+  background-color: var(--ke-surface) !important;
+}
+
+[data-ke] .bg-gray-50,
+[data-ke] .bg-gray-100 {
+  background-color: var(--ke-surface-2) !important;
+}
+
+[data-ke] .text-gray-900,
+[data-ke] .text-gray-800,
+[data-ke] .text-gray-700 {
+  color: var(--ke-ink) !important;
+}
+
+[data-ke] .text-gray-600,
+[data-ke] .text-gray-500,
+[data-ke] .text-gray-400 {
+  color: var(--ke-muted) !important;
+}
+
+[data-ke] .border-gray-100,
+[data-ke] .border-gray-200,
+[data-ke] .border-gray-300 {
+  border-color: var(--ke-line) !important;
+}
+
+[data-ke] .text-blue-500,
+[data-ke] .text-blue-600,
+[data-ke] .text-indigo-600,
+[data-ke] .text-green-600,
+[data-ke] .text-emerald-600,
+[data-ke] .text-purple-600 {
+  color: var(--ke-accent) !important;
+}
+
+[data-ke] .bg-blue-50,
+[data-ke] .bg-green-50,
+[data-ke] .bg-emerald-50,
+[data-ke] .bg-indigo-50 {
+  background-color: var(--ke-accent-soft) !important;
+}
+
+[data-ke] .border-blue-200,
+[data-ke] .border-blue-300,
+[data-ke] .border-green-200,
+[data-ke] .border-green-300,
+[data-ke] .focus\:border-blue-500:focus,
+[data-ke] .focus\:border-green-500:focus {
+  border-color: var(--ke-accent) !important;
+}
+
+[data-ke] .bg-yellow-50,
+[data-ke] .bg-orange-50 {
+  background-color: var(--ke-sell-soft) !important;
+}
+
+[data-ke] .text-yellow-600,
+[data-ke] .text-yellow-700,
+[data-ke] .text-orange-600,
+[data-ke] .text-orange-700 {
+  color: var(--ke-sell) !important;
+}
+
+[data-ke] .border-yellow-200,
+[data-ke] .border-orange-200 {
+  border-color: color-mix(in srgb, var(--ke-sell) 35%, transparent) !important;
+}
+
+[data-ke] .bg-red-50 {
+  background-color: var(--ke-danger-soft) !important;
+}
+
+[data-ke] .text-red-500,
+[data-ke] .text-red-600,
+[data-ke] .text-red-700 {
+  color: var(--ke-danger) !important;
+}
+
+[data-ke] .border-red-200,
+[data-ke] .border-red-300 {
+  border-color: color-mix(in srgb, var(--ke-danger) 35%, transparent) !important;
+}
+
+[data-ke] .rounded-lg,
+[data-ke] .rounded-xl {
+  border-radius: var(--ke-r-sm) !important;
+}
+
+[data-ke] .rounded-2xl {
+  border-radius: var(--ke-r) !important;
+}
+
+[data-ke] .rounded-full {
+  border-radius: var(--ke-r-pill) !important;
+}
+
+[data-ke] .shadow,
+[data-ke] .shadow-md,
+[data-ke] .shadow-lg {
+  box-shadow: var(--ke-sh) !important;
+}
+
+[data-ke] .shadow-xl,
+[data-ke] .hover\:shadow-xl:hover {
+  box-shadow: var(--ke-sh-lift) !important;
+}
+
+/* Fields */
+[data-ke] input:not([type="checkbox"]):not([type="radio"]),
+[data-ke] textarea,
+[data-ke] select {
+  min-height: 48px;
+  border-color: var(--ke-line) !important;
+  border-radius: var(--ke-r-sm) !important;
+  background: var(--ke-surface) !important;
+  color: var(--ke-ink) !important;
+  box-shadow: none !important;
+  transition: border-color var(--ke-fast), box-shadow var(--ke-fast), background var(--ke-fast);
+}
+
+[data-ke] input::placeholder,
+[data-ke] textarea::placeholder {
+  color: var(--ke-muted) !important;
+  opacity: .82;
+}
+
+[data-ke] input:not([type="checkbox"]):not([type="radio"]):focus,
+[data-ke] textarea:focus,
+[data-ke] select:focus {
+  border-color: var(--ke-accent) !important;
+  box-shadow: 0 0 0 3px var(--ke-accent-soft) !important;
+  outline: none !important;
+}
+
+/* Primary CTAs: remove rainbow gradients and use one recognisable accent. */
+[data-ke] button.bg-gradient-to-r,
+[data-ke] button.bg-gradient-to-br,
+[data-ke] button.bg-blue-600,
+[data-ke] button.bg-indigo-600,
+[data-ke] button.bg-green-600,
+[data-ke] button.bg-emerald-600 {
+  background-image: none !important;
+  background-color: var(--ke-accent) !important;
+  color: var(--ke-on-accent) !important;
+  border: 0 !important;
+  box-shadow: var(--ke-sh-accent) !important;
+  transition: transform var(--ke-fast), background-color var(--ke-fast), box-shadow var(--ke-fast) !important;
+}
+
+[data-ke] button.bg-gradient-to-r:active,
+[data-ke] button.bg-gradient-to-br:active,
+[data-ke] button.bg-blue-600:active,
+[data-ke] button.bg-indigo-600:active,
+[data-ke] button.bg-green-600:active,
+[data-ke] button.bg-emerald-600:active {
+  background-color: var(--ke-accent-press) !important;
+  transform: translateY(1px);
+}
+
+/* Sell-side actions keep their semantic orange tone. */
+[data-ke] button.from-red-500,
+[data-ke] button.from-orange-500,
+[data-ke] button.to-pink-600,
+[data-ke] button.to-amber-600 {
+  background-image: none !important;
+  background-color: var(--ke-sell) !important;
+  color: #fff !important;
+  box-shadow: 0 8px 20px -10px color-mix(in srgb, var(--ke-sell) 62%, transparent) !important;
+}
+
+/* Dashboard rate cards */
+[data-ke] .bg-white.rounded-xl.p-4.shadow-md.mb-3 {
+  border: 1px solid var(--ke-line) !important;
+  border-radius: var(--ke-r) !important;
+  box-shadow: var(--ke-sh) !important;
+  padding: 15px 16px !important;
+  margin-bottom: 9px !important;
+}
+
+[data-ke] .bg-white.rounded-xl.p-4.shadow-md.mb-3 > .flex > span:first-child {
+  color: var(--ke-ink-2) !important;
+  font-size: var(--ke-t-body) !important;
+  font-weight: 500 !important;
+}
+
+[data-ke] .bg-white.rounded-xl.p-4.shadow-md.mb-3 > .flex > span:last-child {
+  color: var(--ke-accent) !important;
+  font-size: 18px !important;
+  font-weight: 500 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Home exchange tiles */
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button {
+  min-height: 104px;
+  padding: 18px 12px !important;
+  border-radius: var(--ke-r) !important;
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button > span:first-child {
+  margin-bottom: 5px !important;
+  filter: saturate(.9);
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button > span:last-child {
+  font-size: var(--ke-t-cta) !important;
+  font-weight: 600 !important;
+}
+
+/* Exchange form */
+[data-ke] .text-2xl.font-bold.text-green-600,
+[data-ke] .text-2xl.font-bold.text-blue-600 {
+  color: var(--ke-accent) !important;
+  font-size: var(--ke-t-amount) !important;
+  font-weight: 400 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ke] .flex.justify-between.items-center.py-2.border-b {
+  border-color: var(--ke-line) !important;
+}
+
+/* Bottom navigation and sticky surfaces */
+[data-ke] .fixed.bottom-0,
+[data-ke] .sticky.bottom-0 {
+  background: color-mix(in srgb, var(--ke-surface) 94%, transparent) !important;
+  border-color: var(--ke-line) !important;
+  padding-bottom: calc(8px + var(--ke-safe-bottom));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+[data-ke] .fixed.bottom-0 .text-blue-600,
+[data-ke] .sticky.bottom-0 .text-blue-600 {
+  color: var(--ke-accent) !important;
+}
+
+[data-ke] h1,
+[data-ke] h2,
+[data-ke] h3 {
+  color: var(--ke-ink);
+  letter-spacing: -.01em;
+}
+
+[data-ke] h2.text-xl,
+[data-ke] h2.text-2xl {
+  font-size: var(--ke-t-title) !important;
+  font-weight: 600 !important;
+}
+
+[data-ke] .p-4 {
+  scrollbar-color: var(--ke-line) transparent;
+}
+
+@media (max-width: 420px) {
+  [data-ke] .grid.grid-cols-2.gap-4.p-4 {
+    gap: 10px !important;
+  }
+
+  [data-ke] .grid.grid-cols-2.gap-4.p-4 > button {
+    min-height: 96px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ke] *,
+  [data-ke] *::before,
+  [data-ke] *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
