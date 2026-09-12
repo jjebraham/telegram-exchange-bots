@@ -11,6 +11,7 @@ import './daylight-shell.css'
 import './daylight-phase2.css'
 import './daylight-phase2-auth.css'
 import './daylight-phase3.css'
+import './daylight-phase3-fixes.css'
 
 const rootElement = document.getElementById('root')!
 const root = ReactDOM.createRoot(rootElement)
