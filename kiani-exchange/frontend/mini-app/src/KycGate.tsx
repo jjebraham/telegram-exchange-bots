@@ -132,10 +132,17 @@ export default function KycGate() {
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="ke-kyc-close rounded-lg bg-white px-4 py-2 font-bold text-gray-800 shadow"
+                className="flex h-11 w-11 items-center justify-center rounded-full text-3xl font-light shadow"
+                style={{
+                  background: 'var(--ke-surface)',
+                  color: 'var(--ke-ink)',
+                  border: '1px solid var(--ke-line)',
+                  padding: 0,
+                }}
                 aria-label="بستن پنجره احراز هویت"
+                title="بستن"
               >
-                بستن
+                <span aria-hidden="true">×</span>
               </button>
             </div>
             <KycFlow />
