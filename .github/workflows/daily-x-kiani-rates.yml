@@ -7,8 +7,8 @@ on:
       - "tests/test_x_daily_rates.py"
       - ".github/workflows/daily-x-kiani-rates.yml"
   schedule:
-    # Türkiye is UTC+3 year-round: 06:00 UTC = 09:00 Türkiye.
-    - cron: "0 6 * * *"
+    # Türkiye is UTC+3 year-round: 09:00 UTC = 12:00 Türkiye.
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
