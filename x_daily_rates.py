@@ -25,6 +25,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
 X_CREATE_POST_URL = "https://api.x.com/2/tweets"
+WHATSAPP_URL = "https://wa.me/905411603664"
 MINIAPP_URL = "https://miniapp.kiani.exchange"
 REQUIRED_RATE_KEYS = (
     "buy_lira",
@@ -75,7 +76,7 @@ def fetch_current_rates(url: str = DEFAULT_RATES_URL, timeout: int = 20) -> dict
 
 
 def _format_integer_rate(value: Decimal) -> str:
-    return str(int(value.quantize(Decimal("1"))))
+    return f"{int(value.quantize(Decimal('1'))):,}"
 
 
 def _format_cross_rate(value: Decimal) -> str:
@@ -87,16 +88,16 @@ def build_post_text(rates: dict[str, Decimal], include_link: bool = True) -> str
     lines = [
         "صرافی کیانی",
         "",
-        f"🇹🇷فروش لیر به شما: {_format_integer_rate(rates['buy_lira'])}",
-        f"🇹🇷خرید لیر از شما: {_format_integer_rate(rates['sell_lira'])}",
-        f"🪙فروش تتر به شما: {_format_integer_rate(rates['buy_usdt'])}",
-        f"🪙خرید تتر از شما: {_format_integer_rate(rates['sell_usdt'])}",
-        f"💲لیر به تتر: {_format_cross_rate(rates['lira_to_usdt'])}",
-        f"💲تتر به لیر: {_format_cross_rate(rates['usdt_to_lira'])}",
+        f"🇹🇷 فروش لیر به شما: {_format_integer_rate(rates['buy_lira'])}",
+        f"🇹🇷 خرید لیر از شما: {_format_integer_rate(rates['sell_lira'])}",
+        f"🪙 فروش تتر به شما: {_format_integer_rate(rates['buy_usdt'])}",
+        f"🪙 خرید تتر از شما: {_format_integer_rate(rates['sell_usdt'])}",
+        f"💲 لیر به تتر: {_format_cross_rate(rates['lira_to_usdt'])}",
+        f"💲 تتر به لیر: {_format_cross_rate(rates['usdt_to_lira'])}",
         "",
         "معامله روی خط واتسپ و تلگرام",
         "",
-        "+905411603664",
+        WHATSAPP_URL,
     ]
     if include_link:
         lines.extend(["", MINIAPP_URL])
@@ -201,7 +202,7 @@ def main() -> int:
     parser.add_argument(
         "--no-link",
         action="store_true",
-        help="Omit miniapp.kiani.exchange (reduces X's URL-post API charge)",
+        help="Omit the miniapp.kiani.exchange link (the WhatsApp link remains)",
     )
     args = parser.parse_args()
 
