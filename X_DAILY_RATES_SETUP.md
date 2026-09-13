@@ -21,7 +21,7 @@ Rate mapping used in the post:
 
 ## Schedule
 
-GitHub Actions runs the workflow every day at **09:00 Türkiye time** (`06:00 UTC`). A manual `workflow_dispatch` is also available. Manual runs default to dry-run mode so the generated text can be checked without spending X API credits or creating a post.
+GitHub Actions runs the workflow every day at **12:00 Türkiye time** (`09:00 UTC`). A manual `workflow_dispatch` is also available. Manual runs default to dry-run mode so the generated text can be checked without spending X API credits or creating a post.
 
 ## X app configuration
 
