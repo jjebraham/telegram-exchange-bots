@@ -1,0 +1,56 @@
+name: Daily Kiani rates on X
+
+on:
+  pull_request:
+    paths:
+      - "x_daily_rates.py"
+      - "tests/test_x_daily_rates.py"
+      - ".github/workflows/daily-x-kiani-rates.yml"
+  schedule:
+    # Türkiye is UTC+3 year-round: 06:00 UTC = 09:00 Türkiye.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview the generated post without publishing it"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-kiani-x-rates
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax and formatting tests
+        run: |
+          python -m py_compile x_daily_rates.py
+          python -m unittest tests.test_x_daily_rates -v
+
+      - name: Preview daily post
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: python x_daily_rates.py --dry-run
+
+      - name: Publish daily post
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          KIANI_RATES_URL: https://miniapp.kiani.exchange/api/rates/current
+        run: python x_daily_rates.py
