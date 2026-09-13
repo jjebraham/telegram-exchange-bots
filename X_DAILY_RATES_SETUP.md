@@ -12,16 +12,18 @@ That endpoint is backed by the same Kiani mini-app pricing logic (`derive_rates`
 
 Rate mapping used in the post:
 
-- `buy_lira` -> فروش لیر به شما
-- `sell_lira` -> خرید لیر از شما
-- `buy_usdt` -> فروش تتر به شما
-- `sell_usdt` -> خرید تتر از شما
-- `lira_to_usdt` -> لیر به تتر
-- `usdt_to_lira` -> تتر به لیر
+- `buy_lira` -> 🇹🇷 فروش لیر به شما
+- `sell_lira` -> 🇹🇷 خرید لیر از شما
+- `buy_usdt` -> 🪙 فروش تتر به شما
+- `sell_usdt` -> 🪙 خرید تتر از شما
+- `lira_to_usdt` -> 💲 لیر به تتر
+- `usdt_to_lira` -> 💲 تتر به لیر
+
+Whole-number rates are formatted with thousands separators, for example `4,910` and `236,370`. The contact line links directly to WhatsApp at `https://wa.me/905411603664`, and the production post also includes `https://miniapp.kiani.exchange`.
 
 ## Schedule
 
-GitHub Actions runs the workflow every day at **12:00 Türkiye time** (`09:00 UTC`). A manual `workflow_dispatch` is also available. Manual runs default to dry-run mode so the generated text can be checked without spending X API credits or creating a post.
+GitHub Actions runs the workflow every day at **12:00 Türkiye time** (`09:00 UTC`). A manual `workflow_dispatch` is also available. Manual runs default to dry-run mode so the generated text can be checked without creating a post.
 
 ## X app configuration
 
@@ -44,10 +46,10 @@ Run locally without publishing:
 python x_daily_rates.py --dry-run
 ```
 
-To preview the cheaper version without the mini-app URL:
+To omit only the mini-app URL from a preview:
 
 ```bash
 python x_daily_rates.py --dry-run --no-link
 ```
 
-The production scheduled workflow currently includes `https://miniapp.kiani.exchange` at the end of every post.
+The WhatsApp URL remains in the post even when `--no-link` is used. The production scheduled workflow includes both the WhatsApp link and `https://miniapp.kiani.exchange`.
