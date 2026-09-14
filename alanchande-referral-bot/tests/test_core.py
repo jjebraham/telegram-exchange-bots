@@ -57,6 +57,34 @@ class ReferralCoreTests(unittest.TestCase):
         self.assertEqual(one, "https://t.me/+one")
         self.assertEqual(two, "https://t.me/+one")
 
+    def test_replace_legacy_link_with_deep_link_payload(self):
+        self.db.save_invite_link(self.campaign.id, 10, "https://t.me/+legacy", self.now)
+        value = self.db.replace_invite_link(self.campaign.id, 10, "ref_1_randomtoken", self.now)
+        self.assertEqual(value, "ref_1_randomtoken")
+        self.assertEqual(self.db.get_invite_link(self.campaign.id, 10), "ref_1_randomtoken")
+        owner = self.db.invite_owner("ref_1_randomtoken")
+        self.assertIsNotNone(owner)
+        self.assertEqual(owner[1], 10)
+
+    def test_pending_referral_keeps_first_referrer_until_join(self):
+        self.db.upsert_user(99, "candidate", "Candidate", now=self.now)
+        result, referrer = self.db.create_pending_referral(
+            self.campaign, 99, 10, "candidate", "Candidate", self.now
+        )
+        self.assertEqual((result, referrer), ("created", 10))
+        self.assertEqual(self.db.pending_referrer(self.campaign.id, 99), 10)
+
+        result, referrer = self.db.create_pending_referral(
+            self.campaign, 99, 20, "candidate", "Candidate", self.now
+        )
+        self.assertEqual((result, referrer), ("existing", 10))
+        self.assertEqual(self.db.pop_pending_referrer(self.campaign.id, 99), 10)
+        self.assertIsNone(self.db.pop_pending_referrer(self.campaign.id, 99))
+
+        result = self.db.record_join(self.campaign, 99, 10, "candidate", "Candidate", self.now)
+        self.assertEqual(result, "created")
+        self.assertEqual(self.db.campaign_counts(self.campaign, 10, self.now)["pending"], 1)
+
     def test_first_referrer_is_permanent_and_rejoin_restarts_stay(self):
         first_join = self.now - timedelta(days=10)
         result = self.db.record_join(
