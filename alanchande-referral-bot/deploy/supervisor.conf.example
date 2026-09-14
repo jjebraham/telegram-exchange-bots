@@ -1,12 +1,12 @@
 [program:alanchande_referral_bot]
-directory=/home/kianirad2020/telegram_bot_repo/telegram-exchange-bots/alanchande-referral-bot
-command=/home/kianirad2020/telegram_bot_repo/telegram-exchange-bots/alanchande-referral-bot/.venv/bin/python bot.py
+directory=/home/kianirad2020/telegram_bot_repo/alanchande-referral-bot
+command=/home/kianirad2020/telegram_bot_repo/alanchande-referral-bot/.venv/bin/python bot.py
 autostart=true
 autorestart=true
 startsecs=5
 stopasgroup=true
 killasgroup=true
 user=kianirad2020
-environment=BOT_TOKEN="REPLACE_ME",CHANNEL_ID="-100REPLACE_ME",CHANNEL_URL="https://t.me/alanchande_com",ADMIN_IDS="REPLACE_ME",DB_PATH="/home/kianirad2020/telegram_bot_repo/telegram-exchange-bots/alanchande-referral-bot/referral_bot.db",DEFAULT_INVITES_PER_POINT="2",DEFAULT_MIN_STAY_HOURS="168",DEFAULT_MAX_POINTS="20",DEFAULT_NUM_WINNERS="5"
+environment=BOT_TOKEN="REPLACE_ME",CHANNEL_ID="-100REPLACE_ME",CHANNEL_URL="https://t.me/alanchande_com",ADMIN_IDS="REPLACE_ME",DB_PATH="/home/kianirad2020/telegram_bot_repo/alanchande-referral-bot/referral_bot.db",DEFAULT_INVITES_PER_POINT="2",DEFAULT_MIN_STAY_HOURS="168",DEFAULT_MAX_POINTS="20",DEFAULT_NUM_WINNERS="5"
 stdout_logfile=/var/log/alanchande_referral_bot.log
 stderr_logfile=/var/log/alanchande_referral_bot.err.log
