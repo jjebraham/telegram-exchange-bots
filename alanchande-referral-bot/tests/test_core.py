@@ -86,6 +86,31 @@ class ReferralCoreTests(unittest.TestCase):
         self.assertEqual(self.db.referrer_for_joined(self.campaign.id, 99), 10)
         self.assertEqual(self.db.campaign_counts(self.campaign, 10, self.now)["pending"], 1)
 
+    def test_pending_referral_reminder_is_due_once(self):
+        self.db.upsert_user(98, "reminder", "Reminder", now=self.now)
+        created_at = self.now - timedelta(minutes=20)
+        self.db.create_pending_referral(
+            self.campaign, 98, 10, "reminder", "Reminder", created_at
+        )
+
+        too_early = self.db.pending_reminder_candidates(
+            self.campaign.id, self.now - timedelta(minutes=30)
+        )
+        self.assertEqual(too_early, [])
+
+        due = self.db.pending_reminder_candidates(
+            self.campaign.id, self.now - timedelta(minutes=15)
+        )
+        self.assertEqual([row["joined_user_id"] for row in due], [98])
+
+        self.db.mark_pending_reminder_sent(self.campaign.id, 98, self.now)
+        self.assertEqual(
+            self.db.pending_reminder_candidates(
+                self.campaign.id, self.now - timedelta(minutes=15)
+            ),
+            [],
+        )
+
     def test_first_referrer_is_permanent_and_rejoin_restarts_stay(self):
         first_join = self.now - timedelta(days=10)
         result = self.db.record_join(
