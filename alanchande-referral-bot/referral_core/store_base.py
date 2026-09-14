@@ -164,6 +164,19 @@ class ReferralDBBase:
             raise RuntimeError("failed to persist invite link")
         return row["invite_link"]
 
+    def replace_invite_link(self, campaign_id: int, user_id: int, invite_link: str,
+                            now: datetime | None = None) -> str:
+        """Replace a legacy channel invite with a bot deep-link payload."""
+        ts = iso_utc(now or utcnow())
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO invite_links(campaign_id,user_id,invite_link,created_at)
+                   VALUES(?,?,?,?) ON CONFLICT(campaign_id,user_id) DO UPDATE SET
+                   invite_link=excluded.invite_link, created_at=excluded.created_at""",
+                (campaign_id, user_id, invite_link, ts),
+            )
+        return invite_link
+
     def invite_owner(self, invite_link: str) -> tuple[Campaign, int] | None:
         with self.connect() as conn:
             row = conn.execute(
