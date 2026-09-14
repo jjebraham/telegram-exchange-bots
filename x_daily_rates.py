@@ -35,6 +35,7 @@ REQUIRED_RATE_KEYS = (
     "lira_to_usdt",
     "usdt_to_lira",
 )
+TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
 
 def _positive_decimal(value: Any, key: str) -> Decimal:
@@ -47,32 +48,67 @@ def _positive_decimal(value: Any, key: str) -> Decimal:
     return parsed
 
 
-def fetch_current_rates(url: str = DEFAULT_RATES_URL, timeout: int = 20) -> dict[str, Decimal]:
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "KianiExchange-XPublisher/1.0",
-        },
-    )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
-        detail = exc.read(1000).decode("utf-8", errors="replace")
-        raise RuntimeError(f"Rates API returned HTTP {exc.code}: {detail}") from exc
-    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Could not load Kiani rates: {exc}") from exc
+def fetch_current_rates(
+    url: str = DEFAULT_RATES_URL,
+    timeout: int = 20,
+    attempts: int = 5,
+    retry_delay: int = 15,
+) -> dict[str, Decimal]:
+    """Fetch current rates, retrying temporary upstream/server failures.
 
-    raw_rates = payload.get("rates") if isinstance(payload, dict) else None
-    if not isinstance(raw_rates, dict):
-        raise ValueError("Rates API response does not contain a 'rates' object")
+    The Kiani rates endpoint itself depends on upstream market feeds, so an
+    occasional 5xx can be transient. Retrying here prevents one brief outage
+    from causing the scheduled X post to fail immediately.
+    """
+    attempts = max(1, attempts)
+    last_error: Exception | None = None
 
-    missing = [key for key in REQUIRED_RATE_KEYS if key not in raw_rates]
-    if missing:
-        raise ValueError(f"Rates API response is missing: {', '.join(missing)}")
+    for attempt in range(1, attempts + 1):
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "KianiExchange-XPublisher/1.0",
+            },
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.load(response)
 
-    return {key: _positive_decimal(raw_rates[key], key) for key in REQUIRED_RATE_KEYS}
+            raw_rates = payload.get("rates") if isinstance(payload, dict) else None
+            if not isinstance(raw_rates, dict):
+                raise ValueError("Rates API response does not contain a 'rates' object")
+
+            missing = [key for key in REQUIRED_RATE_KEYS if key not in raw_rates]
+            if missing:
+                raise ValueError(f"Rates API response is missing: {', '.join(missing)}")
+
+            return {key: _positive_decimal(raw_rates[key], key) for key in REQUIRED_RATE_KEYS}
+
+        except HTTPError as exc:
+            detail = exc.read(1000).decode("utf-8", errors="replace")
+            last_error = RuntimeError(f"Rates API returned HTTP {exc.code}: {detail}")
+            retryable = exc.code in TRANSIENT_HTTP_CODES
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = RuntimeError(f"Could not load Kiani rates: {exc}")
+            retryable = True
+        except ValueError:
+            # A structurally invalid successful response is not expected to fix
+            # itself with a retry; surface it immediately.
+            raise
+
+        if not retryable or attempt == attempts:
+            assert last_error is not None
+            raise last_error
+
+        print(
+            f"Rates fetch attempt {attempt}/{attempts} failed; retrying in {retry_delay}s...",
+            file=sys.stderr,
+        )
+        time.sleep(retry_delay)
+
+    assert last_error is not None
+    raise last_error
 
 
 def _format_integer_rate(value: Decimal) -> str:
