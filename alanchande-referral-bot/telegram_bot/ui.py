@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 from html import escape
 from urllib.parse import urlencode
 
@@ -39,6 +40,21 @@ def no_campaign_text() -> str:
     return "در حال حاضر مسابقه فعالی وجود ندارد. 🎁\n\nزمان شروع مسابقه بعدی از طریق کانال اعلام می‌شود."
 
 
+def draw_schedule_text(campaign: Campaign) -> str:
+    """Draw at 21:00 Istanbul time on the day after the campaign closes."""
+    istanbul = timezone(timedelta(hours=3))
+    iran = timezone(timedelta(hours=3, minutes=30))
+    end_local = campaign.end_dt.astimezone(istanbul)
+    draw_local = (end_local + timedelta(days=1)).replace(
+        hour=21, minute=0, second=0, microsecond=0,
+    )
+    draw_iran = draw_local.astimezone(iran)
+    return (
+        f"{draw_local:%Y/%m/%d} ساعت {draw_local:%H:%M} به وقت استانبول "
+        f"/ {draw_iran:%H:%M} به وقت ایران"
+    )
+
+
 def menu_text(campaign: Campaign, first_name: str) -> str:
     return (
         f"سلام {escape(first_name or 'دوست عزیز')} 👋\n\n"
@@ -46,6 +62,7 @@ def menu_text(campaign: Campaign, first_name: str) -> str:
         f"لینک اختصاصی ربات را برای دوستانت بفرست. آن‌ها باید اول از لینک تو وارد ربات شوند و سپس عضو کانال شوند.\n"
         f"هر <b>{campaign.invites_per_point} عضو تأییدشده</b> = <b>۱ امتیاز 🎟</b>\n\n"
         f"هر دوست باید حداقل <b>{hours_label(campaign.min_stay_hours)}</b> به‌صورت پیوسته عضو کانال بماند.\n\n"
+        f"📅 <b>زمان قرعه‌کشی:</b> {draw_schedule_text(campaign)}\n\n"
         f"در پایان <b>{campaign.num_winners} برنده</b> به‌صورت تصادفی انتخاب می‌شوند؛ "
         f"هرچه امتیاز بیشتری داشته باشی، شانس بیشتری برای برنده شدن داری."
     )
@@ -116,10 +133,15 @@ def render_rules(campaign: Campaign) -> str:
         f"6️⃣ حساب‌های فیک یا تلاش برای دستکاری مسابقه می‌تواند باعث حذف شود.\n\n"
         f"7️⃣ هر امتیاز یک بلیت قرعه‌کشی است و هر نفر حداکثر یک بار می‌تواند برنده شود.\n\n"
         f"8️⃣ قبل از قرعه‌کشی، عضویت دعوت‌شده‌ها و خود شرکت‌کنندگان دوباره بررسی می‌شود.\n\n"
-        f"9️⃣ {cap}"
+        f"9️⃣ 📅 زمان قرعه‌کشی: <b>{draw_schedule_text(campaign)}</b>.\n\n"
+        f"🔟 {cap}"
     )
 
 
 def render_prizes(campaign: Campaign) -> str:
     prize = escape(campaign.prize_text) if campaign.prize_text else "جزئیات جایزه به‌زودی اعلام می‌شود."
-    return f"<b>🎁 جوایز — {escape(campaign.name)}</b>\n\n{prize}\n\n🏆 تعداد برندگان: <b>{campaign.num_winners}</b> نفر"
+    return (
+        f"<b>🎁 جوایز — {escape(campaign.name)}</b>\n\n{prize}\n\n"
+        f"🏆 تعداد برندگان: <b>{campaign.num_winners}</b> نفر\n\n"
+        f"📅 زمان قرعه‌کشی: <b>{draw_schedule_text(campaign)}</b>"
+    )
