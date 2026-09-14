@@ -6,6 +6,64 @@ from .models import Campaign, UTC, iso_utc, parse_datetime, points_from_invites,
 
 
 class ReferralMixin:
+    def create_pending_referral(self, campaign: Campaign, joined_user_id: int, referrer_id: int,
+                                joined_username: str | None, joined_first_name: str | None,
+                                now: datetime | None = None) -> tuple[str, int]:
+        """Reserve first-referrer attribution before the referred user joins the channel."""
+        if joined_user_id == referrer_id:
+            return "self", referrer_id
+        ts = iso_utc(now or utcnow())
+        with self.connect() as conn:
+            existing_referral = conn.execute(
+                "SELECT referrer_id FROM referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign.id, joined_user_id),
+            ).fetchone()
+            if existing_referral:
+                return "existing_referral", int(existing_referral["referrer_id"])
+
+            pending = conn.execute(
+                "SELECT referrer_id FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign.id, joined_user_id),
+            ).fetchone()
+            if pending:
+                conn.execute(
+                    """UPDATE pending_referrals SET joined_username=?,joined_first_name=?,updated_at=?
+                       WHERE campaign_id=? AND joined_user_id=?""",
+                    (joined_username, joined_first_name, ts, campaign.id, joined_user_id),
+                )
+                return "existing", int(pending["referrer_id"])
+
+            conn.execute(
+                """INSERT INTO pending_referrals(
+                       campaign_id,joined_user_id,referrer_id,joined_username,joined_first_name,
+                       created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (campaign.id, joined_user_id, referrer_id, joined_username, joined_first_name, ts, ts),
+            )
+            return "created", referrer_id
+
+    def pop_pending_referrer(self, campaign_id: int, joined_user_id: int) -> int | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT referrer_id FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign_id, joined_user_id),
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute(
+                "DELETE FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign_id, joined_user_id),
+            )
+            return int(row["referrer_id"])
+
+    def pending_referrer(self, campaign_id: int, joined_user_id: int) -> int | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT referrer_id FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign_id, joined_user_id),
+            ).fetchone()
+        return int(row["referrer_id"]) if row else None
+
     def record_join(self, campaign: Campaign, joined_user_id: int, referrer_id: int,
                     joined_username: str | None, joined_first_name: str | None,
                     now: datetime | None = None) -> str:
