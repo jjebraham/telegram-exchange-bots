@@ -21,9 +21,11 @@ Rate mapping used in the post:
 
 Whole-number rates are formatted with thousands separators, for example `4,910` and `236,370`. The contact line links directly to WhatsApp at `https://wa.me/905411603664`, and the production post also includes `https://miniapp.kiani.exchange`.
 
+The publisher retries transient rate-source failures (HTTP 429/5xx, timeouts, connection errors) up to five times with a short delay. It does not publish stale or incomplete rates.
+
 ## Schedule
 
-GitHub Actions runs the workflow every day at **12:00 Türkiye time** (`09:00 UTC`). A manual `workflow_dispatch` is also available. Manual runs default to dry-run mode so the generated text can be checked without creating a post.
+GitHub Actions runs the workflow every day at **12:07 Türkiye time** using the explicit `Europe/Istanbul` timezone. The non-zero minute avoids the top-of-hour period where scheduled GitHub Actions jobs can experience heavier queueing. A manual `workflow_dispatch` is also available. Manual runs default to dry-run mode so the generated text can be checked without creating a post.
 
 ## X app configuration
 
