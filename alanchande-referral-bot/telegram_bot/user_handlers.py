@@ -41,8 +41,10 @@ async def get_or_create_link(context: ContextTypes.DEFAULT_TYPE, campaign: Campa
         if existing:
             return existing
         invite = await context.bot.create_chat_invite_link(
-            chat_id=settings.channel_ref, name=f"ref:{campaign.id}:{user.id}"[:32],
-            expire_date=campaign.end_dt, creates_join_request=False,
+            chat_id=settings.channel_ref,
+            name=f"ref:{campaign.id}:{user.id}"[:32],
+            expire_date=campaign.end_dt,
+            creates_join_request=True,
         )
         return db.save_invite_link(campaign.id, user.id, invite.invite_link)
 
@@ -165,6 +167,74 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise
 
 
+async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Campaign, user,
+                               referrer_id: int, result: str | None) -> None:
+    if result not in {"created", "reactivated"}:
+        return
+    log.info(
+        "Referral %s: joined=%s referrer=%s campaign=%s",
+        result, user.id, referrer_id, campaign.slug,
+    )
+    try:
+        await context.bot.send_message(
+            referrer_id,
+            f"🎉 یک نفر با لینک تو عضو شد!\n\n⏳ اگر <b>{hours_label(campaign.min_stay_hours)}</b> "
+            f"پیوسته در کانال بماند، دعوت او تأیید می‌شود.",
+            parse_mode=ParseMode.HTML,
+        )
+    except (Forbidden, BadRequest):
+        pass
+    except TelegramError:
+        log.exception("Could not notify referrer %s", referrer_id)
+
+
+async def on_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Attribute referral links from join requests and approve them automatically.
+
+    Public channels do not reliably include ChatMemberUpdated.invite_link on a
+    membership transition. Referral links therefore use creates_join_request=True;
+    ChatJoinRequest gives us the link before the user is approved.
+    """
+    settings, db = services(context)
+    request = update.chat_join_request
+    if request is None or not is_configured_channel(request.chat, settings):
+        return
+
+    user = request.from_user
+    if getattr(user, "is_bot", False):
+        return
+
+    invite_link = request.invite_link.invite_link if request.invite_link else None
+    if not invite_link:
+        log.info("Ignoring unattributed join request from user=%s", user.id)
+        return
+
+    owner = db.invite_owner(invite_link)
+    if not owner:
+        log.info("Ignoring join request for unknown invite link from user=%s", user.id)
+        return
+
+    campaign, referrer_id = owner
+    live = db.live_campaign()
+    if not live or live.id != campaign.id:
+        log.info(
+            "Ignoring join request for non-live campaign=%s user=%s",
+            campaign.slug, user.id,
+        )
+        return
+
+    try:
+        await context.bot.approve_chat_join_request(settings.channel_ref, user.id)
+    except TelegramError:
+        log.exception("Could not approve referral join request for user=%s", user.id)
+        return
+
+    result = db.record_join(
+        campaign, user.id, referrer_id, user.username, user.first_name,
+    )
+    await notify_referral_join(context, campaign, user, referrer_id, result)
+
+
 async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings, db = services(context)
     cmu = update.chat_member
@@ -189,19 +259,8 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             referrer_id = db.reactivate_original(campaign.id, user.id, user.username, user.first_name)
             result = "reactivated" if referrer_id is not None else None
-        if result in {"created", "reactivated"} and referrer_id is not None:
-            log.info("Referral %s: joined=%s referrer=%s campaign=%s", result, user.id, referrer_id, campaign.slug)
-            try:
-                await context.bot.send_message(
-                    referrer_id,
-                    f"🎉 یک نفر با لینک تو عضو شد!\n\n⏳ اگر <b>{hours_label(campaign.min_stay_hours)}</b> "
-                    f"پیوسته در کانال بماند، دعوت او تأیید می‌شود.",
-                    parse_mode=ParseMode.HTML,
-                )
-            except (Forbidden, BadRequest):
-                pass
-            except TelegramError:
-                log.exception("Could not notify referrer %s", referrer_id)
+        if referrer_id is not None:
+            await notify_referral_join(context, campaign, user, referrer_id, result)
     elif was_member and not is_member_now:
         changed = db.mark_left(user.id)
         if changed:
