@@ -111,6 +111,14 @@ class ReferralCoreTests(unittest.TestCase):
             [],
         )
 
+    def test_participant_welcome_marker_is_idempotent(self):
+        self.db.upsert_user(97, "welcome", "Welcome", now=self.now)
+        self.assertFalse(self.db.participant_welcome_sent(self.campaign.id, 97))
+        self.db.mark_participant_welcome_sent(self.campaign.id, 97, self.now)
+        self.assertTrue(self.db.participant_welcome_sent(self.campaign.id, 97))
+        self.db.mark_participant_welcome_sent(self.campaign.id, 97, self.now)
+        self.assertTrue(self.db.participant_welcome_sent(self.campaign.id, 97))
+
     def test_first_referrer_is_permanent_and_rejoin_restarts_stay(self):
         first_join = self.now - timedelta(days=10)
         result = self.db.record_join(
