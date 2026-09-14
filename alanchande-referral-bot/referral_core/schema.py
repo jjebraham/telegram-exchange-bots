@@ -27,6 +27,18 @@ CREATE TABLE IF NOT EXISTS invite_links (
     created_at TEXT NOT NULL,
     UNIQUE(campaign_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS pending_referrals (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    joined_user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    referrer_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    joined_username TEXT,
+    joined_first_name TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(campaign_id, joined_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_referrals_referrer
+    ON pending_referrals(campaign_id, referrer_id);
 CREATE TABLE IF NOT EXISTS referrals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
