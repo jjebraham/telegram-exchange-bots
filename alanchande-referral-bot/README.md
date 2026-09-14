@@ -41,7 +41,7 @@ referrer. Only a join through a personal invite link can create new attribution.
 ## Install
 
 ```bash
-cd /home/kianirad2020/telegram_bot_repo/telegram-exchange-bots/alanchande-referral-bot
+cd /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env
