@@ -1,16 +1,16 @@
-# Daily Kiani Exchange rates on X
+# Kiani Exchange rates on X
 
-This automation publishes one Kiani Exchange rate post per day from the official X account.
+This automation publishes Kiani Exchange rate updates from the official X account while avoiding repetitive hourly spam.
 
 ## Source of rates
 
-The publisher does **not** maintain a second copy of the pricing percentages. It reads:
+The publisher reads:
 
 `https://miniapp.kiani.exchange/api/rates/current`
 
-That endpoint is backed by the same Kiani mini-app pricing logic (`derive_rates`) and current admin settings, so the X post follows the rates shown by the production mini-app instead of drifting from it.
+The mini-app remains the source of truth for customer-facing rates and admin percentage/manual-rate settings.
 
-Rate mapping used in the post:
+Rate mapping used in regular posts:
 
 - `buy_lira` -> 🇹🇷 فروش لیر به شما
 - `sell_lira` -> 🇹🇷 خرید لیر از شما
@@ -19,39 +19,60 @@ Rate mapping used in the post:
 - `lira_to_usdt` -> 💲 لیر به تتر
 - `usdt_to_lira` -> 💲 تتر به لیر
 
-Whole-number rates are formatted with thousands separators, for example `4,910` and `236,370`. The contact line links directly to WhatsApp at `https://wa.me/905411603664`, and the production post also includes `https://miniapp.kiani.exchange`.
+Whole-number rates use thousands separators, for example `4,910` and `236,370`.
 
-The publisher retries transient rate-source failures (HTTP 429/5xx, timeouts, connection errors) up to five times with a short delay. It does not publish stale or incomplete rates.
+## Posting strategy
 
-## Schedule
+All schedules use `Europe/Istanbul`.
 
-GitHub Actions runs the workflow every day at **12:07 Türkiye time** using the explicit `Europe/Istanbul` timezone. The non-zero minute avoids the top-of-hour period where scheduled GitHub Actions jobs can experience heavier queueing. A manual `workflow_dispatch` is also available. Manual runs default to dry-run mode so the generated text can be checked without creating a post.
+- **09:12** — morning rate post, link-free.
+- **12:07** — main daily post with `https://wa.me/905411603664` and `https://miniapp.kiani.exchange`.
+- **15:12** — afternoon rate update, link-free.
+- **18:12** — evening rate update, link-free.
+- **08:37–22:37, hourly** — check for significant movement. No X post is created unless at least one main customer-facing TRY/Toman rate has moved by **0.5% or more** versus the last successfully published rates.
+
+The hourly alert is also link-free. The fixed link-free posts use different time-of-day headings so the account does not publish identical copy repeatedly.
+
+## Alert state
+
+The workflow stores the last successfully published rate snapshot in the GitHub Actions cache (`.x-rate-state/latest.json`). Scheduled rate posts and successful alerts update that state. Hourly checks compare against this last published snapshot.
+
+If no state exists yet, an hourly alert check initializes the baseline without publishing anything.
+
+## Reliability
+
+The rates endpoint depends on upstream market feeds. The publisher retries temporary HTTP `429`, `500`, `502`, `503`, `504`, timeout, and connection failures up to five times before failing the run. Structurally invalid rate data is never published.
 
 ## X app configuration
 
-The X developer app must have **Read and write** permission. Generate/regenerate OAuth 1.0a user Access Token credentials after enabling write permission.
-
-Add these GitHub Actions repository secrets:
+The X developer app must have **Read and write** permission. GitHub Actions requires these repository secrets:
 
 - `X_API_KEY`
 - `X_API_SECRET`
 - `X_ACCESS_TOKEN`
 - `X_ACCESS_TOKEN_SECRET`
 
-Do not commit any of these values to the repository.
+Do not commit these values to the repository.
 
-## Manual preview
+## Manual runs
 
-Run locally without publishing:
+`workflow_dispatch` supports three modes:
+
+- `linked` — the standard post with WhatsApp and mini-app links.
+- `link_free` — a rate update without any URL.
+- `alert_check` — compare current rates with the last published snapshot and only post when the 0.5% threshold is reached.
+
+Manual runs default to `dry_run=true` for safety.
+
+Local examples:
 
 ```bash
+# Preview linked post
 python x_daily_rates.py --dry-run
+
+# Preview a completely link-free post
+python x_daily_rates.py --dry-run --no-links --variant afternoon
+
+# Check for a significant movement using a local state file
+python x_daily_rates.py --mode alert --dry-run --state-file .x-rate-state/latest.json
 ```
-
-To omit only the mini-app URL from a preview:
-
-```bash
-python x_daily_rates.py --dry-run --no-link
-```
-
-The WhatsApp URL remains in the post even when `--no-link` is used. The production scheduled workflow includes both the WhatsApp link and `https://miniapp.kiani.exchange`.
