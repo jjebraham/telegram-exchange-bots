@@ -90,6 +90,24 @@ class ReferralMixin:
                 (campaign_id, joined_user_id, ts),
             )
 
+    def participant_welcome_sent(self, campaign_id: int, user_id: int) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM participant_welcomes WHERE campaign_id=? AND user_id=?",
+                (campaign_id, user_id),
+            ).fetchone()
+        return row is not None
+
+    def mark_participant_welcome_sent(self, campaign_id: int, user_id: int,
+                                      now: datetime | None = None) -> None:
+        ts = iso_utc(now or utcnow())
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO participant_welcomes(campaign_id,user_id,sent_at)
+                   VALUES(?,?,?) ON CONFLICT(campaign_id,user_id) DO NOTHING""",
+                (campaign_id, user_id, ts),
+            )
+
     def referrer_for_joined(self, campaign_id: int, joined_user_id: int) -> int | None:
         """Return the permanent referrer already recorded for a referred account."""
         with self.connect() as conn:
