@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS pending_referral_reminders (
     sent_at TEXT NOT NULL,
     PRIMARY KEY(campaign_id, joined_user_id)
 );
+CREATE TABLE IF NOT EXISTS participant_welcomes (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    sent_at TEXT NOT NULL,
+    PRIMARY KEY(campaign_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS referrals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
