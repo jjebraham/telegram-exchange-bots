@@ -64,6 +64,32 @@ class ReferralMixin:
             ).fetchone()
         return int(row["referrer_id"]) if row else None
 
+    def pending_reminder_candidates(self, campaign_id: int, older_than: datetime,
+                                    limit: int = 100) -> list[dict]:
+        cutoff = iso_utc(older_than)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT p.campaign_id,p.joined_user_id,p.referrer_id,p.joined_username,
+                          p.joined_first_name,p.created_at
+                   FROM pending_referrals p
+                   LEFT JOIN pending_referral_reminders r
+                     ON r.campaign_id=p.campaign_id AND r.joined_user_id=p.joined_user_id
+                   WHERE p.campaign_id=? AND p.created_at<=? AND r.joined_user_id IS NULL
+                   ORDER BY p.created_at ASC LIMIT ?""",
+                (campaign_id, cutoff, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_pending_reminder_sent(self, campaign_id: int, joined_user_id: int,
+                                   now: datetime | None = None) -> None:
+        ts = iso_utc(now or utcnow())
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO pending_referral_reminders(campaign_id,joined_user_id,sent_at)
+                   VALUES(?,?,?) ON CONFLICT(campaign_id,joined_user_id) DO NOTHING""",
+                (campaign_id, joined_user_id, ts),
+            )
+
     def referrer_for_joined(self, campaign_id: int, joined_user_id: int) -> int | None:
         """Return the permanent referrer already recorded for a referred account."""
         with self.connect() as conn:
