@@ -22,6 +22,7 @@ from .admin_handlers import (
     cmd_verify,
 )
 from .config import Settings
+from .reminders import post_init, post_stop
 from .user_handlers import (
     cmd_menu,
     cmd_start,
@@ -29,8 +30,6 @@ from .user_handlers import (
     on_chat_member,
     on_menu_callback,
     on_referral_check,
-    post_init,
-    post_stop,
 )
 
 log = logging.getLogger("alanchande_referral_bot")
