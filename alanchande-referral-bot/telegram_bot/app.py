@@ -5,7 +5,6 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
-    ChatJoinRequestHandler,
     ChatMemberHandler,
     CommandHandler,
 )
@@ -27,7 +26,6 @@ from .user_handlers import (
     cmd_menu,
     cmd_start,
     cmd_stats_user,
-    on_chat_join_request,
     on_chat_member,
     on_menu_callback,
     post_init,
@@ -54,7 +52,6 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("me", cmd_stats_user))
     app.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
-    app.add_handler(ChatJoinRequestHandler(on_chat_join_request))
     app.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
     app.add_handler(CommandHandler("campaign_create", cmd_campaign_create))
