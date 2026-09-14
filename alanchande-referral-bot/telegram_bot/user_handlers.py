@@ -31,6 +31,13 @@ async def ensure_participant_membership(context: ContextTypes.DEFAULT_TYPE, user
         return False
 
 
+def pending_join_keyboard(settings: Settings, campaign_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1️⃣ ورود به کانال و عضویت", url=settings.channel_url)],
+        [InlineKeyboardButton("✅ عضو شدم؛ بررسی کن", callback_data=f"ref:check:{campaign_id}")],
+    ])
+
+
 async def get_or_create_link(context: ContextTypes.DEFAULT_TYPE, campaign: Campaign, user) -> str:
     """Return an unguessable Telegram bot deep link for this referrer/campaign."""
     _, db = services(context)
@@ -57,6 +64,42 @@ async def get_or_create_link(context: ContextTypes.DEFAULT_TYPE, campaign: Campa
     if not username:
         raise RuntimeError("bot username is unavailable")
     return f"https://t.me/{username}?start={payload}"
+
+
+async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Campaign, user,
+                               referrer_id: int, result: str | None) -> None:
+    if result not in {"created", "reactivated"}:
+        return
+    log.info(
+        "Referral %s: joined=%s referrer=%s campaign=%s",
+        result, user.id, referrer_id, campaign.slug,
+    )
+    try:
+        await context.bot.send_message(
+            referrer_id,
+            f"🎉 یک نفر با لینک تو عضو شد!\n\n⏳ اگر <b>{hours_label(campaign.min_stay_hours)}</b> "
+            f"پیوسته در کانال بماند، دعوت او تأیید می‌شود.",
+            parse_mode=ParseMode.HTML,
+        )
+    except (Forbidden, BadRequest):
+        pass
+    except TelegramError:
+        log.exception("Could not notify referrer %s", referrer_id)
+
+
+async def finalize_pending_referral(context: ContextTypes.DEFAULT_TYPE, campaign: Campaign, user) -> str:
+    """Convert a pending referral into a live referral once channel membership is confirmed."""
+    _, db = services(context)
+    referrer_id = db.pop_pending_referrer(campaign.id, user.id)
+    if referrer_id is None:
+        existing_referrer = db.referrer_for_joined(campaign.id, user.id)
+        return "already_recorded" if existing_referrer is not None else "missing"
+
+    result = db.record_join(
+        campaign, user.id, referrer_id, user.username, user.first_name,
+    )
+    await notify_referral_join(context, campaign, user, referrer_id, result)
+    return result
 
 
 async def handle_referral_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -89,6 +132,19 @@ async def handle_referral_start(update: Update, context: ContextTypes.DEFAULT_TY
         return True
 
     if already_member:
+        # If the user already opened this referral link before joining, finish that pending referral now.
+        if db.pending_referrer(campaign.id, user.id) is not None:
+            result = await finalize_pending_referral(context, campaign, user)
+            if result in {"created", "reactivated", "duplicate", "already_recorded"}:
+                await update.message.reply_text(
+                    "✅ عضویتت تأیید شد و دعوت ثبت شده است.\n\nحالا می‌توانی از ربات استفاده کنی."
+                )
+                return True
+
+        if db.referrer_for_joined(campaign.id, user.id) is not None:
+            await update.message.reply_text("✅ دعوت این حساب قبلاً در همین مسابقه ثبت شده است.")
+            return True
+
         await update.message.reply_text(
             "تو در حال حاضر عضو کانال هستی؛ بنابراین این لینک به‌عنوان دعوت جدید حساب نمی‌شود.\n\n"
             "اگر می‌خواهی خودت در مسابقه شرکت کنی، /start را بدون لینک دعوت بزن."
@@ -104,23 +160,25 @@ async def handle_referral_start(update: Update, context: ContextTypes.DEFAULT_TY
 
     if assigned_referrer != referrer_id:
         text = (
-            "این حساب قبلاً در همین مسابقه به یک معرف دیگر نسبت داده شده است. "
-            "معرف اول تغییر نمی‌کند.\n\n"
-            "برای تکمیل همان دعوت، حالا عضو کانال شو. 👇"
+            "این حساب قبلاً در همین مسابقه به یک معرف دیگر نسبت داده شده است و معرف اول تغییر نمی‌کند.\n\n"
+            "1️⃣ دکمه «ورود به کانال و عضویت» را بزن.\n"
+            "2️⃣ داخل کانال روی «Join Channel / عضویت» بزن.\n"
+            "3️⃣ به ربات برگرد و «✅ عضو شدم؛ بررسی کن» را بزن."
         )
     elif result == "existing_referral":
-        text = "دعوت قبلی تو حفظ شده است. برای ادامه، دوباره عضو کانال شو. 👇"
+        text = "دعوت قبلی تو حفظ شده است. اگر دوباره عضو کانال شوی، زمان انتظار از صفر شروع می‌شود."
     else:
         text = (
             "✅ دعوتت ثبت شد.\n\n"
-            "حالا از دکمه زیر عضو کانال شو. بعد از عضویت، ربات به‌صورت خودکار دعوت را به معرفت وصل می‌کند."
+            "برای کامل شدن دعوت سه مرحله را انجام بده:\n"
+            "1️⃣ دکمه «ورود به کانال و عضویت» را بزن.\n"
+            "2️⃣ داخل کانال روی «Join Channel / عضویت» بزن.\n"
+            "3️⃣ به اینجا برگرد و «✅ عضو شدم؛ بررسی کن» را بزن."
         )
 
     await update.message.reply_text(
         text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 عضویت در کانال الان چنده؟", url=settings.channel_url)]
-        ]),
+        reply_markup=pending_join_keyboard(settings, campaign.id),
     )
     return True
 
@@ -159,7 +217,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(
         f"<b>🔗 لینک اختصاصی تو:</b>\n\n{link}\n\n"
-        "دوستت باید اول از این لینک وارد ربات شود و بعد با دکمه عضویت وارد کانال شود.",
+        "دوستت باید اول از این لینک وارد ربات شود و مراحل عضویت را داخل ربات انجام دهد.",
         parse_mode=ParseMode.HTML,
         reply_markup=link_keyboard(settings, link), disable_web_page_preview=True,
     )
@@ -192,6 +250,56 @@ async def cmd_stats_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         render_stats(campaign, db, update.effective_user.id),
         parse_mode=ParseMode.HTML, reply_markup=back_keyboard(),
     )
+
+
+async def on_referral_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not user:
+        return
+
+    settings, db = services(context)
+    data = query.data or ""
+    try:
+        campaign_id = int(data.rsplit(":", 1)[1])
+    except (ValueError, IndexError):
+        await query.answer("درخواست نامعتبر است.", show_alert=True)
+        return
+
+    campaign = db.live_campaign()
+    if not campaign or campaign.id != campaign_id:
+        await query.answer("این مسابقه دیگر فعال نیست.", show_alert=True)
+        return
+
+    try:
+        is_member = await telegram_membership(context.bot, settings, user.id)
+    except TelegramError:
+        log.exception("Could not verify referral membership for user=%s", user.id)
+        await query.answer("بررسی عضویت فعلاً ممکن نیست. چند لحظه بعد دوباره بزن.", show_alert=True)
+        return
+
+    if not is_member:
+        await query.answer(
+            "هنوز عضو کانال نیستی. داخل کانال روی Join Channel / عضویت بزن و بعد برگرد.",
+            show_alert=True,
+        )
+        return
+
+    result = await finalize_pending_referral(context, campaign, user)
+    if result == "missing":
+        await query.answer("دعوت در انتظار برای این حساب پیدا نشد.", show_alert=True)
+        return
+
+    await query.answer("عضویت تأیید شد ✅")
+    try:
+        await query.edit_message_text(
+            "✅ <b>عضویتت تأیید شد و دعوت ثبت شد.</b>\n\n"
+            f"اگر <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته در کانال بمانی، دعوت تأیید نهایی می‌شود.",
+            parse_mode=ParseMode.HTML,
+        )
+    except BadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
 
 
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -237,7 +345,7 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 link = await get_or_create_link(context, campaign, user)
                 text = (
                     f"<b>🔗 لینک اختصاصی تو</b>\n\n{link}\n\n"
-                    "این لینک را برای دوستانت بفرست. آن‌ها باید اول ربات را باز کنند و سپس از داخل ربات عضو کانال شوند."
+                    "این لینک را برای دوستانت بفرست. آن‌ها ابتدا وارد ربات می‌شوند و ربات مرحله‌به‌مرحله عضویت را راهنمایی می‌کند."
                 )
                 markup = link_keyboard(settings, link)
             except Exception:
@@ -252,27 +360,6 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
-
-
-async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Campaign, user,
-                               referrer_id: int, result: str | None) -> None:
-    if result not in {"created", "reactivated"}:
-        return
-    log.info(
-        "Referral %s: joined=%s referrer=%s campaign=%s",
-        result, user.id, referrer_id, campaign.slug,
-    )
-    try:
-        await context.bot.send_message(
-            referrer_id,
-            f"🎉 یک نفر با لینک تو عضو شد!\n\n⏳ اگر <b>{hours_label(campaign.min_stay_hours)}</b> "
-            f"پیوسته در کانال بماند، دعوت او تأیید می‌شود.",
-            parse_mode=ParseMode.HTML,
-        )
-    except (Forbidden, BadRequest):
-        pass
-    except TelegramError:
-        log.exception("Could not notify referrer %s", referrer_id)
 
 
 async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -299,7 +386,6 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await notify_referral_join(context, campaign, user, referrer_id, result)
             return
 
-        # A previously referred user may rejoin without reopening the referral link.
         referrer_id = db.reactivate_original(
             campaign.id, user.id, user.username, user.first_name,
         )
