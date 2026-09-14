@@ -6,8 +6,12 @@ database changes, and giveaway code cannot interfere with the exchange bot.
 
 ## What it does
 
-- Gives each participant a **persistent invite link per campaign**.
-- Attributes joins from the exact Telegram invite link used.
+- Gives each participant a persistent **bot deep link** per campaign.
+- A referred friend must first open the personal bot link and then join the channel.
+- Stores the first referrer as pending before the channel join, then confirms it from
+  the normal Telegram `chat_member` join event.
+- Does **not** depend on Telegram exposing the channel invite link used, which is not
+  reliable for public channels.
 - Requires a configurable **continuous stay** before a referral is qualified.
   Default: **168 hours / 7 days**.
 - If the referred member leaves, their credit disappears. If they rejoin during
@@ -25,18 +29,41 @@ database changes, and giveaway code cannot interfere with the exchange bot.
 - Stores the entrant snapshot, public seed, winners, verification summary, and a
   SHA-256 digest for auditability.
 
+## Referral flow
+
+```text
+referrer shares https://t.me/Alanchandebot?start=ref_...
+        ↓
+friend opens the bot deep link
+        ↓
+bot verifies the friend is not currently a channel member
+        ↓
+bot stores pending attribution to the first referrer
+        ↓
+friend taps the channel button and joins @alanchande_com normally
+        ↓
+Telegram sends chat_member update
+        ↓
+bot converts pending attribution into a referral
+        ↓
+continuous-stay timer starts
+```
+
+The deep-link payload is random and stored server-side, so a user cannot simply
+forge another user's Telegram ID into a referral URL.
+
 ## Important Telegram requirements
 
-1. Create a **new dedicated bot** with `@BotFather`.
-2. Add the bot as an **administrator** of `@alanchande_com`.
-3. Give it permission to **invite users via link**.
-4. Use the numeric channel ID (`-100...`) for `CHANNEL_ID` when possible.
-5. The bot uses polling with `allowed_updates=Update.ALL_TYPES`, which is required
+1. Use the dedicated community/referral bot (`@Alanchandebot`).
+2. Add the bot as an **administrator** of `@alanchande_com` so it receives
+   `chat_member` updates and can check membership.
+3. Use the numeric channel ID (`-100...`) for `CHANNEL_ID` when possible.
+4. The bot uses polling with `allowed_updates=Update.ALL_TYPES`, which is required
    for `chat_member` updates.
-6. Do **not** run two polling processes with the same bot token.
+5. Do **not** run two polling processes with the same bot token.
 
-A public-channel join through search or the public `t.me/alanchande_com` URL has no
-referrer. Only a join through a personal invite link can create new attribution.
+A public/search join without first opening a referral deep link has no new
+referrer attribution. The bot link must be opened before the friend joins.
 
 ## Install
 
@@ -123,12 +150,10 @@ drawn.
 
 ## Suggested Telegram channel greeting
 
-Use the channel greeting/pinned CTA to send new members into the dedicated bot:
-
 > 🎁 **با معرفی دوستانت جایزه ببر!**
 >
-> هر ۲ دوستی که با لینک اختصاصی تو عضو کانال شوند و حداقل ۷ روز عضو بمانند،
-> ۱ امتیاز برای قرعه‌کشی می‌گیری.
+> لینک اختصاصی‌ات را از ربات بگیر. دوستت باید اول از لینک تو وارد ربات شود و
+> بعد از داخل ربات عضو کانال شود. هر ۲ دعوت تأییدشده = ۱ امتیاز.
 >
 > هرچه امتیاز بیشتری داشته باشی، شانس برنده شدنت بیشتر است.
 >
@@ -137,7 +162,7 @@ Use the channel greeting/pinned CTA to send new members into the dedicated bot:
 Button URL:
 
 ```text
-https://t.me/YOUR_NEW_BOT_USERNAME?start=channel
+https://t.me/Alanchandebot?start=channel
 ```
 
 The user must press **Start** because Telegram bots cannot initiate a private chat
@@ -163,15 +188,19 @@ to manually copy the personal link.
 A referral progresses as:
 
 ```text
-join with personal link
+open personal bot link while not currently a channel member
+        ↓
+pending attribution to first referrer
+        ↓
+join channel
         ↓
 pending for 7 continuous days
         ↓
 qualified
         ↓
-leaves channel → credit stops counting
+leave channel → credit stops counting
         ↓
-rejoins during active campaign → original referrer kept, 7-day timer restarts
+rejoin during active campaign → original referrer kept, timer restarts
 ```
 
 Additional controls:
@@ -179,14 +208,17 @@ Additional controls:
 - no self-referral
 - first referrer is permanent within a campaign
 - one referred Telegram ID per campaign
+- random server-side referral payloads
 - point cap
 - final membership verification before draw
 - entrant must still be a member at draw time
 - admin `/audit` command
 
-Telegram does not provide bots with a trustworthy "account creation date" or a way
-to prove that two accounts are actually friends, so those should not be used as
-anti-fraud rules.
+Important limitation: Telegram does not provide a complete historical member list
+to bots, so checking that a user is *currently* outside the channel when opening a
+referral link cannot prove that they were never a member in the past. Telegram also
+does not provide bots with a trustworthy account creation date or a way to prove
+that two accounts are actually friends.
 
 ## Supervisor
 
