@@ -26,7 +26,7 @@ def back_keyboard() -> InlineKeyboardMarkup:
 
 
 def link_keyboard(settings: Settings, link: str) -> InlineKeyboardMarkup:
-    share_text = "قیمت روز ارز و حواله را از کانال الان چنده؟ دنبال کن 👇"
+    share_text = "برای شرکت در مسابقه الان چنده؟ اول از این لینک وارد ربات شو 👇"
     share_url = "https://t.me/share/url?" + urlencode({"url": link, "text": share_text})
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
@@ -43,7 +43,7 @@ def menu_text(campaign: Campaign, first_name: str) -> str:
     return (
         f"سلام {escape(first_name or 'دوست عزیز')} 👋\n\n"
         f"<b>🎁 {escape(campaign.name)}</b>\n\n"
-        f"دوستانت را با لینک اختصاصی خودت به کانال دعوت کن.\n"
+        f"لینک اختصاصی ربات را برای دوستانت بفرست. آن‌ها باید اول از لینک تو وارد ربات شوند و سپس عضو کانال شوند.\n"
         f"هر <b>{campaign.invites_per_point} عضو تأییدشده</b> = <b>۱ امتیاز 🎟</b>\n\n"
         f"هر دوست باید حداقل <b>{hours_label(campaign.min_stay_hours)}</b> به‌صورت پیوسته عضو کانال بماند.\n\n"
         f"در پایان <b>{campaign.num_winners} برنده</b> به‌صورت تصادفی انتخاب می‌شوند؛ "
@@ -71,7 +71,7 @@ def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
 def render_referrals(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
     rows = db.referral_list(campaign, user_id, limit=15)
     if not rows:
-        return "<b>👥 دعوت‌های من</b>\n\nهنوز کسی با لینک اختصاصی تو عضو نشده است."
+        return "<b>👥 دعوت‌های من</b>\n\nهنوز کسی از طریق لینک اختصاصی تو عضو کانال نشده است."
     lines = ["<b>👥 دعوت‌های من</b>\n"]
     for row in rows:
         label = escape(row["first_name"] or ("@" + row["username"] if row["username"] else "کاربر تلگرام"))
@@ -108,14 +108,15 @@ def render_rules(campaign: Campaign) -> str:
     return (
         f"<b>📜 قوانین {escape(campaign.name)}</b>\n\n"
         f"1️⃣ لینک اختصاصی خودت را فقط از همین ربات دریافت کن.\n\n"
-        f"2️⃣ هر <b>{campaign.invites_per_point}</b> دوست که با لینک تو عضو شود و حداقل "
+        f"2️⃣ دوستت باید ابتدا از لینک اختصاصی تو وارد ربات شود و سپس از داخل ربات عضو کانال شود.\n\n"
+        f"3️⃣ هر <b>{campaign.invites_per_point}</b> دوست که این مراحل را انجام دهد و حداقل "
         f"<b>{hours_label(campaign.min_stay_hours)}</b> پیوسته عضو بماند، برای تو ۱ امتیاز ایجاد می‌کند.\n\n"
-        f"3️⃣ اگر دوستت از کانال خارج شود، برای امتیاز تو حساب نمی‌شود. اگر دوباره عضو شود، زمان انتظار از صفر شروع می‌شود.\n\n"
-        f"4️⃣ هر حساب تلگرام در هر مسابقه فقط یک‌بار و برای اولین معرف ثبت‌شده حساب می‌شود.\n\n"
-        f"5️⃣ حساب‌های فیک یا تلاش برای دستکاری مسابقه می‌تواند باعث حذف شود.\n\n"
-        f"6️⃣ هر امتیاز یک بلیت قرعه‌کشی است و هر نفر حداکثر یک بار می‌تواند برنده شود.\n\n"
-        f"7️⃣ قبل از قرعه‌کشی، عضویت دعوت‌شده‌ها و خود شرکت‌کنندگان دوباره بررسی می‌شود.\n\n"
-        f"8️⃣ {cap}"
+        f"4️⃣ اگر دوستت از کانال خارج شود، برای امتیاز تو حساب نمی‌شود. اگر دوباره عضو شود، زمان انتظار از صفر شروع می‌شود.\n\n"
+        f"5️⃣ هر حساب تلگرام در هر مسابقه فقط یک‌بار و برای اولین معرف ثبت‌شده حساب می‌شود.\n\n"
+        f"6️⃣ حساب‌های فیک یا تلاش برای دستکاری مسابقه می‌تواند باعث حذف شود.\n\n"
+        f"7️⃣ هر امتیاز یک بلیت قرعه‌کشی است و هر نفر حداکثر یک بار می‌تواند برنده شود.\n\n"
+        f"8️⃣ قبل از قرعه‌کشی، عضویت دعوت‌شده‌ها و خود شرکت‌کنندگان دوباره بررسی می‌شود.\n\n"
+        f"9️⃣ {cap}"
     )
 
 
