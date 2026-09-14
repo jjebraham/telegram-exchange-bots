@@ -64,6 +64,15 @@ class ReferralMixin:
             ).fetchone()
         return int(row["referrer_id"]) if row else None
 
+    def referrer_for_joined(self, campaign_id: int, joined_user_id: int) -> int | None:
+        """Return the permanent referrer already recorded for a referred account."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT referrer_id FROM referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign_id, joined_user_id),
+            ).fetchone()
+        return int(row["referrer_id"]) if row else None
+
     def record_join(self, campaign: Campaign, joined_user_id: int, referrer_id: int,
                     joined_username: str | None, joined_first_name: str | None,
                     now: datetime | None = None) -> str:
