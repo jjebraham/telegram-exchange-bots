@@ -6,29 +6,61 @@ on:
       - "x_daily_rates.py"
       - "tests/test_x_daily_rates.py"
       - ".github/workflows/daily-x-kiani-rates.yml"
+      - "X_DAILY_RATES_SETUP.md"
   schedule:
-    # Run a few minutes after noon to avoid GitHub Actions' top-of-hour congestion.
+    # Three link-free rate updates for organic reach.
+    - cron: "12 9 * * *"
+      timezone: "Europe/Istanbul"
+    - cron: "12 15 * * *"
+      timezone: "Europe/Istanbul"
+    - cron: "12 18 * * *"
+      timezone: "Europe/Istanbul"
+
+    # Main daily post with WhatsApp + mini-app links.
     - cron: "7 12 * * *"
       timezone: "Europe/Istanbul"
+
+    # Check hourly for a >=0.5% move versus the last published rates.
+    # The alert itself is link-free and only posts when the threshold is met.
+    - cron: "37 8-22 * * *"
+      timezone: "Europe/Istanbul"
+
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Preview the generated post without publishing it"
+        description: "Preview/check without publishing to X"
         required: false
         default: true
         type: boolean
+      publish_type:
+        description: "What to preview or publish"
+        required: true
+        default: linked
+        type: choice
+        options:
+          - linked
+          - link_free
+          - alert_check
 
 permissions:
   contents: read
 
 concurrency:
-  group: daily-kiani-x-rates
+  group: kiani-x-rates
   cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
+    env:
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+      KIANI_RATES_URL: https://miniapp.kiani.exchange/api/rates/current
+      X_RATE_STATE_FILE: .x-rate-state/latest.json
+      X_RATE_ALERT_THRESHOLD: "0.5"
 
     steps:
       - uses: actions/checkout@v4
@@ -42,16 +74,60 @@ jobs:
           python -m py_compile x_daily_rates.py
           python -m unittest tests.test_x_daily_rates -v
 
-      - name: Preview daily post
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-        run: python x_daily_rates.py --dry-run
+      - name: Restore last published rate state
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/cache@v4
+        with:
+          path: .x-rate-state
+          key: kiani-x-rate-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            kiani-x-rate-state-
 
-      - name: Publish daily post
-        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+      - name: Manual run
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
-          X_API_KEY: ${{ secrets.X_API_KEY }}
-          X_API_SECRET: ${{ secrets.X_API_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-          KIANI_RATES_URL: https://miniapp.kiani.exchange/api/rates/current
-        run: python x_daily_rates.py
+          PUBLISH_TYPE: ${{ inputs.publish_type }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(--state-file "$X_RATE_STATE_FILE")
+
+          case "$PUBLISH_TYPE" in
+            linked)
+              ;;
+            link_free)
+              args+=(--no-links --variant afternoon)
+              ;;
+            alert_check)
+              args+=(--mode alert --alert-threshold "$X_RATE_ALERT_THRESHOLD")
+              ;;
+            *)
+              echo "Unknown publish_type: $PUBLISH_TYPE" >&2
+              exit 2
+              ;;
+          esac
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+
+          python x_daily_rates.py "${args[@]}"
+
+      - name: Publish morning link-free rates
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '12 9 * * *' }}
+        run: python x_daily_rates.py --no-links --variant morning --state-file "$X_RATE_STATE_FILE"
+
+      - name: Publish main linked rates
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 12 * * *' }}
+        run: python x_daily_rates.py --state-file "$X_RATE_STATE_FILE"
+
+      - name: Publish afternoon link-free rates
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '12 15 * * *' }}
+        run: python x_daily_rates.py --no-links --variant afternoon --state-file "$X_RATE_STATE_FILE"
+
+      - name: Publish evening link-free rates
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '12 18 * * *' }}
+        run: python x_daily_rates.py --no-links --variant evening --state-file "$X_RATE_STATE_FILE"
+
+      - name: Check for significant hourly rate movement
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '37 8-22 * * *' }}
+        run: python x_daily_rates.py --mode alert --alert-threshold "$X_RATE_ALERT_THRESHOLD" --state-file "$X_RATE_STATE_FILE"
