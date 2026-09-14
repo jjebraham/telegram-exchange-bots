@@ -22,6 +22,7 @@ from .admin_handlers import (
     cmd_verify,
 )
 from .config import Settings
+from .referral_success import on_referral_check_and_welcome
 from .reminders import post_init, post_stop
 from .user_handlers import (
     cmd_menu,
@@ -29,7 +30,6 @@ from .user_handlers import (
     cmd_stats_user,
     on_chat_member,
     on_menu_callback,
-    on_referral_check,
 )
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -52,7 +52,7 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("me", cmd_stats_user))
     app.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
-    app.add_handler(CallbackQueryHandler(on_referral_check, pattern=r"^ref:check:"))
+    app.add_handler(CallbackQueryHandler(on_referral_check_and_welcome, pattern=r"^ref:check:"))
     app.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
     app.add_handler(CommandHandler("campaign_create", cmd_campaign_create))
