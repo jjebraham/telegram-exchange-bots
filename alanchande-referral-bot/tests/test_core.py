@@ -83,6 +83,7 @@ class ReferralCoreTests(unittest.TestCase):
 
         result = self.db.record_join(self.campaign, 99, 10, "candidate", "Candidate", self.now)
         self.assertEqual(result, "created")
+        self.assertEqual(self.db.referrer_for_joined(self.campaign.id, 99), 10)
         self.assertEqual(self.db.campaign_counts(self.campaign, 10, self.now)["pending"], 1)
 
     def test_first_referrer_is_permanent_and_rejoin_restarts_stay(self):
