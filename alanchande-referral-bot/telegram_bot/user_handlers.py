@@ -139,13 +139,14 @@ async def handle_referral_start(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.message.reply_text(
                     "✅ عضویتت تأیید شد و دعوت ثبت شده است.\n\nحالا می‌توانی از ربات استفاده کنی."
                 )
-                if result in {"created", "reactivated"}:
-                    from .referral_success import send_participant_welcome
-                    await send_participant_welcome(context, campaign, user)
+                from .referral_success import send_participant_welcome
+                await send_participant_welcome(context, campaign, user)
                 return True
 
         if db.referrer_for_joined(campaign.id, user.id) is not None:
             await update.message.reply_text("✅ دعوت این حساب قبلاً در همین مسابقه ثبت شده است.")
+            from .referral_success import send_participant_welcome
+            await send_participant_welcome(context, campaign, user)
             return True
 
         await update.message.reply_text(
@@ -387,9 +388,8 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 campaign, user.id, referrer_id, user.username, user.first_name,
             )
             await notify_referral_join(context, campaign, user, referrer_id, result)
-            if result == "created":
-                from .referral_success import send_participant_welcome
-                await send_participant_welcome(context, campaign, user)
+            from .referral_success import send_participant_welcome
+            await send_participant_welcome(context, campaign, user)
             return
 
         referrer_id = db.reactivate_original(
@@ -397,6 +397,8 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if referrer_id is not None:
             await notify_referral_join(context, campaign, user, referrer_id, "reactivated")
+            from .referral_success import send_participant_welcome
+            await send_participant_welcome(context, campaign, user)
 
     elif was_member and not is_member_now:
         changed = db.mark_left(user.id)
