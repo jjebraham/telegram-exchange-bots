@@ -5,6 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 from referral_core import ReferralDB
 from telegram_bot.admin_handlers import _extended_funnel, _review_signals
+from telegram_bot.growth import (
+    build_promo_link,
+    normalize_promo_source,
+    promo_variant,
+    remaining_text,
+    source_performance,
+)
 
 UTC = timezone.utc
 
@@ -162,6 +169,38 @@ class FunnelTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_promo_helpers_normalize_variant_and_countdown(self):
+        self.assertEqual(normalize_promo_source(" Instagram Story!! "), "instagram_story")
+        self.assertEqual(
+            build_promo_link("Alanchandebot", "mainchannel", "a"),
+            "https://t.me/Alanchandebot?start=promo_mainchannel_a",
+        )
+        self.assertEqual(promo_variant("mainchannel_a"), "a")
+        self.assertEqual(promo_variant("mainchannel_b"), "b")
+        self.assertEqual(promo_variant("mainchannel"), "default")
+        self.assertEqual(remaining_text(30 * 86400 + 2 * 3600), "30 روز و 2 ساعت")
+        self.assertEqual(remaining_text(25 * 3600), "1 روز و 1 ساعت")
+
+    def test_source_performance_separates_tracked_and_legacy(self):
+        start = self.now - timedelta(hours=3)
+        self.db.track_funnel_event(self.campaign.id, 20, "bot_start", "mainchannel_a", start)
+        self.db.track_funnel_event(self.campaign.id, 20, "entered_contest", "mainchannel_a", start)
+        self.db.save_invite_link(self.campaign.id, 20, "ref_1_bob", start)
+        self.db.track_funnel_event(self.campaign.id, 30, "referral_open", "referral", self.now)
+        self.db.record_join(self.campaign, 30, 20, None, "Carol", self.now)
+
+        self.db.save_invite_link(self.campaign.id, 10, "ref_1_alice", start)
+        self.db.record_join(self.campaign, 40, 10, None, "Dave", self.now)
+
+        report = source_performance(self.db, self.campaign)
+        rows = {row["source"]: row for row in report["rows"]}
+        self.assertEqual(rows["mainchannel_a"]["starts"], 1)
+        self.assertEqual(rows["mainchannel_a"]["entered"], 1)
+        self.assertEqual(rows["mainchannel_a"]["links"], 1)
+        self.assertEqual(rows["mainchannel_a"]["joins"], 1)
+        self.assertEqual(rows["mainchannel_a"]["referral_opens"], 1)
+        self.assertEqual(rows["legacy/untracked"]["joins"], 1)
 
 
 if __name__ == "__main__":
