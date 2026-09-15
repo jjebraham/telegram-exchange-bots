@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
 from .models import Campaign, UTC, iso_utc, parse_datetime, points_from_invites, utcnow
 
 
 class ReferralMixin:
+    @staticmethod
+    def _event(conn, campaign_id: int, joined_user_id: int, referrer_id: int | None,
+               event_type: str, event_at: str, details: dict | None = None) -> None:
+        conn.execute(
+            """INSERT INTO referral_events(
+                   campaign_id,joined_user_id,referrer_id,event_type,event_at,details_json
+               ) VALUES(?,?,?,?,?,?)""",
+            (
+                campaign_id, joined_user_id, referrer_id, event_type, event_at,
+                json.dumps(details or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            ),
+        )
+
     def create_pending_referral(self, campaign: Campaign, joined_user_id: int, referrer_id: int,
                                 joined_username: str | None, joined_first_name: str | None,
                                 now: datetime | None = None) -> tuple[str, int]:
@@ -40,6 +54,7 @@ class ReferralMixin:
                    ) VALUES(?,?,?,?,?,?,?)""",
                 (campaign.id, joined_user_id, referrer_id, joined_username, joined_first_name, ts, ts),
             )
+            self._event(conn, campaign.id, joined_user_id, referrer_id, "pending_created", ts)
             return "created", referrer_id
 
     def pop_pending_referrer(self, campaign_id: int, joined_user_id: int) -> int | None:
@@ -64,6 +79,14 @@ class ReferralMixin:
             ).fetchone()
         return int(row["referrer_id"]) if row else None
 
+    def pending_referral_count(self, campaign_id: int, referrer_id: int) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM pending_referrals WHERE campaign_id=? AND referrer_id=?",
+                (campaign_id, referrer_id),
+            ).fetchone()
+        return int(row["n"] or 0)
+
     def pending_reminder_candidates(self, campaign_id: int, older_than: datetime,
                                     limit: int = 100) -> list[dict]:
         cutoff = iso_utc(older_than)
@@ -77,6 +100,18 @@ class ReferralMixin:
                    WHERE p.campaign_id=? AND p.created_at<=? AND r.joined_user_id IS NULL
                    ORDER BY p.created_at ASC LIMIT ?""",
                 (campaign_id, cutoff, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def pending_reconciliation_candidates(self, campaign_id: int, limit: int = 200) -> list[dict]:
+        """All unresolved pending referrals, including users already reminded."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT campaign_id,joined_user_id,referrer_id,joined_username,
+                          joined_first_name,created_at
+                   FROM pending_referrals WHERE campaign_id=?
+                   ORDER BY created_at ASC LIMIT ?""",
+                (campaign_id, max(1, limit)),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -117,6 +152,69 @@ class ReferralMixin:
             ).fetchone()
         return int(row["referrer_id"]) if row else None
 
+    def finalize_pending_join(self, campaign: Campaign, joined_user_id: int,
+                              joined_username: str | None, joined_first_name: str | None,
+                              now: datetime | None = None) -> tuple[str, int | None]:
+        """Atomically consume pending attribution and create/reactivate one referral row."""
+        ts = iso_utc(now or utcnow())
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            pending = conn.execute(
+                "SELECT referrer_id FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign.id, joined_user_id),
+            ).fetchone()
+            existing = conn.execute(
+                "SELECT * FROM referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign.id, joined_user_id),
+            ).fetchone()
+
+            if pending is None:
+                if existing is not None:
+                    return "already_recorded", int(existing["referrer_id"])
+                return "missing", None
+
+            referrer_id = int(pending["referrer_id"])
+            if joined_user_id == referrer_id:
+                conn.execute(
+                    "DELETE FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                    (campaign.id, joined_user_id),
+                )
+                return "self", referrer_id
+
+            if existing is not None:
+                permanent_referrer = int(existing["referrer_id"])
+                conn.execute(
+                    "DELETE FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                    (campaign.id, joined_user_id),
+                )
+                if existing["active"]:
+                    return "duplicate", permanent_referrer
+                conn.execute(
+                    """UPDATE referrals SET active=1,left_at=NULL,stay_since=?,
+                       joined_username=?,joined_first_name=?,qualified_notified_at=NULL,updated_at=?
+                       WHERE id=?""",
+                    (ts, joined_username, joined_first_name, ts, existing["id"]),
+                )
+                self._event(
+                    conn, campaign.id, joined_user_id, permanent_referrer,
+                    "rejoined", ts, {"source": "pending_finalize"},
+                )
+                return "reactivated", permanent_referrer
+
+            conn.execute(
+                """INSERT INTO referrals(campaign_id,joined_user_id,referrer_id,joined_username,
+                   joined_first_name,joined_at,stay_since,active,updated_at)
+                   VALUES(?,?,?,?,?,?,?,1,?)""",
+                (campaign.id, joined_user_id, referrer_id, joined_username,
+                 joined_first_name, ts, ts, ts),
+            )
+            conn.execute(
+                "DELETE FROM pending_referrals WHERE campaign_id=? AND joined_user_id=?",
+                (campaign.id, joined_user_id),
+            )
+            self._event(conn, campaign.id, joined_user_id, referrer_id, "joined", ts)
+            return "created", referrer_id
+
     def record_join(self, campaign: Campaign, joined_user_id: int, referrer_id: int,
                     joined_username: str | None, joined_first_name: str | None,
                     now: datetime | None = None) -> str:
@@ -131,12 +229,14 @@ class ReferralMixin:
             if existing:
                 if existing["active"]:
                     return "duplicate"
+                permanent_referrer = int(existing["referrer_id"])
                 conn.execute(
                     """UPDATE referrals SET active=1,left_at=NULL,stay_since=?,
                        joined_username=?,joined_first_name=?,qualified_notified_at=NULL,updated_at=?
                        WHERE id=?""",
                     (ts, joined_username, joined_first_name, ts, existing["id"]),
                 )
+                self._event(conn, campaign.id, joined_user_id, permanent_referrer, "rejoined", ts)
                 return "reactivated"
             conn.execute(
                 """INSERT INTO referrals(campaign_id,joined_user_id,referrer_id,joined_username,
@@ -145,6 +245,7 @@ class ReferralMixin:
                 (campaign.id, joined_user_id, referrer_id, joined_username,
                  joined_first_name, ts, ts, ts),
             )
+            self._event(conn, campaign.id, joined_user_id, referrer_id, "joined", ts)
             return "created"
 
     def reactivate_original(self, campaign_id: int, joined_user_id: int,
@@ -163,18 +264,41 @@ class ReferralMixin:
                    joined_first_name=?,qualified_notified_at=NULL,updated_at=? WHERE id=?""",
                 (ts, username, first_name, ts, row["id"]),
             )
-            return row["referrer_id"]
+            self._event(conn, campaign_id, joined_user_id, int(row["referrer_id"]), "rejoined", ts)
+            return int(row["referrer_id"])
 
     def mark_left(self, joined_user_id: int, now: datetime | None = None) -> int:
         ts = iso_utc(now or utcnow())
         with self.connect() as conn:
-            cur = conn.execute(
-                """UPDATE referrals SET active=0,left_at=?,updated_at=?
+            rows = conn.execute(
+                """SELECT id,campaign_id,referrer_id FROM referrals
                    WHERE joined_user_id=? AND active=1 AND campaign_id IN
                    (SELECT id FROM campaigns WHERE status IN ('active','closed'))""",
-                (ts, ts, joined_user_id),
+                (joined_user_id,),
+            ).fetchall()
+            if not rows:
+                return 0
+            ids = [int(row["id"]) for row in rows]
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"UPDATE referrals SET active=0,left_at=?,updated_at=? WHERE id IN ({placeholders})",
+                (ts, ts, *ids),
             )
-            return cur.rowcount
+            for row in rows:
+                self._event(
+                    conn, int(row["campaign_id"]), joined_user_id,
+                    int(row["referrer_id"]), "left", ts,
+                )
+            return len(rows)
+
+    def active_referrals_for_reconciliation(self, campaign_id: int, limit: int = 500) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT id,joined_user_id,referrer_id,joined_username,joined_first_name
+                   FROM referrals WHERE campaign_id=? AND active=1 ORDER BY id LIMIT ?""",
+                (campaign_id, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def campaign_counts(self, campaign: Campaign, referrer_id: int,
                         now: datetime | None = None) -> dict[str, int]:
@@ -204,10 +328,8 @@ class ReferralMixin:
             "active": active,
             "left": int(row["left_count"] or 0),
             "total": int(row["total"] or 0),
-            # Keep "points" as the confirmed lottery score for backward compatibility.
             "points": confirmed_points,
             "confirmed_points": confirmed_points,
-            # Motivational score: all referrals who are currently still members.
             "current_points": current_points,
         }
 
@@ -237,6 +359,7 @@ class ReferralMixin:
                 "user_id": row["joined_user_id"], "username": row["joined_username"],
                 "first_name": row["joined_first_name"], "status": status,
                 "remaining_seconds": remaining,
+                "can_qualify_by_draw": stay_dt <= campaign.final_qualification_cutoff,
             })
         return result
 
@@ -259,9 +382,18 @@ class ReferralMixin:
         ts = iso_utc(now or utcnow())
         placeholders = ",".join("?" for _ in ids)
         with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT joined_user_id,referrer_id FROM referrals WHERE campaign_id=? AND joined_user_id IN ({placeholders}) AND active=1",
+                (campaign_id, *ids),
+            ).fetchall()
             cur = conn.execute(
                 f"""UPDATE referrals SET active=0,left_at=?,updated_at=?
-                    WHERE campaign_id=? AND joined_user_id IN ({placeholders})""",
+                    WHERE campaign_id=? AND joined_user_id IN ({placeholders}) AND active=1""",
                 (ts, ts, campaign_id, *ids),
             )
+            for row in rows:
+                self._event(
+                    conn, campaign_id, int(row["joined_user_id"]), int(row["referrer_id"]),
+                    "deactivated_verification", ts,
+                )
             return cur.rowcount
