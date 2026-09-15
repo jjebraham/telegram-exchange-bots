@@ -31,6 +31,8 @@ class Settings:
     promo_abandon_nudge_hours: int = 3
     notification_window_seconds: int = 600
     notification_max_per_window: int = 5
+    daily_digest_hour_istanbul: int = 21
+    daily_digest_check_seconds: int = 3600
     telegram_retry_attempts: int = 4
     telegram_retry_base_seconds: int = 1
     backup_dir: str = ""
@@ -70,14 +72,17 @@ class Settings:
         if not channel_id:
             raise RuntimeError("CHANNEL_ID is required; numeric -100... is recommended")
 
-        def int_env(name: str, default: int, minimum: int = 0) -> int:
+        def int_env(name: str, default: int, minimum: int = 0, maximum: int | None = None) -> int:
             raw = os.environ.get(name, "").strip()
             try:
                 value = int(raw) if raw else default
             except ValueError:
                 log.warning("Invalid %s=%r; using %s", name, raw, default)
                 value = default
-            return max(minimum, value)
+            value = max(minimum, value)
+            if maximum is not None:
+                value = min(maximum, value)
+            return value
 
         admins = frozenset(
             int(item.strip()) for item in os.environ.get("ADMIN_IDS", "").split(",")
@@ -102,6 +107,8 @@ class Settings:
             promo_abandon_nudge_hours=int_env("PROMO_ABANDON_NUDGE_HOURS", 3, 1),
             notification_window_seconds=int_env("NOTIFICATION_WINDOW_SECONDS", 600, 60),
             notification_max_per_window=int_env("NOTIFICATION_MAX_PER_WINDOW", 5, 1),
+            daily_digest_hour_istanbul=int_env("DAILY_DIGEST_HOUR_ISTANBUL", 21, 0, 23),
+            daily_digest_check_seconds=int_env("DAILY_DIGEST_CHECK_SECONDS", 3600, 900),
             telegram_retry_attempts=int_env("TELEGRAM_RETRY_ATTEMPTS", 4, 1),
             telegram_retry_base_seconds=int_env("TELEGRAM_RETRY_BASE_SECONDS", 1, 1),
             backup_dir=os.environ.get("BACKUP_DIR", default_backup_dir).strip(),
