@@ -184,18 +184,31 @@ class ReferralMixin:
                 """SELECT
                    SUM(CASE WHEN active=1 AND stay_since<=? THEN 1 ELSE 0 END) AS qualified,
                    SUM(CASE WHEN active=1 AND stay_since>? THEN 1 ELSE 0 END) AS pending,
+                   SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS active_count,
                    SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS left_count,
                    COUNT(*) AS total
                    FROM referrals WHERE campaign_id=? AND referrer_id=?""",
                 (cutoff, cutoff, campaign.id, referrer_id),
             ).fetchone()
         qualified = int(row["qualified"] or 0)
+        active = int(row["active_count"] or 0)
+        confirmed_points = points_from_invites(
+            qualified, campaign.invites_per_point, campaign.max_points
+        )
+        current_points = points_from_invites(
+            active, campaign.invites_per_point, campaign.max_points
+        )
         return {
             "qualified": qualified,
             "pending": int(row["pending"] or 0),
+            "active": active,
             "left": int(row["left_count"] or 0),
             "total": int(row["total"] or 0),
-            "points": points_from_invites(qualified, campaign.invites_per_point, campaign.max_points),
+            # Keep "points" as the confirmed lottery score for backward compatibility.
+            "points": confirmed_points,
+            "confirmed_points": confirmed_points,
+            # Motivational score: all referrals who are currently still members.
+            "current_points": current_points,
         }
 
     def referral_list(self, campaign: Campaign, referrer_id: int, limit: int = 15,
