@@ -97,6 +97,72 @@ class FunnelTests(unittest.TestCase):
         self.assertTrue(any(reason.startswith("low_secondary_activity:") for reason in row["reasons"]))
         self.assertEqual(row["secondary_participants"], 0)
 
+    def test_daily_metrics_are_upserted_per_istanbul_day(self):
+        self.db.track_funnel_event(self.campaign.id, 20, "bot_start", "bigchannel", self.now)
+        self.db.save_invite_link(self.campaign.id, 20, "ref_1_bob", self.now)
+        self.db.record_join(self.campaign, 30, 20, None, "Carol", self.now)
+
+        first = self.db.capture_daily_metrics(self.campaign, self.now)
+        self.assertEqual(first["snapshot_date"], "2026-09-15")
+        self.assertEqual(first["participants"], 1)
+        self.assertEqual(first["joined"], 1)
+
+        self.db.upsert_user(50, None, "Eve", now=self.now)
+        self.db.record_join(self.campaign, 50, 20, None, "Eve", self.now)
+        second = self.db.capture_daily_metrics(self.campaign, self.now + timedelta(hours=1))
+        self.assertEqual(second["joined"], 2)
+        rows = self.db.daily_metrics(self.campaign.id)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["joined"], 2)
+
+    def test_zero_referral_and_promo_abandon_nudge_candidates(self):
+        link_at = self.now - timedelta(hours=20)
+        self.db.save_invite_link(self.campaign.id, 20, "ref_1_bob", link_at)
+        zero = self.db.zero_referral_nudge_candidates(
+            self.campaign.id, self.now - timedelta(hours=12)
+        )
+        self.assertEqual([row["user_id"] for row in zero], [20])
+        self.db.track_funnel_event(
+            self.campaign.id, 20, "nudge_zero_referral_sent", "", self.now
+        )
+        self.assertEqual(
+            self.db.zero_referral_nudge_candidates(
+                self.campaign.id, self.now - timedelta(hours=12)
+            ),
+            [],
+        )
+
+        start_at = self.now - timedelta(hours=5)
+        self.db.track_funnel_event(self.campaign.id, 30, "bot_start", "instagram", start_at)
+        promo = self.db.promo_abandon_nudge_candidates(
+            self.campaign.id, self.now - timedelta(hours=3)
+        )
+        self.assertEqual([row["user_id"] for row in promo], [30])
+        self.db.save_invite_link(self.campaign.id, 30, "ref_1_carol", self.now)
+        self.assertEqual(
+            self.db.promo_abandon_nudge_candidates(
+                self.campaign.id, self.now - timedelta(hours=3)
+            ),
+            [],
+        )
+
+    def test_notification_throttle_suppresses_and_summarizes_bursts(self):
+        self.assertTrue(self.db.notification_gate(self.campaign.id, 20, 2, 600, self.now))
+        self.assertTrue(self.db.notification_gate(self.campaign.id, 20, 2, 600, self.now))
+        self.assertFalse(self.db.notification_gate(self.campaign.id, 20, 2, 600, self.now))
+        due = self.db.notification_summaries_due(
+            self.campaign.id, self.now + timedelta(seconds=601)
+        )
+        self.assertEqual(len(due), 1)
+        self.assertEqual(due[0]["suppressed_count"], 1)
+        self.db.clear_notification_summary(self.campaign.id, 20, self.now + timedelta(seconds=602))
+        self.assertEqual(
+            self.db.notification_summaries_due(
+                self.campaign.id, self.now + timedelta(seconds=1200)
+            ),
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
