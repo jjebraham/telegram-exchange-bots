@@ -70,18 +70,30 @@ def menu_text(campaign: Campaign, first_name: str) -> str:
 
 def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
     counts = db.campaign_counts(campaign, user_id)
-    if campaign.max_points and counts["points"] >= campaign.max_points:
-        next_text = "به سقف امتیاز این مسابقه رسیده‌ای. ✅"
+    if campaign.max_points and counts["current_points"] >= campaign.max_points:
+        next_text = "به سقف امتیاز فعلی این مسابقه رسیده‌ای. ✅"
     else:
-        remainder = counts["qualified"] % campaign.invites_per_point
+        remainder = counts["active"] % campaign.invites_per_point
         need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
-        next_text = f"برای امتیاز بعدی به <b>{need}</b> دعوت تأییدشده دیگر نیاز داری."
+        next_text = f"برای امتیاز فعلی بعدی به <b>{need}</b> دعوت فعال دیگر نیاز داری."
+
+    retention_note = (
+        f"⏳ امتیاز فعلی بر اساس اعضایی است که الان در کانال هستند. "
+        f"بعد از <b>{hours_label(campaign.min_stay_hours)}</b> ماندن پیوسته، امتیاز آن‌ها "
+        "برای قرعه‌کشی تأیید می‌شود. اگر قبل از آن خارج شوند، امتیاز فعلی کاهش پیدا می‌کند."
+        if campaign.min_stay_hours > 0
+        else "✅ امتیاز فعلی و امتیاز قرعه‌کشی در این مسابقه بلافاصله تأیید می‌شوند."
+    )
+
     return (
         f"<b>📊 امتیازهای من — {escape(campaign.name)}</b>\n\n"
+        f"👥 دعوت فعال: <b>{counts['active']}</b>\n"
         f"✅ دعوت تأییدشده: <b>{counts['qualified']}</b>\n"
         f"⏳ در انتظار تأیید: <b>{counts['pending']}</b>\n"
         f"❌ خارج‌شده از کانال: <b>{counts['left']}</b>\n\n"
-        f"🎟 امتیاز: <b>{counts['points']}</b>\n\n{next_text}"
+        f"🎟 امتیاز فعلی: <b>{counts['current_points']}</b>\n"
+        f"🏆 امتیاز تأییدشده قرعه‌کشی: <b>{counts['confirmed_points']}</b>\n\n"
+        f"{next_text}\n\n{retention_note}"
     )
 
 
@@ -109,13 +121,14 @@ def render_referrals(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
 def render_top(campaign: Campaign, db: ReferralDB) -> str:
     rows = db.leaderboard(campaign, limit=10)
     if not rows:
-        return "<b>🏆 جدول مسابقه</b>\n\nهنوز کسی امتیاز نگرفته است."
+        return "<b>🏆 جدول مسابقه</b>\n\nهنوز کسی امتیاز تأییدشده نگرفته است."
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n"]
     for index, row in enumerate(rows):
         badge = medals[index] if index < 3 else f"{index + 1}."
         name = escape(row["first_name"] or ("@" + row["username"] if row["username"] else "کاربر"))
         lines.append(f"{badge} {name} — <b>{row['points']}</b> 🎟 ({row['qualified']} دعوت تأییدشده)")
+    lines.append("\nℹ️ جدول مسابقه فقط امتیازهای تأییدشده برای قرعه‌کشی را نمایش می‌دهد.")
     return "\n".join(lines)
 
 
@@ -126,12 +139,13 @@ def render_rules(campaign: Campaign) -> str:
         f"<b>📜 قوانین {escape(campaign.name)}</b>\n\n"
         f"1️⃣ لینک اختصاصی خودت را فقط از همین ربات دریافت کن.\n\n"
         f"2️⃣ دوستت باید ابتدا از لینک اختصاصی تو وارد ربات شود و سپس از داخل ربات عضو کانال شود.\n\n"
-        f"3️⃣ هر <b>{campaign.invites_per_point}</b> دوست که این مراحل را انجام دهد و حداقل "
-        f"<b>{hours_label(campaign.min_stay_hours)}</b> پیوسته عضو بماند، برای تو ۱ امتیاز ایجاد می‌کند.\n\n"
-        f"4️⃣ اگر دوستت از کانال خارج شود، برای امتیاز تو حساب نمی‌شود. اگر دوباره عضو شود، زمان انتظار از صفر شروع می‌شود.\n\n"
+        f"3️⃣ هر <b>{campaign.invites_per_point}</b> دعوت فعال، ۱ امتیاز فعلی برایت ایجاد می‌کند. "
+        f"پس از <b>{hours_label(campaign.min_stay_hours)}</b> عضویت پیوسته، این امتیاز برای قرعه‌کشی تأیید می‌شود.\n\n"
+        f"4️⃣ اگر دوستت قبل از تأیید از کانال خارج شود، امتیاز فعلی مربوط به او کم می‌شود. "
+        f"اگر دوباره عضو شود، زمان انتظار از صفر شروع می‌شود.\n\n"
         f"5️⃣ هر حساب تلگرام در هر مسابقه فقط یک‌بار و برای اولین معرف ثبت‌شده حساب می‌شود.\n\n"
         f"6️⃣ حساب‌های فیک یا تلاش برای دستکاری مسابقه می‌تواند باعث حذف شود.\n\n"
-        f"7️⃣ هر امتیاز یک بلیت قرعه‌کشی است و هر نفر حداکثر یک بار می‌تواند برنده شود.\n\n"
+        f"7️⃣ فقط <b>امتیازهای تأییدشده</b> بلیت قرعه‌کشی هستند و هر نفر حداکثر یک بار می‌تواند برنده شود.\n\n"
         f"8️⃣ قبل از قرعه‌کشی، عضویت دعوت‌شده‌ها و خود شرکت‌کنندگان دوباره بررسی می‌شود.\n\n"
         f"9️⃣ 📅 زمان قرعه‌کشی: <b>{draw_schedule_text(campaign)}</b>.\n\n"
         f"🔟 {cap}"
