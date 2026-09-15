@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from .config import hours_label, telegram_membership
 from .context import services
-from .ui import main_keyboard
+from .ui import link_keyboard, main_keyboard
 from .user_handlers import finalize_pending_referral, get_or_create_link
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -36,15 +36,22 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
             chat_id=user.id,
             text=(
                 f"🎉 <b>{first_name}، تبریک!</b>\n\n"
-                "عضویتت تأیید شد و حالا خودت هم می‌تونی در مسابقه شرکت کنی.\n"
+                "عضویتت تأیید شد و حالا خودت هم داخل مسابقه‌ای.\n"
                 "دوستات رو دعوت کن و شانس برنده شدنت رو بیشتر کن! 🚀\n\n"
-                f"🎟 هر <b>{campaign.invites_per_point}</b> دعوت تأییدشده = <b>۱ امتیاز</b>\n\n"
+                f"⭐ هر <b>{campaign.invites_per_point}</b> دعوت فعال = <b>۱ امتیاز موقت</b>\n"
+                f"🎟 بعد از <b>{hours_label(campaign.min_stay_hours)}</b> ماندن پیوسته، "
+                "همان امتیاز به بلیت تأییدشده قرعه‌کشی تبدیل می‌شود.\n\n"
                 f"<b>🔗 لینک اختصاصی دعوت تو:</b>\n{link}\n\n"
-                "👇 از منوی زیر می‌تونی لینک دعوتت، امتیازها، دعوت‌ها، جدول مسابقه و جوایز رو ببینی."
+                "همین حالا می‌تونی با دکمه زیر برای دوستات بفرستی."
             ),
             parse_mode=ParseMode.HTML,
-            reply_markup=main_keyboard(settings),
+            reply_markup=link_keyboard(settings, link, campaign),
             disable_web_page_preview=True,
+        )
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="👇 منوی مسابقه هم همیشه از اینجا در دسترسه:",
+            reply_markup=main_keyboard(settings),
         )
     except (Forbidden, BadRequest) as exc:
         log.warning("Could not send participant welcome to user=%s: %s", user.id, exc)
@@ -53,6 +60,8 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
         log.exception("Participant welcome failed for user=%s", user.id)
         return False
 
+    db.track_funnel_event(campaign.id, user.id, "entered_contest", "referral")
+    db.track_funnel_event(campaign.id, user.id, "link_created", "referral")
     db.mark_participant_welcome_sent(campaign.id, user.id)
     log.info("Participant welcome sent: user=%s campaign=%s", user.id, campaign.slug)
     return True
@@ -92,7 +101,7 @@ async def on_referral_check_and_welcome(
 
     if not is_member:
         await query.answer(
-            "هنوز عضو کانال نیستی. داخل کانال روی Join Channel / عضویت بزن و بعد برگرد.",
+            "هنوز عضویتت رو نمی‌بینم 🤔 اول وارد کانال شو، روی Join Channel / عضویت بزن و بعد به همین چت برگرد.",
             show_alert=True,
         )
         return
@@ -109,14 +118,13 @@ async def on_referral_check_and_welcome(
         else:
             text = (
                 "✅ <b>عضویتت تأیید شد و دعوت ثبت شد.</b>\n\n"
-                f"اگر <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته در کانال بمانی، "
-                "دعوت تأیید نهایی می‌شود."
+                "⭐ این دعوت از همین حالا در امتیاز موقت معرف حساب می‌شود.\n"
+                f"🎟 اگر <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته در کانال بمانی، "
+                "به بلیت تأییدشده قرعه‌کشی تبدیل می‌شود."
             )
         await query.edit_message_text(text, parse_mode=ParseMode.HTML)
     except BadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
 
-    # Always attempt onboarding after confirmed membership. The DB marker makes this idempotent,
-    # so it also repairs the race where chat_member records the referral before this callback runs.
     await send_participant_welcome(context, campaign, user)
