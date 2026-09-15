@@ -6,18 +6,22 @@ from urllib.parse import urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from referral_core import Campaign, ReferralDB
+from referral_core import Campaign, ReferralDB, utcnow
 from .config import Settings, hours_label, remaining_label
+
+ISTANBUL = timezone(timedelta(hours=3))
+IRAN = timezone(timedelta(hours=3, minutes=30))
 
 
 def main_keyboard(settings: Settings) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 دعوت دوستان", callback_data="menu:link")],
-        [InlineKeyboardButton("📊 امتیازهای من", callback_data="menu:stats"),
+        [InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
          InlineKeyboardButton("👥 دعوت‌های من", callback_data="menu:referrals")],
         [InlineKeyboardButton("🏆 جدول مسابقه", callback_data="menu:top"),
          InlineKeyboardButton("🎁 جوایز", callback_data="menu:prizes")],
-        [InlineKeyboardButton("📜 قوانین", callback_data="menu:rules")],
+        [InlineKeyboardButton("📜 قوانین", callback_data="menu:rules"),
+         InlineKeyboardButton("🛡 شفافیت", callback_data="menu:trust")],
         [InlineKeyboardButton("📢 کانال الان چنده؟", url=settings.channel_url)],
     ])
 
@@ -26,11 +30,18 @@ def back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")]])
 
 
-def link_keyboard(settings: Settings, link: str) -> InlineKeyboardMarkup:
-    share_text = "برای شرکت در مسابقه الان چنده؟ اول از این لینک وارد ربات شو 👇"
+def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
+    if campaign:
+        share_text = (
+            f"من تو مسابقه {campaign.name} «الان چنده؟» شرکت کردم 🎁\n"
+            f"{campaign.num_winners} نفر برنده می‌شن. از لینک من وارد شو؛ بعد از عضویت، "
+            "خودت هم می‌تونی لینک دعوت بگیری 👇"
+        )
+    else:
+        share_text = "من تو مسابقه «الان چنده؟» شرکت کردم 🎁 از لینک من وارد شو 👇"
     share_url = "https://t.me/share/url?" + urlencode({"url": link, "text": share_text})
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
+        [InlineKeyboardButton("📤 ارسال برای دوستان", url=share_url)],
         [InlineKeyboardButton("📢 مشاهده کانال", url=settings.channel_url)],
         [InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")],
     ])
@@ -41,17 +52,38 @@ def no_campaign_text() -> str:
 
 
 def draw_schedule_text(campaign: Campaign) -> str:
-    """Draw at 21:00 Istanbul time on the day after the campaign closes."""
-    istanbul = timezone(timedelta(hours=3))
-    iran = timezone(timedelta(hours=3, minutes=30))
-    end_local = campaign.end_dt.astimezone(istanbul)
-    draw_local = (end_local + timedelta(days=1)).replace(
-        hour=21, minute=0, second=0, microsecond=0,
-    )
-    draw_iran = draw_local.astimezone(iran)
+    draw_local = campaign.draw_dt.astimezone(ISTANBUL)
+    draw_iran = campaign.draw_dt.astimezone(IRAN)
     return (
         f"{draw_local:%Y/%m/%d} ساعت {draw_local:%H:%M} به وقت استانبول "
-        f"/ {draw_iran:%H:%M} به وقت ایران"
+        f"/ {draw_iran:%Y/%m/%d} ساعت {draw_iran:%H:%M} به وقت ایران"
+    )
+
+
+def campaign_end_text(campaign: Campaign) -> str:
+    end_ist = campaign.end_dt.astimezone(ISTANBUL)
+    end_ir = campaign.end_dt.astimezone(IRAN)
+    return (
+        f"{end_ist:%Y/%m/%d} ساعت {end_ist:%H:%M} استانبول "
+        f"/ {end_ir:%Y/%m/%d} ساعت {end_ir:%H:%M} ایران"
+    )
+
+
+def final_join_cutoff_text(campaign: Campaign) -> str:
+    cutoff_ist = campaign.final_qualification_cutoff.astimezone(ISTANBUL)
+    cutoff_ir = campaign.final_qualification_cutoff.astimezone(IRAN)
+    return (
+        f"{cutoff_ist:%Y/%m/%d} ساعت {cutoff_ist:%H:%M} استانبول "
+        f"/ {cutoff_ir:%Y/%m/%d} ساعت {cutoff_ir:%H:%M} ایران"
+    )
+
+
+def _late_referral_warning(campaign: Campaign) -> str:
+    if campaign.min_stay_hours <= 0 or utcnow() < campaign.final_qualification_cutoff:
+        return ""
+    return (
+        "\n\n⚠️ <b>توجه:</b> از این زمان به بعد، دعوت جدید تا زمان قرعه‌کشی فرصت "
+        f"کامل کردن {hours_label(campaign.min_stay_hours)} را ندارد و به بلیت تأییدشده تبدیل نمی‌شود."
     )
 
 
@@ -59,48 +91,74 @@ def menu_text(campaign: Campaign, first_name: str) -> str:
     return (
         f"سلام {escape(first_name or 'دوست عزیز')} 👋\n\n"
         f"<b>🎁 {escape(campaign.name)}</b>\n\n"
-        f"لینک اختصاصی ربات را برای دوستانت بفرست. آن‌ها باید اول از لینک تو وارد ربات شوند و سپس عضو کانال شوند.\n"
-        f"هر <b>{campaign.invites_per_point} عضو تأییدشده</b> = <b>۱ امتیاز 🎟</b>\n\n"
-        f"هر دوست باید حداقل <b>{hours_label(campaign.min_stay_hours)}</b> به‌صورت پیوسته عضو کانال بماند.\n\n"
+        "لینک اختصاصی‌ات را برای دوستانت بفرست. آن‌ها باید اول از لینک تو وارد ربات شوند و بعد عضو کانال شوند.\n\n"
+        f"⭐ هر <b>{campaign.invites_per_point} دعوت فعال</b> = <b>۱ امتیاز موقت</b>\n"
+        f"🎟 بعد از <b>{hours_label(campaign.min_stay_hours)}</b> عضویت پیوسته، همان امتیاز به <b>بلیت تأییدشده قرعه‌کشی</b> تبدیل می‌شود.\n\n"
+        f"⏰ <b>پایان ثبت دعوت:</b> {campaign_end_text(campaign)}\n"
         f"📅 <b>زمان قرعه‌کشی:</b> {draw_schedule_text(campaign)}\n\n"
-        f"در پایان <b>{campaign.num_winners} برنده</b> به‌صورت تصادفی انتخاب می‌شوند؛ "
-        f"هرچه امتیاز بیشتری داشته باشی، شانس بیشتری برای برنده شدن داری."
+        f"در پایان <b>{campaign.num_winners} برنده</b> با قرعه‌کشی وزن‌دار انتخاب می‌شوند؛ "
+        "هر بلیت تأییدشده شانس تو را بیشتر می‌کند."
+        f"{_late_referral_warning(campaign)}"
     )
 
 
 def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
     counts = db.campaign_counts(campaign, user_id)
+    pending_opens = db.pending_referral_count(campaign.id, user_id)
+    rank, ranked_total = db.leaderboard_position(campaign, user_id)
+    closest = db.closest_pending_seconds(campaign, user_id)
+
     if campaign.max_points and counts["current_points"] >= campaign.max_points:
-        next_text = "به سقف امتیاز فعلی این مسابقه رسیده‌ای. ✅"
+        next_text = "✅ به سقف امتیاز موقت این مسابقه رسیده‌ای."
     else:
         remainder = counts["active"] % campaign.invites_per_point
         need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
-        next_text = f"برای امتیاز فعلی بعدی به <b>{need}</b> دعوت فعال دیگر نیاز داری."
+        next_text = f"🔥 تا امتیاز موقت بعدی فقط <b>{need}</b> دعوت فعال دیگر لازم داری."
 
-    retention_note = (
-        f"⏳ امتیاز فعلی بر اساس اعضایی است که الان در کانال هستند. "
-        f"بعد از <b>{hours_label(campaign.min_stay_hours)}</b> ماندن پیوسته، امتیاز آن‌ها "
-        "برای قرعه‌کشی تأیید می‌شود. اگر قبل از آن خارج شوند، امتیاز فعلی کاهش پیدا می‌کند."
-        if campaign.min_stay_hours > 0
-        else "✅ امتیاز فعلی و امتیاز قرعه‌کشی در این مسابقه بلافاصله تأیید می‌شوند."
+    rank_text = (
+        f"📍 رتبه فعلی تو: <b>#{rank}</b> از <b>{ranked_total}</b> نفر"
+        if rank is not None else
+        f"📍 هنوز وارد جدول امتیازی نشده‌ای؛ جدول فعلاً <b>{ranked_total}</b> نفر دارد."
+    )
+    pending_open_text = (
+        f"👀 <b>{pending_opens}</b> نفر لینک تو را باز کرده‌اند ولی هنوز عضویت را کامل نکرده‌اند."
+        if pending_opens else "👀 دعوت ناتمام از لینک تو نداری."
+    )
+    closest_text = (
+        f"⏳ نزدیک‌ترین تأیید: <b>{remaining_label(closest)}</b> دیگر"
+        if closest is not None else ""
     )
 
+    retention_note = (
+        "⭐ <b>موقت</b> یعنی دوستت الان عضو کانال است و اگر خارج شود کم می‌شود.\n"
+        f"🎟 <b>تأییدشده</b> یعنی حداقل {hours_label(campaign.min_stay_hours)} مانده و فقط این بلیت در قرعه‌کشی حساب می‌شود."
+        if campaign.min_stay_hours > 0
+        else "✅ امتیاز موقت و بلیت قرعه‌کشی در این مسابقه بلافاصله تأیید می‌شوند."
+    )
+
+    extra = f"\n{closest_text}" if closest_text else ""
     return (
-        f"<b>📊 امتیازهای من — {escape(campaign.name)}</b>\n\n"
+        f"<b>📊 وضعیت من — {escape(campaign.name)}</b>\n\n"
+        f"⭐ امتیاز موقت: <b>{counts['current_points']}</b>\n"
+        f"🎟 بلیت تأییدشده: <b>{counts['confirmed_points']}</b>\n\n"
         f"👥 دعوت فعال: <b>{counts['active']}</b>\n"
         f"✅ دعوت تأییدشده: <b>{counts['qualified']}</b>\n"
         f"⏳ در انتظار تأیید: <b>{counts['pending']}</b>\n"
-        f"❌ خارج‌شده از کانال: <b>{counts['left']}</b>\n\n"
-        f"🎟 امتیاز فعلی: <b>{counts['current_points']}</b>\n"
-        f"🏆 امتیاز تأییدشده قرعه‌کشی: <b>{counts['confirmed_points']}</b>\n\n"
-        f"{next_text}\n\n{retention_note}"
+        f"❌ خارج‌شده: <b>{counts['left']}</b>\n\n"
+        f"{next_text}\n{rank_text}\n{pending_open_text}{extra}\n\n{retention_note}"
+        f"{_late_referral_warning(campaign)}"
     )
 
 
 def render_referrals(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
     rows = db.referral_list(campaign, user_id, limit=15)
+    pending_opens = db.pending_referral_count(campaign.id, user_id)
     if not rows:
-        return "<b>👥 دعوت‌های من</b>\n\nهنوز کسی از طریق لینک اختصاصی تو عضو کانال نشده است."
+        suffix = (
+            f"\n\n👀 {pending_opens} نفر لینک را باز کرده‌اند ولی هنوز عضویت را کامل نکرده‌اند."
+            if pending_opens else ""
+        )
+        return "<b>👥 دعوت‌های من</b>\n\nهنوز کسی از طریق لینک اختصاصی تو عضو کانال نشده است." + suffix
     lines = ["<b>👥 دعوت‌های من</b>\n"]
     for row in rows:
         label = escape(row["first_name"] or ("@" + row["username"] if row["username"] else "کاربر تلگرام"))
@@ -109,57 +167,79 @@ def render_referrals(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
         if row["status"] == "qualified":
             status = "✅ تأییدشده"
         elif row["status"] == "left":
-            status = "❌ خارج شده"
+            status = "❌ خارج شده — اگر برگردد، زمان تأیید از صفر شروع می‌شود"
+        elif not row.get("can_qualify_by_draw", True):
+            status = "⚠️ فعال، اما تا زمان قرعه‌کشی فرصت تکمیل دوره را ندارد"
         else:
             status = f"⏳ {remaining_label(row['remaining_seconds'])} تا تأیید"
         lines.append(f"• {label} — {status}")
+    if pending_opens:
+        lines.append(f"\n👀 <b>{pending_opens}</b> نفر لینک را باز کرده‌اند ولی هنوز عضویت را کامل نکرده‌اند.")
     if len(rows) == 15:
         lines.append("\nآخرین ۱۵ دعوت نمایش داده شده است.")
     return "\n".join(lines)
 
 
-def render_top(campaign: Campaign, db: ReferralDB) -> str:
+def _mask_name(first_name: str | None, username: str | None, user_id: int) -> str:
+    raw = (first_name or username or "").strip()
+    if raw:
+        visible = raw[:2]
+        return escape(visible + "***")
+    return f"کاربر ***{str(user_id)[-3:]}"
+
+
+def render_top(campaign: Campaign, db: ReferralDB, user_id: int | None = None) -> str:
     rows = db.leaderboard(campaign, limit=10)
     if not rows:
         return (
             f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n\n"
-            "هنوز هیچ دعوت فعالی در مسابقه ثبت نشده است."
+            "هنوز امتیازی در جدول ثبت نشده؛ اولین نفر باش! 🚀"
         )
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n"]
     for index, row in enumerate(rows):
         badge = medals[index] if index < 3 else f"{index + 1}."
-        name = escape(row["first_name"] or ("@" + row["username"] if row["username"] else "کاربر"))
+        name = _mask_name(row["first_name"], row["username"], row["user_id"])
         lines.append(
             f"{badge} <b>{name}</b>\n"
-            f"🎟 فعلی: <b>{row['current_points']}</b> | "
-            f"🏆 تأییدشده: <b>{row['confirmed_points']}</b> | "
-            f"👥 فعال: <b>{row['active']}</b>"
+            f"⭐ موقت: <b>{row['current_points']}</b> | "
+            f"🎟 تأییدشده: <b>{row['confirmed_points']}</b>"
         )
+    if user_id is not None:
+        rank, total = db.leaderboard_position(campaign, user_id)
+        if rank is not None:
+            lines.append(f"\n📍 رتبه تو: <b>#{rank}</b> از <b>{total}</b>")
     lines.append(
-        "\nℹ️ رتبه‌بندی بالا بر اساس <b>امتیاز فعلی</b> است. "
-        "فقط <b>امتیاز تأییدشده</b> در قرعه‌کشی نهایی استفاده می‌شود."
+        "\nℹ️ این جدول فقط پیشرفت فعلی را نشان می‌دهد و ترتیب آن تعیین‌کننده برنده نیست. "
+        "برندگان با قرعه‌کشی وزن‌دار و فقط بر اساس 🎟 بلیت‌های تأییدشده انتخاب می‌شوند."
     )
     return "\n\n".join(lines)
 
 
 def render_rules(campaign: Campaign) -> str:
-    cap = (f"حداکثر امتیاز قابل استفاده در قرعه‌کشی <b>{campaign.max_points}</b> است."
-           if campaign.max_points else "برای امتیازها سقفی تعیین نشده است.")
+    cap = (f"حداکثر بلیت قابل استفاده در قرعه‌کشی <b>{campaign.max_points}</b> است."
+           if campaign.max_points else "برای بلیت‌ها سقفی تعیین نشده است.")
     return (
         f"<b>📜 قوانین {escape(campaign.name)}</b>\n\n"
-        f"1️⃣ لینک اختصاصی خودت را فقط از همین ربات دریافت کن.\n\n"
-        f"2️⃣ دوستت باید ابتدا از لینک اختصاصی تو وارد ربات شود و سپس از داخل ربات عضو کانال شود.\n\n"
-        f"3️⃣ هر <b>{campaign.invites_per_point}</b> دعوت فعال، ۱ امتیاز فعلی برایت ایجاد می‌کند. "
-        f"پس از <b>{hours_label(campaign.min_stay_hours)}</b> عضویت پیوسته، این امتیاز برای قرعه‌کشی تأیید می‌شود.\n\n"
-        f"4️⃣ اگر دوستت قبل از تأیید از کانال خارج شود، امتیاز فعلی مربوط به او کم می‌شود. "
-        f"اگر دوباره عضو شود، زمان انتظار از صفر شروع می‌شود.\n\n"
-        f"5️⃣ هر حساب تلگرام در هر مسابقه فقط یک‌بار و برای اولین معرف ثبت‌شده حساب می‌شود.\n\n"
-        f"6️⃣ حساب‌های فیک یا تلاش برای دستکاری مسابقه می‌تواند باعث حذف شود.\n\n"
-        f"7️⃣ فقط <b>امتیازهای تأییدشده</b> بلیت قرعه‌کشی هستند و هر نفر حداکثر یک بار می‌تواند برنده شود.\n\n"
-        f"8️⃣ قبل از قرعه‌کشی، عضویت دعوت‌شده‌ها و خود شرکت‌کنندگان دوباره بررسی می‌شود.\n\n"
-        f"9️⃣ 📅 زمان قرعه‌کشی: <b>{draw_schedule_text(campaign)}</b>.\n\n"
-        f"🔟 {cap}"
+        "<b>خلاصه:</b>\n"
+        f"• هر {campaign.invites_per_point} دعوت فعال = ۱ ⭐ امتیاز موقت\n"
+        f"• بعد از {hours_label(campaign.min_stay_hours)} ماندن = ۱ 🎟 بلیت تأییدشده\n"
+        "• خروج از کانال امتیاز را کم می‌کند؛ بازگشت زمان را از صفر شروع می‌کند\n"
+        "• برندگان با قرعه‌کشی وزن‌دار انتخاب می‌شوند\n\n"
+        "1️⃣ لینک اختصاصی خودت را فقط از همین ربات دریافت کن.\n\n"
+        "2️⃣ دوستت باید ابتدا از لینک اختصاصی تو وارد ربات شود و سپس عضو کانال شود.\n\n"
+        f"3️⃣ هر <b>{campaign.invites_per_point}</b> دعوت فعال، ۱ ⭐ امتیاز موقت ایجاد می‌کند. "
+        f"پس از <b>{hours_label(campaign.min_stay_hours)}</b> عضویت پیوسته، به 🎟 بلیت تأییدشده تبدیل می‌شود.\n\n"
+        "4️⃣ اگر دوستت خارج شود، سهم او کم می‌شود. اگر دوباره عضو شود، زمان انتظار از صفر شروع می‌شود.\n\n"
+        "5️⃣ هر حساب تلگرام در هر مسابقه فقط یک‌بار و برای اولین معرف ثبت‌شده حساب می‌شود.\n\n"
+        "6️⃣ حساب‌های فیک یا تلاش برای دستکاری مسابقه می‌تواند پس از بررسی باعث حذف شود.\n\n"
+        "7️⃣ فقط 🎟 بلیت‌های تأییدشده در قرعه‌کشی نهایی وزن دارند و هر نفر حداکثر یک بار برنده می‌شود.\n\n"
+        "8️⃣ قبل از فریز فهرست قرعه‌کشی، عضویت دعوت‌شده‌ها و شرکت‌کنندگان دوباره بررسی می‌شود.\n\n"
+        f"9️⃣ ⏰ پایان ثبت دعوت: <b>{campaign_end_text(campaign)}</b>\n"
+        f"📅 زمان فریز فهرست/قرعه‌کشی: <b>{draw_schedule_text(campaign)}</b>\n\n"
+        f"🔟 آخرین زمان عضویت یک دعوت جدید برای تکمیل دوره تا قرعه‌کشی: <b>{final_join_cutoff_text(campaign)}</b>\n\n"
+        f"1️⃣1️⃣ {cap}"
+        f"{_late_referral_warning(campaign)}"
     )
 
 
@@ -167,6 +247,21 @@ def render_prizes(campaign: Campaign) -> str:
     prize = escape(campaign.prize_text) if campaign.prize_text else "جزئیات جایزه به‌زودی اعلام می‌شود."
     return (
         f"<b>🎁 جوایز — {escape(campaign.name)}</b>\n\n{prize}\n\n"
-        f"🏆 تعداد برندگان: <b>{campaign.num_winners}</b> نفر\n\n"
+        f"🏆 تعداد برندگان: <b>{campaign.num_winners}</b> نفر\n"
+        f"⏰ پایان ثبت دعوت: <b>{campaign_end_text(campaign)}</b>\n"
         f"📅 زمان قرعه‌کشی: <b>{draw_schedule_text(campaign)}</b>"
+    )
+
+
+def render_transparency(campaign: Campaign) -> str:
+    lock = "✅ قوانین امتیازدهی بعد از فعال‌شدن مسابقه قفل شده‌اند." if campaign.rules_locked_at else "⚠️ قوانین هنوز قفل نشده‌اند."
+    return (
+        f"<b>🛡 شفافیت قرعه‌کشی — {escape(campaign.name)}</b>\n\n"
+        f"{lock}\n\n"
+        "🔎 قبل از قرعه‌کشی، عضویت‌ها دوباره بررسی می‌شوند و فهرست نهایی شرکت‌کنندگان فریز می‌شود.\n\n"
+        "🔐 از فهرست نهایی یک SHA-256 منتشر می‌شود تا بعداً مشخص باشد فهرست دستکاری نشده است.\n\n"
+        "₿ منبع تصادفی قرعه‌کشی: اولین بلاک بیت‌کوین بعد از زمان فریز فهرست. هش بلاک، Seed نهایی را می‌سازد و قابل بررسی عمومی است.\n\n"
+        "🏆 ۵ برنده اصلی و فهرست ذخیره از همان اجرای واحد قرعه‌کشی تولید می‌شوند؛ جایگزین برنده ردشده توسط ادمین انتخاب نمی‌شود.\n\n"
+        "📦 بعد از قرعه‌کشی، هش فهرست، Seed، منبع Seed، نسخه کد و نتیجه منتشر می‌شود.\n\n"
+        f"📅 زمان برنامه‌ریزی‌شده: <b>{draw_schedule_text(campaign)}</b>"
     )
