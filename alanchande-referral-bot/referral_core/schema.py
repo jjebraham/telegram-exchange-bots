@@ -10,12 +10,15 @@ CREATE TABLE IF NOT EXISTS campaigns (
     name TEXT NOT NULL,
     start_at TEXT NOT NULL,
     end_at TEXT NOT NULL,
+    draw_at TEXT,
     status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','active','closed','drawn')),
     invites_per_point INTEGER NOT NULL CHECK(invites_per_point >= 1),
     min_stay_hours INTEGER NOT NULL CHECK(min_stay_hours >= 0),
     max_points INTEGER NOT NULL DEFAULT 0 CHECK(max_points >= 0),
     num_winners INTEGER NOT NULL CHECK(num_winners >= 1),
     prize_text TEXT NOT NULL DEFAULT '',
+    rules_locked_at TEXT,
+    rules_version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -79,14 +82,51 @@ CREATE TABLE IF NOT EXISTS referrals (
 CREATE INDEX IF NOT EXISTS idx_referrals_campaign_referrer ON referrals(campaign_id, referrer_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_campaign_joined ON referrals(campaign_id, joined_user_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_active_stay ON referrals(campaign_id, active, stay_since);
+CREATE TABLE IF NOT EXISTS referral_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    joined_user_id INTEGER NOT NULL,
+    referrer_id INTEGER,
+    event_type TEXT NOT NULL,
+    event_at TEXT NOT NULL,
+    details_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_referral_events_campaign_user
+    ON referral_events(campaign_id, joined_user_id, event_at);
+CREATE INDEX IF NOT EXISTS idx_referral_events_campaign_referrer
+    ON referral_events(campaign_id, referrer_id, event_at);
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
+    admin_user_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    details_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_campaign
+    ON admin_audit_log(campaign_id, created_at);
+CREATE TABLE IF NOT EXISTS draw_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL UNIQUE REFERENCES campaigns(id) ON DELETE CASCADE,
+    entrants_json TEXT NOT NULL,
+    entrant_digest TEXT NOT NULL,
+    verification_summary TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS draws (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL UNIQUE REFERENCES campaigns(id) ON DELETE CASCADE,
     seed TEXT NOT NULL,
+    seed_source TEXT NOT NULL DEFAULT '',
     entrants_json TEXT NOT NULL,
     winners_json TEXT NOT NULL,
+    reserves_json TEXT NOT NULL DEFAULT '[]',
     entrant_digest TEXT NOT NULL,
     verification_summary TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
 );
 """
