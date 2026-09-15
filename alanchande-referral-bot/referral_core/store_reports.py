@@ -88,8 +88,73 @@ class ReportsMixin:
 
     def participant_count(self, campaign_id: int) -> int:
         with self.connect() as conn:
-            row = conn.execute("SELECT COUNT(*) AS n FROM invite_links WHERE campaign_id=?", (campaign_id,)).fetchone()
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM invite_links WHERE campaign_id=?", (campaign_id,)
+            ).fetchone()
         return int(row["n"])
+
+    def track_funnel_event(self, campaign_id: int, user_id: int, event_type: str,
+                           source: str = "", now: datetime | None = None) -> None:
+        """Record one unique funnel event per user/campaign/type/source."""
+        event = event_type.strip().lower()[:64]
+        src = source.strip().lower()[:64]
+        if not event:
+            return
+        ts = iso_utc(now or utcnow())
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO funnel_events(campaign_id,user_id,event_type,source,created_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(campaign_id,user_id,event_type,source) DO NOTHING""",
+                (campaign_id, user_id, event, src, ts),
+            )
+
+    def funnel_stats(self, campaign: Campaign, now: datetime | None = None) -> dict:
+        """Return measurable acquisition/referral funnel stages for an admin report."""
+        cutoff = iso_utc(campaign.cutoff(now))
+        with self.connect() as conn:
+            event_rows = conn.execute(
+                """SELECT event_type,COUNT(DISTINCT user_id) AS n
+                   FROM funnel_events WHERE campaign_id=? GROUP BY event_type""",
+                (campaign.id,),
+            ).fetchall()
+            source_rows = conn.execute(
+                """SELECT source,COUNT(DISTINCT user_id) AS n
+                   FROM funnel_events
+                   WHERE campaign_id=? AND event_type='bot_start'
+                   GROUP BY source ORDER BY n DESC,source ASC""",
+                (campaign.id,),
+            ).fetchall()
+            candidate_row = conn.execute(
+                """SELECT COUNT(*) AS n FROM (
+                       SELECT joined_user_id FROM pending_referrals WHERE campaign_id=?
+                       UNION
+                       SELECT joined_user_id FROM referrals WHERE campaign_id=?
+                   )""",
+                (campaign.id, campaign.id),
+            ).fetchone()
+            referral_row = conn.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS active,
+                          SUM(CASE WHEN active=1 AND stay_since<=? THEN 1 ELSE 0 END) AS qualified
+                   FROM referrals WHERE campaign_id=?""",
+                (cutoff, campaign.id),
+            ).fetchone()
+
+        events = {row["event_type"]: int(row["n"] or 0) for row in event_rows}
+        return {
+            "bot_starts": events.get("bot_start", 0),
+            "referral_opens": events.get("referral_open", 0),
+            "participants_with_links": self.participant_count(campaign.id),
+            "referral_candidates": int(candidate_row["n"] or 0),
+            "joined_referrals": int(referral_row["total"] or 0),
+            "active_referrals": int(referral_row["active"] or 0),
+            "qualified_referrals": int(referral_row["qualified"] or 0),
+            "sources": [
+                {"source": row["source"] or "organic", "count": int(row["n"] or 0)}
+                for row in source_rows
+            ],
+        }
 
     def admin_stats(self, campaign: Campaign, now: datetime | None = None) -> dict[str, int]:
         cutoff = iso_utc(campaign.cutoff(now))
@@ -117,7 +182,10 @@ class ReportsMixin:
         counts = self.campaign_counts(campaign, user_id, now)
         with self.connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
-            link = conn.execute("SELECT invite_link FROM invite_links WHERE campaign_id=? AND user_id=?", (campaign.id, user_id)).fetchone()
+            link = conn.execute(
+                "SELECT invite_link FROM invite_links WHERE campaign_id=? AND user_id=?",
+                (campaign.id, user_id),
+            ).fetchone()
             referred_by = conn.execute(
                 """SELECT referrer_id,active,stay_since,left_at FROM referrals
                    WHERE campaign_id=? AND joined_user_id=?""",
@@ -146,7 +214,10 @@ class ReportsMixin:
                                     now: datetime | None = None) -> None:
         ts = iso_utc(now or utcnow())
         with self.connect() as conn:
-            conn.execute("UPDATE referrals SET qualified_notified_at=?,updated_at=? WHERE id=?", (ts, ts, referral_id))
+            conn.execute(
+                "UPDATE referrals SET qualified_notified_at=?,updated_at=? WHERE id=?",
+                (ts, ts, referral_id),
+            )
 
     def save_draw(self, campaign: Campaign, seed: str, entrants: Sequence[tuple[int, int]],
                   winners: Sequence[int], verification_summary: str,
@@ -162,7 +233,9 @@ class ReportsMixin:
                 (campaign.id, seed, payload, json.dumps(list(winners), separators=(",", ":")),
                  digest, verification_summary, ts),
             )
-            conn.execute("UPDATE campaigns SET status='drawn',updated_at=? WHERE id=?", (ts, campaign.id))
+            conn.execute(
+                "UPDATE campaigns SET status='drawn',updated_at=? WHERE id=?", (ts, campaign.id)
+            )
         return digest
 
     def draw_for_campaign(self, campaign_id: int) -> dict | None:
