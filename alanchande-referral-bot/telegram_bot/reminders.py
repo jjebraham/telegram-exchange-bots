@@ -10,7 +10,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application
 
-from referral_core import ReferralDB
+from referral_core import ReferralDB, points_from_invites
 from referral_core.models import utcnow
 from .config import Settings, hours_label, telegram_membership
 from .user_handlers import post_init as user_post_init, post_stop as user_post_stop
@@ -28,17 +28,29 @@ def _pending_keyboard(settings: Settings, campaign_id: int) -> InlineKeyboardMar
 async def _notify_referrer(application: Application, campaign, referrer_id: int, result: str) -> None:
     if result not in {"created", "reactivated"}:
         return
+    db: ReferralDB = application.bot_data["db"]
+    counts = db.campaign_counts(campaign, referrer_id)
+    previous_current = points_from_invites(
+        max(0, counts["active"] - 1), campaign.invites_per_point, campaign.max_points
+    )
+    gained_point = counts["current_points"] > previous_current
+    remainder = counts["active"] % campaign.invites_per_point
+    need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+    milestone = "\n🎉 <b>یک امتیاز موقت جدید گرفتی!</b>" if gained_point else ""
+
     if result == "created":
         text = (
             "🎉 <b>یک نفر جدید با لینک تو عضو شد!</b>\n\n"
-            "⭐ از همین حالا در امتیاز موقتت حساب می‌شود.\n"
+            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>{milestone}\n"
+            f"🔥 تا امتیاز موقت بعدی: <b>{need}</b> دعوت فعال\n\n"
             f"🎟 اگر <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته بماند، "
             "به بلیت تأییدشده قرعه‌کشی تبدیل می‌شود."
         )
     else:
         text = (
             "🔄 <b>یکی از دعوت‌شده‌هات دوباره عضو شد.</b>\n\n"
-            "⏳ زمان تأیید او از صفر شروع شد و تا وقتی عضو بماند دوباره در امتیاز موقتت حساب می‌شود."
+            "⏳ زمان تأیید او از صفر شروع شد.\n"
+            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>{milestone}"
         )
     try:
         await application.bot.send_message(referrer_id, text, parse_mode=ParseMode.HTML)
@@ -46,6 +58,31 @@ async def _notify_referrer(application: Application, campaign, referrer_id: int,
         pass
     except TelegramError:
         log.exception("Could not notify referrer %s from reconciliation worker", referrer_id)
+
+
+async def _notify_reconciled_leave(application: Application, campaign, referrer_id: int) -> None:
+    db: ReferralDB = application.bot_data["db"]
+    counts = db.campaign_counts(campaign, referrer_id)
+    previous_current = points_from_invites(
+        counts["active"] + 1, campaign.invites_per_point, campaign.max_points
+    )
+    lost_point = counts["current_points"] < previous_current
+    score_line = (
+        "\n⬇️ <b>یک امتیاز موقت کم شد.</b>"
+        if lost_point else ""
+    )
+    try:
+        await application.bot.send_message(
+            referrer_id,
+            "❌ <b>در بررسی دوره‌ای مشخص شد یکی از دعوت‌شده‌هات دیگر عضو کانال نیست.</b>\n\n"
+            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>{score_line}\n"
+            "اگر دوباره عضو شود، زمان تأییدش از صفر شروع می‌شود.",
+            parse_mode=ParseMode.HTML,
+        )
+    except (Forbidden, BadRequest):
+        pass
+    except TelegramError:
+        log.exception("Could not notify reconciled leave referrer=%s", referrer_id)
 
 
 async def _finalize_row(application: Application, campaign, row: dict, source: str) -> bool:
@@ -70,7 +107,6 @@ async def _finalize_row(application: Application, campaign, row: dict, source: s
                 first_name=row.get("joined_first_name") or "دوست عزیز",
                 last_name=None,
             )
-            # Build a lightweight PTB-like context wrapper for the shared onboarding function.
             fake_context = SimpleNamespace(
                 bot=application.bot,
                 application=application,
@@ -130,7 +166,7 @@ async def pending_reminder_pass(application: Application) -> None:
 
 
 async def reconciliation_pass(application: Application) -> None:
-    """Heal missed pending-join and currently-left membership events without changing rules."""
+    """Heal missed pending-join and leave events without changing contest rules."""
     settings: Settings = application.bot_data["settings"]
     db: ReferralDB = application.bot_data["db"]
     campaign = db.live_campaign()
@@ -152,11 +188,14 @@ async def reconciliation_pass(application: Application) -> None:
         campaign.id, limit=settings.reconciliation_batch_size
     ):
         user_id = int(row["joined_user_id"])
+        referrer_id = int(row["referrer_id"])
         try:
             if not await telegram_membership(application.bot, settings, user_id):
                 changed = db.mark_left(user_id)
                 if changed:
                     log.info("Reconciliation marked referral left: user=%s rows=%s", user_id, changed)
+                    db.track_funnel_event(campaign.id, user_id, "left", "reconciliation")
+                    await _notify_reconciled_leave(application, campaign, referrer_id)
         except TelegramError:
             log.warning("Active reconciliation lookup failed user=%s", user_id)
         await asyncio.sleep(0.05)
