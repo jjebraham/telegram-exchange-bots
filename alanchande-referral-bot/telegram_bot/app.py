@@ -1,6 +1,5 @@
 import json
 import logging
-import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +32,7 @@ from .admin_handlers import (
 )
 from .config import Settings
 from .context import is_admin, services
+from .growth import cmd_promo_link, cmd_promo_post, cmd_sources, cmd_weekly_post
 from .live_runtime import on_chat_member, post_init, post_stop
 from .promo_handlers import cmd_start_entry, on_promo_enter
 from .referral_success import on_referral_check_and_welcome
@@ -63,13 +63,6 @@ def _age_text(seconds: float | None) -> str:
     if hours < 48:
         return f"{hours}h {minutes % 60}m"
     return f"{hours // 24}d {hours % 24}h"
-
-
-def _mask_name(first_name, username, user_id: int) -> str:
-    raw = str(first_name or username or "").strip()
-    if raw:
-        return raw[:2] + "***"
-    return "کاربر ***" + str(user_id)[-3:]
 
 
 async def cmd_trend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -146,7 +139,7 @@ async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     task_lines = []
     for key in (
         "qualification_task", "pending_reminder_task", "reconciliation_task",
-        "analytics_task", "nudge_task",
+        "analytics_task", "nudge_task", "daily_digest_task",
     ):
         task = context.application.bot_data.get(key)
         state = "missing" if task is None else ("failed/stopped" if task.done() else "running")
@@ -155,7 +148,10 @@ async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     statuses = {row["name"]: row for row in db.maintenance_statuses()}
     worker_lines = []
     now = utcnow()
-    for name in ("qualification", "pending_reminder", "reconciliation", "analytics_snapshot", "nudges"):
+    for name in (
+        "qualification", "pending_reminder", "reconciliation", "analytics_snapshot",
+        "nudges", "daily_admin_digest",
+    ):
         row = statuses.get(name)
         if not row:
             worker_lines.append(f"• {name}: no run recorded yet")
@@ -183,52 +179,6 @@ async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "", "Worker heartbeat:", *worker_lines,
     ]
     await update.message.reply_text("\n".join(lines))
-
-
-async def cmd_weekly_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings, db, campaign = _admin_campaign(update, context)
-    if not update.message or not is_admin(update, settings):
-        return
-    if not campaign:
-        await update.message.reply_text("Usage: /weekly_post [campaign_slug] — campaign not found.")
-        return
-
-    stats = db.admin_stats(campaign)
-    top = db.leaderboard(campaign, limit=5)
-    seconds_left = max(0, int((campaign.end_dt - utcnow()).total_seconds()))
-    days_left = max(0, math.ceil(seconds_left / 86400))
-    username = context.bot.username
-    if not username:
-        me = await context.bot.get_me()
-        username = me.username or "Alanchandebot"
-    promo_link = f"https://t.me/{username}?start=promo_weekly"
-
-    lines = [
-        f"🎁 گزارش مسابقه {campaign.name}", "",
-        f"👥 شرکت‌کننده‌ها: {stats['participants']}",
-        f"🔥 دعوت‌های فعال: {stats['active']}",
-        f"🎟 دعوت‌های تأییدشده: {stats['qualified']}",
-        f"⏳ {days_left} روز تا پایان ثبت دعوت‌ها", "",
-    ]
-    if top:
-        lines.append("🏆 نفرات برتر فعلی:")
-        for index, row in enumerate(top, 1):
-            lines.append(
-                f"{index}. {_mask_name(row['first_name'], row['username'], row['user_id'])} — "
-                f"⭐ {row['current_points']} موقت | 🎟 {row['confirmed_points']} تأییدشده"
-            )
-        lines.append("")
-    lines.extend([
-        "ℹ️ جدول فقط روند فعلی را نشان می‌دهد؛ برنده‌ها با قرعه‌کشی وزن‌دار از بین بلیت‌های تأییدشده انتخاب می‌شوند.",
-        "",
-        f"🎁 جوایز: {campaign.prize_text}",
-        "",
-        "👇 برای شرکت و گرفتن لینک اختصاصی:",
-        promo_link,
-        "",
-        "📢 @alanchande_com",
-    ])
-    await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
 
 
 def create_application(settings: Settings) -> Application:
@@ -261,6 +211,9 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("stats", cmd_admin_stats))
     app.add_handler(CommandHandler("funnel", cmd_funnel))
     app.add_handler(CommandHandler("trend", cmd_trend))
+    app.add_handler(CommandHandler("sources", cmd_sources))
+    app.add_handler(CommandHandler("promo_link", cmd_promo_link))
+    app.add_handler(CommandHandler("promo_post", cmd_promo_post))
     app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("weekly_post", cmd_weekly_post))
     app.add_handler(CommandHandler("audit", cmd_audit))
