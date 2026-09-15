@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from html import escape
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -12,6 +11,7 @@ from telegram.ext import ContextTypes
 
 from .config import telegram_membership
 from .context import services
+from .growth import normalize_promo_source, promo_variant
 from .ui import (
     campaign_end_text,
     link_keyboard,
@@ -22,15 +22,23 @@ from .ui import (
 from .user_handlers import cmd_start as legacy_cmd_start, get_or_create_link
 
 log = logging.getLogger("alanchande_referral_bot")
-_SOURCE_RE = re.compile(r"[^a-z0-9_-]+")
 
 
 def _source_from_payload(payload: str) -> str:
     if payload.startswith("promo_"):
-        source = payload[len("promo_"):]
-        source = _SOURCE_RE.sub("_", source.lower()).strip("_")
-        return source[:64] or "promo"
+        return normalize_promo_source(payload[len("promo_"):])[:64]
     return "organic"
+
+
+def _first_source_for_user(db, campaign_id: int, user_id: int) -> str:
+    with db.connect() as conn:
+        row = conn.execute(
+            """SELECT source FROM funnel_events
+               WHERE campaign_id=? AND user_id=? AND event_type='bot_start'
+               ORDER BY created_at ASC LIMIT 1""",
+            (campaign_id, user_id),
+        ).fetchone()
+    return str(row["source"] or "organic") if row else "organic"
 
 
 def _entry_keyboard(channel_url: str, campaign_id: int, is_member: bool) -> InlineKeyboardMarkup:
@@ -44,7 +52,7 @@ def _entry_keyboard(channel_url: str, campaign_id: int, is_member: bool) -> Inli
     return InlineKeyboardMarkup(rows)
 
 
-def _entry_text(campaign, is_member: bool) -> str:
+def _entry_text(campaign, is_member: bool, variant: str = "default") -> str:
     if is_member:
         steps = "عضو کانال هستی ✅ فقط روی دکمه زیر بزن تا لینک اختصاصی‌ات ساخته شود."
     else:
@@ -54,13 +62,32 @@ def _entry_text(campaign, is_member: bool) -> str:
             "3️⃣ روی «✅ عضو شدم؛ شروع مسابقه» بزن."
         )
     prize = escape(campaign.prize_text) if campaign.prize_text else "جوایز نقدی مسابقه"
+
+    if variant == "b":
+        return (
+            f"🔥 <b>همین الان وارد {escape(campaign.name)} شو</b>\n\n"
+            f"⭐ هر <b>{campaign.invites_per_point} دعوت فعال</b> = ۱ امتیاز موقت و امتیازت همان لحظه در ربات دیده می‌شود.\n"
+            "🎟 بعد از کامل‌شدن دوره عضویت، بلیت قرعه‌کشی تأیید می‌شود.\n\n"
+            f"🏆 <b>{campaign.num_winners} برنده</b>\n"
+            f"🎁 {prize}\n"
+            f"⏰ پایان ثبت دعوت: <b>{campaign_end_text(campaign)}</b>\n\n"
+            f"{steps}\n\n"
+            "ورود کمتر از یک دقیقه طول می‌کشد و بعد لینک اختصاصی‌ات آماده است. 🚀"
+        )
+
+    # Default and variant A are prize-first. Variant A is intentionally concise
+    # so it can be compared against the mechanics-first B version.
+    concise = variant == "a"
+    extra = "" if concise else (
+        "بعد از ورود، لینک اختصاصی خودت را می‌گیری و می‌توانی همان لحظه برای دوستانت بفرستی. 🚀"
+    )
     return (
         f"🎁 <b>{escape(campaign.name)}</b>\n\n"
         f"💰 <b>جوایز:</b> {prize}\n"
         f"🏆 <b>{campaign.num_winners} برنده</b>\n"
         f"⏰ پایان ثبت دعوت: <b>{campaign_end_text(campaign)}</b>\n\n"
-        f"{steps}\n\n"
-        "بعد از ورود، لینک اختصاصی خودت را می‌گیری و می‌توانی همان لحظه برای دوستانت بفرستی. 🚀"
+        f"{steps}"
+        + (f"\n\n{extra}" if extra else "")
     )
 
 
@@ -121,7 +148,7 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        _entry_text(campaign, is_member),
+        _entry_text(campaign, is_member, promo_variant(source)),
         parse_mode=ParseMode.HTML,
         reply_markup=_entry_keyboard(settings.channel_url, campaign.id, is_member),
     )
@@ -168,8 +195,9 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("ساخت لینک با خطا روبه‌رو شد. دوباره امتحان کن.", show_alert=True)
         return
 
-    db.track_funnel_event(campaign.id, user.id, "entered_contest", "")
-    db.track_funnel_event(campaign.id, user.id, "link_created", "")
+    source = _first_source_for_user(db, campaign.id, user.id)
+    db.track_funnel_event(campaign.id, user.id, "entered_contest", source)
+    db.track_funnel_event(campaign.id, user.id, "link_created", source)
 
     await query.answer("لینک اختصاصی‌ات آماده شد 🚀")
     success_text = (
