@@ -33,15 +33,10 @@ from .admin_handlers import (
 )
 from .config import Settings
 from .context import is_admin, services
+from .live_runtime import on_chat_member, post_init, post_stop
 from .promo_handlers import cmd_start_entry, on_promo_enter
 from .referral_success import on_referral_check_and_welcome
-from .reminders import post_init, post_stop
-from .user_handlers import (
-    cmd_menu,
-    cmd_stats_user,
-    on_chat_member,
-    on_menu_callback,
-)
+from .user_handlers import cmd_menu, cmd_stats_user, on_menu_callback
 
 log = logging.getLogger("alanchande_referral_bot")
 UTC = timezone.utc
