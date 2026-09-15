@@ -1,251 +1,297 @@
 # AlanChande Telegram Referral Contest Bot
 
-Dedicated referral/giveaway bot for [`@alanchande_com`](https://t.me/alanchande_com).
-It is intentionally separate from `@kianiexchangebot`, so referral traffic, restarts,
-database changes, and giveaway code cannot interfere with the exchange bot.
+Dedicated referral/giveaway bot for [`@alanchande_com`](https://t.me/alanchande_com), intentionally isolated from the exchange bot.
 
-## What it does
+## Current design
 
-- Gives each participant a persistent **bot deep link** per campaign.
-- A referred friend must first open the personal bot link and then join the channel.
-- Stores the first referrer as pending before the channel join, then confirms it from
-  the normal Telegram `chat_member` join event.
-- Does **not** depend on Telegram exposing the channel invite link used, which is not
-  reliable for public channels.
-- Requires a configurable **continuous stay** before a referral is qualified.
-  Default: **168 hours / 7 days**.
-- If the referred member leaves, their credit disappears. If they rejoin during
-  the active campaign, the original referrer is kept and the stay timer restarts.
-- One Telegram account can be attributed only once per campaign.
-- Shows users their qualified/pending/left referrals, points, personal link,
-  leaderboard, prizes, and rules in Persian.
-- Uses **2 qualified referrals = 1 point** by default.
-- Uses a default **20-point cap** to reduce referral farming.
-- Sends a notification when a referral becomes qualified.
-- Supports multiple historical campaigns without mixing their referrals.
-- Runs a deterministic **weighted random draw without replacement**.
-- Before drawing, re-checks both qualified referred users and entrants against
-  Telegram channel membership.
-- Stores the entrant snapshot, public seed, winners, verification summary, and a
-  SHA-256 digest for auditability.
+- Persistent random bot deep-link per participant/campaign: `https://t.me/Alanchandebot?start=ref_...`
+- First referrer is permanent inside a campaign.
+- No self-referral.
+- Referral attribution is reserved before the friend joins the public channel.
+- Telegram `chat_member`, manual verification, reminders, and reconciliation can finalize a pending join.
+- Leaving removes live credit; rejoin keeps the original referrer and restarts the retention clock.
+- Default retention: **168 continuous hours / 7 days**.
+- Default scoring: **2 active referrals = 1 temporary point**.
+- Only retention-qualified referrals create **confirmed draw tickets**.
+- Default cap: **20 confirmed tickets**.
+- Live leaderboard ranks temporary score but clearly displays confirmed tickets separately.
+- Participant welcome is idempotent and automatically gives referred users their own referral link.
+- Funnel tracking supports `promo_SOURCE` deep links.
+- A periodic reconciliation worker repairs unresolved pending joins and currently-left active referrals after missed Telegram events.
+- Referral state changes and admin actions are append-only logged for audit/forensics.
+- SQLite runs in WAL mode with busy timeout.
+- Supervisor keeps one polling process alive.
+
+## Important live-campaign protections
+
+### Rules are locked after activation
+
+`/campaign_config` is allowed only while a campaign is a draft. Activation sets `rules_locked_at`; scoring parameters cannot be silently changed mid-campaign.
+
+### Fixed draw time and qualification cutoff
+
+Each campaign stores an explicit `draw_at`. Existing databases are migrated automatically; old campaigns are backfilled with the previous policy: **21:00 Istanbul on the calendar day after campaign end**.
+
+The final retention cutoff is fixed as:
+
+```text
+final_qualification_cutoff = draw_at - min_stay_hours
+```
+
+The final entrant set therefore does not change merely because an admin runs the draw late.
+
+### Frozen entrant snapshot before entropy
+
+At/after the fixed draw time, run:
+
+```text
+/snapshot paeez1405
+```
+
+The bot:
+
+1. re-checks Telegram membership using the fixed draw-time qualification cutoff;
+2. deactivates invalid/deleted/left qualified referrals;
+3. verifies eligible entrants;
+4. freezes the exact weighted entrant list;
+5. stores and prints a SHA-256 digest.
+
+Publish that digest before the seed/entropy exists.
+
+### Externally verifiable seed
+
+The draw no longer accepts an arbitrary admin-selected seed.
+
+After `/snapshot`, wait for the **first Bitcoin block whose timestamp is after the snapshot time**. Then run:
+
+```text
+/draw paeez1405 | BITCOIN_BLOCK_HEIGHT | BITCOIN_BLOCK_HASH
+```
+
+The bot verifies via Blockstream that:
+
+- the supplied hash belongs to the supplied height;
+- the block timestamp is after the frozen snapshot;
+- the previous Bitcoin block timestamp is before the frozen snapshot.
+
+This enforces the first Bitcoin block after the snapshot as public future entropy. The weighted draw uses that block hash as the deterministic seed.
+
+The same seeded run produces:
+
+- the configured winners;
+- up to 5 ordered reserve winners.
+
+A disqualified winner can therefore be replaced by the next pre-committed reserve rather than by admin choice.
+
+## User scoring vocabulary
+
+The UI distinguishes:
+
+```text
+⭐ امتیاز موقت
+🎟 بلیت تأییدشده
+```
+
+Temporary score is based on referrals who are active now. Confirmed tickets require the full retention period and are the only weight used in the final draw.
+
+The stats screen also shows:
+
+- active / qualified / pending / left referrals;
+- unfinished referral-link opens;
+- distance to the next temporary point;
+- nearest qualification countdown;
+- the participant's current leaderboard rank.
+
+The leaderboard masks participant identities and explicitly states that leaderboard rank does **not** determine prize order.
+
+## Late-referral disclosure
+
+The bot calculates and displays the latest `stay_since` that can still finish the retention period by the fixed draw time. After that moment, new active referrals can still appear in temporary progress but are visibly marked as unable to become confirmed tickets in time for the draw.
+
+## Trust / transparency menu
+
+The main menu includes:
+
+```text
+🛡 شفافیت
+```
+
+It explains:
+
+- scoring rules are locked after activation;
+- membership is re-verified;
+- entrant snapshot SHA-256 is published;
+- Bitcoin future entropy determines the draw seed;
+- winners and reserves come from one deterministic weighted draw;
+- draw proof will include snapshot hash, seed source, result, and code version.
 
 ## Referral flow
 
 ```text
-referrer shares https://t.me/Alanchandebot?start=ref_...
+referrer shares personal bot deep link
         ↓
-friend opens the bot deep link
+friend presses Start in @Alanchandebot
         ↓
-bot verifies the friend is not currently a channel member
+first-referrer attribution is reserved
         ↓
-bot stores pending attribution to the first referrer
+friend opens @alanchande_com and presses Telegram's native Join button
         ↓
-friend taps the channel button and joins @alanchande_com normally
+chat_member event OR manual check OR reconciliation confirms membership
         ↓
-Telegram sends chat_member update
+referral is finalized atomically
         ↓
-bot converts pending attribution into a referral
+referrer gets temporary progress immediately
         ↓
-continuous-stay timer starts
+referred user gets congratulations + own referral link + menu
+        ↓
+continuous retention clock runs
+        ↓
+qualified referral creates confirmed draw weight
 ```
 
-The deep-link payload is random and stored server-side, so a user cannot simply
-forge another user's Telegram ID into a referral URL.
+## Promo / funnel flow
 
-## Important Telegram requirements
-
-1. Use the dedicated community/referral bot (`@Alanchandebot`).
-2. Add the bot as an **administrator** of `@alanchande_com` so it receives
-   `chat_member` updates and can check membership.
-3. Use the numeric channel ID (`-100...`) for `CHANNEL_ID` when possible.
-4. The bot uses polling with `allowed_updates=Update.ALL_TYPES`, which is required
-   for `chat_member` updates.
-5. Do **not** run two polling processes with the same bot token.
-
-A public/search join without first opening a referral deep link has no new
-referrer attribution. The bot link must be opened before the friend joins.
-
-## Install
-
-```bash
-cd /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env
-```
-
-Export the environment variables through Supervisor/systemd/Docker rather than
-`source .env` in production. Never commit the real token.
-
-For a quick shell test:
-
-```bash
-export BOT_TOKEN='...'
-export CHANNEL_ID='-100...'
-export CHANNEL_URL='https://t.me/alanchande_com'
-export ADMIN_IDS='YOUR_TELEGRAM_ID'
-export DB_PATH="$PWD/referral_bot.db"
-.venv/bin/python bot.py
-```
-
-## Create the first campaign
-
-Admin commands are accepted only from Telegram IDs in `ADMIN_IDS`.
-Dates **must include a timezone offset**. Istanbul is `+03:00`.
-
-Create a draft campaign:
+Use tagged links such as:
 
 ```text
-/campaign_create autumn26 | AlanChande Autumn Giveaway | 2026-09-20T00:00:00+03:00 | 2026-10-20T23:59:59+03:00 | 5 prizes - details announced in the channel
+https://t.me/Alanchandebot?start=promo_bigchannel
+https://t.me/Alanchandebot?start=promo_alphadl
 ```
 
-Optional: change scoring before launch:
+Admin report:
+
+```text
+/funnel paeez1405
+```
+
+Tracked/derived stages include bot starts, entered-contest users, personal links, referral-link opens, candidates, joined referrals, active referrals, and qualified referrals.
+
+Telegram does not expose channel post views or whether the native Share sheet was actually completed.
+
+## Anti-fraud review
+
+The current campaign does not auto-disqualify users using heuristics. The bot provides a flag-only report:
+
+```text
+/flags paeez1405
+```
+
+Current signals include high referral velocity, high leave ratio, and unusually high volume. These are review signals only.
+
+Before payout, combine `/verify`, `/flags`, `/audit`, manual review, and winner contact. Do not auto-DQ a participant from one weak heuristic.
+
+## Admin audit
+
+Admin campaign/draw actions are written to `admin_audit_log`.
+
+```text
+/adminlog
+/adminlog paeez1405
+```
+
+## Campaign commands
+
+Create a draft:
+
+```text
+/campaign_create autumn26 | Autumn Giveaway | 2026-09-20T00:00:00+03:00 | 2026-10-20T23:59:59+03:00 | prize text
+```
+
+Configure **before activation only**:
 
 ```text
 /campaign_config autumn26 | 2 | 168 | 20 | 5
 ```
 
-This means:
+Optional explicit draw time while still draft:
 
-- 2 qualified referrals = 1 point
-- 168 continuous hours = 7-day qualification period
-- max 20 points/tickets per participant
-- 5 winners
+```text
+/campaign_draw_at autumn26 | 2026-10-21T21:00:00+03:00
+```
 
-Activate it:
+Activate:
 
 ```text
 /campaign_activate autumn26
 ```
 
-See campaigns and stats:
+Other admin commands:
 
 ```text
 /campaigns
-/stats autumn26
-/audit 123456789 autumn26
+/stats paeez1405
+/funnel paeez1405
+/audit USER_ID paeez1405
+/flags paeez1405
+/adminlog paeez1405
+/verify paeez1405
+/snapshot paeez1405
+/draw paeez1405 | BITCOIN_BLOCK_HEIGHT | BITCOIN_BLOCK_HASH
 ```
 
-Close new referral activity before the draw:
+## Reconciliation
+
+Defaults:
 
 ```text
-/campaign_close autumn26
+PENDING_REMINDER_MINUTES=15
+PENDING_REMINDER_CHECK_SECONDS=300
+RECONCILIATION_CHECK_SECONDS=21600
+RECONCILIATION_BATCH_SIZE=200
+QUALIFICATION_CHECK_SECONDS=3600
 ```
 
-Run final membership verification:
+The reminder is one-time, but reconciliation continues to inspect unresolved pending referrals even after a reminder was already sent. This closes the previous gap where a user could join after their reminder while the membership event was missed.
 
-```text
-/verify autumn26
+Active referrals are also rechecked in a bounded batch to heal currently-left membership state after missed events. A leave+rejoin sequence that happens entirely between checks cannot be reconstructed from the Bot API; the event history/reconciliation substantially reduces, but cannot eliminate, that Telegram limitation.
+
+## SQLite backup
+
+A safe online backup utility is included:
+
+```bash
+cd /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot
+set -a
+source .env
+set +a
+BACKUP_DIR=/home/kianirad2020/alanchande-backups \
+  .venv/bin/python scripts/backup_db.py
 ```
 
-Then draw using a **publicly announced seed**:
+It uses SQLite's backup API, writes a SHA-256 manifest, and removes backups older than `BACKUP_RETENTION_DAYS` (default 30).
 
-```text
-/draw autumn26 | PUBLIC-SEED-HERE
-```
-
-The command refuses to draw if Telegram membership verification has errors, if
-there are fewer eligible entrants than winners, or if the campaign was already
-drawn.
-
-## Suggested Telegram channel greeting
-
-> 🎁 **با معرفی دوستانت جایزه ببر!**
->
-> لینک اختصاصی‌ات را از ربات بگیر. دوستت باید اول از لینک تو وارد ربات شود و
-> بعد از داخل ربات عضو کانال شود. هر ۲ دعوت تأییدشده = ۱ امتیاز.
->
-> هرچه امتیاز بیشتری داشته باشی، شانس برنده شدنت بیشتر است.
->
-> 👇 برای گرفتن لینک اختصاصی و دیدن امتیازها، ربات مسابقه را شروع کن.
-
-Button URL:
-
-```text
-https://t.me/Alanchandebot?start=channel
-```
-
-The user must press **Start** because Telegram bots cannot initiate a private chat
-with a user who has never contacted the bot.
-
-## User menu
-
-The Persian user interface contains:
-
-- 📤 دعوت دوستان
-- 📊 امتیازهای من
-- 👥 دعوت‌های من
-- 🏆 جدول مسابقه
-- 🎁 جوایز
-- 📜 قوانین
-- 📢 کانال الان چنده؟
-
-The invite screen includes a Telegram **share button**, so the user does not need
-to manually copy the personal link.
-
-## Anti-abuse behavior
-
-A referral progresses as:
-
-```text
-open personal bot link while not currently a channel member
-        ↓
-pending attribution to first referrer
-        ↓
-join channel
-        ↓
-pending for 7 continuous days
-        ↓
-qualified
-        ↓
-leave channel → credit stops counting
-        ↓
-rejoin during active campaign → original referrer kept, timer restarts
-```
-
-Additional controls:
-
-- no self-referral
-- first referrer is permanent within a campaign
-- one referred Telegram ID per campaign
-- random server-side referral payloads
-- point cap
-- final membership verification before draw
-- entrant must still be a member at draw time
-- admin `/audit` command
-
-Important limitation: Telegram does not provide a complete historical member list
-to bots, so checking that a user is *currently* outside the channel when opening a
-referral link cannot prove that they were never a member in the past. Telegram also
-does not provide bots with a trustworthy account creation date or a way to prove
-that two accounts are actually friends.
+For real disaster recovery, sync `BACKUP_DIR` to another host/object store or use a separately mounted remote destination. A backup on the same server is not an off-site backup.
 
 ## Supervisor
 
-Copy `deploy/supervisor.conf.example`, replace the token/channel/admin values, then:
+Production must run exactly one polling process for this token.
 
 ```bash
-sudo cp deploy/supervisor.conf.example /etc/supervisor/conf.d/alanchande_referral_bot.conf
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl start alanchande_referral_bot
+sudo supervisorctl status alanchande_referral_bot
+sudo supervisorctl restart alanchande_referral_bot
+```
+
+Do not run `.venv/bin/python bot.py` manually at the same time as Supervisor.
+
+## Production update
+
+```bash
+cd /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot || exit 1
+
+git pull --ff-only origin feature/alanchande-referral-bot-20260914
+
+.venv/bin/python -m unittest discover -s tests -v
+
+sudo supervisorctl restart alanchande_referral_bot
 sudo supervisorctl status alanchande_referral_bot
 ```
 
-Do not put the real token into GitHub.
+The DB migration runs automatically during bot initialization and is additive.
 
-## Tests
-
-Core tests require only Python:
-
-```bash
-PYTHONPATH=. python3 -m unittest -v tests.test_core
-```
-
-Full tests require the Telegram dependency:
+## Tests / CI
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-GitHub Actions runs compilation and the full test suite on Python 3.10 and 3.12.
+GitHub Actions compiles the project and runs the full test suite on Python 3.10 and 3.12.
