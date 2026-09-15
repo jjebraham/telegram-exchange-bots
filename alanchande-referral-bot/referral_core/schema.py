@@ -125,6 +125,33 @@ CREATE TABLE IF NOT EXISTS draws (
     verification_summary TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS campaign_daily_metrics (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    snapshot_date TEXT NOT NULL,
+    metrics_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(campaign_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_metrics_campaign_date
+    ON campaign_daily_metrics(campaign_id, snapshot_date);
+CREATE TABLE IF NOT EXISTS notification_throttle (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL,
+    window_started_at TEXT NOT NULL,
+    sent_count INTEGER NOT NULL DEFAULT 0,
+    suppressed_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(campaign_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS maintenance_status (
+    name TEXT PRIMARY KEY,
+    last_ok_at TEXT,
+    last_error_at TEXT,
+    last_error TEXT,
+    details_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
