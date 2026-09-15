@@ -12,6 +12,7 @@ from telegram.ext import Application, ContextTypes
 from referral_core import ReferralDB
 from .config import Settings, extract_status_change, is_configured_channel
 from .context import services
+from .growth import daily_admin_digest_loop
 from .reminders import analytics_loop, nudge_loop, pending_reminder_loop, reconciliation_loop
 from .user_handlers import notify_referral_join
 
@@ -157,12 +158,15 @@ async def post_init(application: Application) -> None:
     application.bot_data["nudge_task"] = asyncio.create_task(
         nudge_loop(application), name="participant-nudge-loop"
     )
+    application.bot_data["daily_digest_task"] = asyncio.create_task(
+        daily_admin_digest_loop(application), name="daily-admin-digest-loop"
+    )
 
 
 async def post_stop(application: Application) -> None:
     for key in (
         "qualification_task", "pending_reminder_task", "reconciliation_task",
-        "analytics_task", "nudge_task",
+        "analytics_task", "nudge_task", "daily_digest_task",
     ):
         task = application.bot_data.get(key)
         if task and not task.done():
