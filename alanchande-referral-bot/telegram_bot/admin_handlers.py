@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
+from datetime import timedelta
 from html import escape
+from statistics import median
 
 import httpx
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest, RetryAfter, TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application, ContextTypes
 
 from referral_core import Campaign, parse_datetime, utcnow, weighted_draw
@@ -22,6 +23,229 @@ def denied(update: Update, settings: Settings) -> bool:
 
 def admin_id(update: Update) -> int:
     return int(update.effective_user.id) if update.effective_user else 0
+
+
+def _pct(numerator: int | float, denominator: int | float) -> float | None:
+    if not denominator:
+        return None
+    return round(float(numerator) * 100.0 / float(denominator), 1)
+
+
+def _pct_text(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1f}%"
+
+
+def _duration_text(seconds: int | None) -> str:
+    if seconds is None:
+        return "n/a"
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    rem = minutes % 60
+    if hours < 24:
+        return f"{hours}h {rem}m"
+    days = hours // 24
+    return f"{days}d {hours % 24}h"
+
+
+def _extended_funnel(db, campaign: Campaign) -> dict:
+    """Extra analytics from existing rows; no scoring/eligibility changes."""
+    now = utcnow()
+    cutoff = campaign.cutoff(now)
+    with db.connect() as conn:
+        starts = conn.execute(
+            """SELECT user_id,source,created_at FROM funnel_events
+               WHERE campaign_id=? AND event_type='bot_start'
+               ORDER BY user_id,created_at,source""",
+            (campaign.id,),
+        ).fetchall()
+        opens = conn.execute(
+            """SELECT user_id,MIN(created_at) AS opened_at FROM funnel_events
+               WHERE campaign_id=? AND event_type='referral_open' GROUP BY user_id""",
+            (campaign.id,),
+        ).fetchall()
+        links = conn.execute(
+            "SELECT user_id,created_at FROM invite_links WHERE campaign_id=?",
+            (campaign.id,),
+        ).fetchall()
+        refs = conn.execute(
+            """SELECT referrer_id,joined_user_id,joined_at,stay_since,left_at,active
+               FROM referrals WHERE campaign_id=?""",
+            (campaign.id,),
+        ).fetchall()
+        pending = conn.execute(
+            "SELECT joined_user_id FROM pending_referrals WHERE campaign_id=?",
+            (campaign.id,),
+        ).fetchall()
+        left_events = conn.execute(
+            """SELECT joined_user_id,MIN(event_at) AS first_left FROM referral_events
+               WHERE campaign_id=? AND event_type='left' GROUP BY joined_user_id""",
+            (campaign.id,),
+        ).fetchall()
+
+    first_source: dict[int, str] = {}
+    for row in starts:
+        first_source.setdefault(int(row["user_id"]), str(row["source"] or "organic"))
+
+    link_times = {int(row["user_id"]): parse_datetime(row["created_at"]) for row in links}
+    link_users = set(link_times)
+    joined_users = {int(row["joined_user_id"]) for row in refs}
+    open_users = {int(row["user_id"]) for row in opens}
+    pending_users = {int(row["joined_user_id"]) for row in pending}
+
+    source_map: dict[str, dict] = {}
+    for uid, source in first_source.items():
+        item = source_map.setdefault(source, {
+            "source": source, "starts": 0, "participants": 0,
+            "joined": 0, "active": 0, "qualified": 0,
+        })
+        item["starts"] += 1
+        if uid in link_users:
+            item["participants"] += 1
+
+    for row in refs:
+        source = first_source.get(int(row["referrer_id"]))
+        if source is None:
+            continue
+        item = source_map[source]
+        item["joined"] += 1
+        if int(row["active"]):
+            item["active"] += 1
+            if parse_datetime(row["stay_since"]) <= cutoff:
+                item["qualified"] += 1
+
+    sources = []
+    for item in source_map.values():
+        item["start_to_participant_pct"] = _pct(item["participants"], item["starts"])
+        item["qualified_per_start_pct"] = _pct(item["qualified"], item["starts"])
+        sources.append(item)
+    sources.sort(key=lambda row: (-row["starts"], row["source"]))
+
+    first_join: dict[int, object] = {}
+    for row in refs:
+        uid = int(row["referrer_id"])
+        joined_at = parse_datetime(row["joined_at"])
+        if uid not in first_join or joined_at < first_join[uid]:
+            first_join[uid] = joined_at
+    first_referral_delays = []
+    for uid, joined_at in first_join.items():
+        link_at = link_times.get(uid)
+        if link_at is None:
+            continue
+        seconds = int((joined_at - link_at).total_seconds())
+        if seconds >= 0:
+            first_referral_delays.append(seconds)
+
+    first_left = {
+        int(row["joined_user_id"]): parse_datetime(row["first_left"])
+        for row in left_events if row["first_left"]
+    }
+
+    def retention(hours: int) -> tuple[int, int]:
+        horizon = timedelta(hours=hours)
+        retained = eligible = 0
+        for row in refs:
+            joined = parse_datetime(row["joined_at"])
+            target = joined + horizon
+            if now < target:
+                continue
+            eligible += 1
+            left = first_left.get(int(row["joined_user_id"]))
+            if left is None and row["left_at"]:
+                left = parse_datetime(row["left_at"])
+            if left is None or left >= target:
+                retained += 1
+        return retained, eligible
+
+    d1_retained, d1_sample = retention(24)
+    d7_retained, d7_sample = retention(168)
+    total_joined = len(refs)
+    total_active = sum(1 for row in refs if int(row["active"]))
+    total_qualified = sum(
+        1 for row in refs
+        if int(row["active"]) and parse_datetime(row["stay_since"]) <= cutoff
+    )
+    referred_participants = len(joined_users & link_users)
+    avg_joined = total_joined / len(link_users) if link_users else 0.0
+    loop_closure = referred_participants / total_joined if total_joined else 0.0
+
+    return {
+        "source_funnel": sources,
+        "open_to_join_pct": _pct(len(open_users & joined_users), len(open_users)),
+        "join_to_active_pct": _pct(total_active, total_joined),
+        "join_to_qualified_pct": _pct(total_qualified, total_joined),
+        "candidate_to_join_pct": _pct(total_joined, len(joined_users | pending_users)),
+        "first_referral_median_seconds": (
+            int(median(first_referral_delays)) if first_referral_delays else None
+        ),
+        "d1_retention_pct": _pct(d1_retained, d1_sample),
+        "d1_sample": d1_sample,
+        "d7_retention_pct": _pct(d7_retained, d7_sample),
+        "d7_sample": d7_sample,
+        "referred_to_participant_pct": _pct(referred_participants, total_joined),
+        "avg_joined_per_participant": round(avg_joined, 3),
+        "k_factor_proxy": round(avg_joined * loop_closure, 3),
+    }
+
+
+def _review_signals(db, campaign: Campaign, base_rows: list[dict]) -> list[dict]:
+    """Enrich existing flag-only rows with neutral behavioral review signals."""
+    with db.connect() as conn:
+        summary_rows = conn.execute(
+            """SELECT r.referrer_id,COUNT(*) AS referrals,
+                      SUM(CASE WHEN r.active=1 THEN 1 ELSE 0 END) AS active,
+                      SUM(CASE WHEN il.user_id IS NOT NULL THEN 1 ELSE 0 END) AS continued
+               FROM referrals r
+               LEFT JOIN invite_links il
+                 ON il.campaign_id=r.campaign_id AND il.user_id=r.joined_user_id
+               WHERE r.campaign_id=? GROUP BY r.referrer_id""",
+            (campaign.id,),
+        ).fetchall()
+        rejoin_rows = conn.execute(
+            """SELECT referrer_id,COUNT(*) AS n FROM referral_events
+               WHERE campaign_id=? AND event_type='rejoined' AND referrer_id IS NOT NULL
+               GROUP BY referrer_id""",
+            (campaign.id,),
+        ).fetchall()
+
+    summaries = {
+        int(row["referrer_id"]): {
+            "referrals": int(row["referrals"] or 0),
+            "active": int(row["active"] or 0),
+            "continued": int(row["continued"] or 0),
+        }
+        for row in summary_rows
+    }
+    rejoins = {int(row["referrer_id"]): int(row["n"] or 0) for row in rejoin_rows}
+    merged = {int(row["referrer_id"]): dict(row) for row in base_rows}
+
+    for uid, info in summaries.items():
+        row = merged.setdefault(uid, {
+            "referrer_id": uid,
+            "referrals": info["referrals"],
+            "active": info["active"],
+            "reasons": [],
+        })
+        reasons = list(row.get("reasons", []))
+        rejoin_count = rejoins.get(uid, 0)
+        if rejoin_count >= 3:
+            reasons.append(f"rejoin_churn:{rejoin_count}")
+        if info["referrals"] >= 10:
+            continuation = info["continued"] / info["referrals"]
+            if continuation < 0.10:
+                reasons.append(f"low_secondary_activity:{info['continued']}/{info['referrals']}")
+        row["rejoins"] = rejoin_count
+        row["secondary_participants"] = info["continued"]
+        row["reasons"] = sorted(set(reasons))
+        if not row["reasons"]:
+            merged.pop(uid, None)
+
+    rows = list(merged.values())
+    rows.sort(key=lambda row: (-len(row["reasons"]), -row["referrals"], row["referrer_id"]))
+    return rows
 
 
 async def cmd_campaign_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -197,19 +421,44 @@ async def cmd_funnel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     stats = db.funnel_stats(campaign)
+    extra = _extended_funnel(db, campaign)
+    starts = stats["bot_starts"]
+    entered = stats["entered_contest"]
+    links = stats["participants_with_links"]
+    opens = stats["referral_opens"]
     lines = [
         f"📈 Funnel — {campaign.slug}", "",
-        f"Bot starts tracked: {stats['bot_starts']}",
-        f"Entered contest tracked: {stats['entered_contest']}",
-        f"Participants with personal links: {stats['participants_with_links']}",
-        f"Referral deep-link opens tracked: {stats['referral_opens']}",
+        f"Bot starts tracked: {starts}",
+        f"Entered contest tracked: {entered} ({_pct_text(_pct(entered, starts))} of starts)",
+        f"Participants with personal links: {links}",
+        f"Referral deep-link opens tracked: {opens}",
         f"Unique referral candidates in DB: {stats['referral_candidates']}",
         f"Joined referrals: {stats['joined_referrals']}",
         f"Active referrals now: {stats['active_referrals']}",
         f"Qualified referrals now: {stats['qualified_referrals']}",
+        "",
+        "Conversion / retention:",
+        f"• referral open → join: {_pct_text(extra['open_to_join_pct'])}",
+        f"• candidate → join: {_pct_text(extra['candidate_to_join_pct'])}",
+        f"• join → active now: {_pct_text(extra['join_to_active_pct'])}",
+        f"• join → qualified now: {_pct_text(extra['join_to_qualified_pct'])}",
+        f"• referred user → own participant link: {_pct_text(extra['referred_to_participant_pct'])}",
+        f"• D1 continuous retention: {_pct_text(extra['d1_retention_pct'])} (n={extra['d1_sample']})",
+        f"• D7 continuous retention: {_pct_text(extra['d7_retention_pct'])} (n={extra['d7_sample']})",
+        f"• median time to first referral: {_duration_text(extra['first_referral_median_seconds'])}",
+        f"• avg joined referrals / participant: {extra['avg_joined_per_participant']}",
+        f"• viral K proxy: {extra['k_factor_proxy']}",
     ]
-    if stats["sources"]:
-        lines.extend(["", "Start sources:"])
+    if extra["source_funnel"]:
+        lines.extend(["", "First-touch source quality:"])
+        for row in extra["source_funnel"][:12]:
+            lines.append(
+                f"• {row['source']}: starts={row['starts']} links={row['participants']} "
+                f"joins={row['joined']} active={row['active']} qualified={row['qualified']} "
+                f"start→link={_pct_text(row['start_to_participant_pct'])}"
+            )
+    elif stats["sources"]:
+        lines.extend(["", "Tracked start sources:"])
         lines.extend(f"• {row['source']}: {row['count']}" for row in stats["sources"])
     lines.extend([
         "", "Historical event tracking starts from the deployment of each event type.",
@@ -255,14 +504,20 @@ async def cmd_flags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not campaign:
         await update.message.reply_text("Usage: /flags [campaign_slug]")
         return
-    rows = db.fraud_flags(campaign)
+    rows = _review_signals(db, campaign, db.fraud_flags(campaign))
     if not rows:
-        await update.message.reply_text(f"No heuristic flags for {campaign.slug}. This is not a guarantee of no fraud.")
+        await update.message.reply_text(
+            f"No behavioral review signals for {campaign.slug}. This is not a guarantee of no abuse."
+        )
         return
-    lines = [f"⚠️ Flag-only review — {campaign.slug}", "Never auto-DQ from this report alone.", ""]
+    lines = [
+        f"⚠️ Manual review signals — {campaign.slug}",
+        "These are neutral heuristics only. Never auto-disqualify from this report.", "",
+    ]
     for row in rows[:30]:
         lines.append(
-            f"• {row['referrer_id']} — refs={row['referrals']} active={row['active']} — "
+            f"• {row['referrer_id']} — refs={row['referrals']} active={row['active']} "
+            f"rejoins={row.get('rejoins', 0)} secondary={row.get('secondary_participants', 0)} — "
             + ", ".join(row["reasons"])
         )
     await update.message.reply_text("\n".join(lines))
@@ -289,21 +544,16 @@ async def cmd_adminlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _membership_check(application: Application, settings: Settings, uid: int) -> bool | None:
-    for attempt in range(3):
-        try:
-            return await telegram_membership(application.bot, settings, uid)
-        except RetryAfter as exc:
-            await asyncio.sleep(float(exc.retry_after) + 0.2)
-        except BadRequest as exc:
-            text = str(exc).lower()
-            if any(marker in text for marker in ("user not found", "user_id_invalid", "participant_id_invalid")):
-                return False
-            return None
-        except TelegramError:
-            if attempt == 2:
-                return None
-            await asyncio.sleep(1.5 * (attempt + 1))
-    return None
+    """The shared membership helper already performs rate-limit/network retries."""
+    try:
+        return await telegram_membership(application.bot, settings, uid)
+    except BadRequest as exc:
+        text = str(exc).lower()
+        if any(marker in text for marker in ("user not found", "user_id_invalid", "participant_id_invalid")):
+            return False
+        return None
+    except TelegramError:
+        return None
 
 
 async def verify_campaign(application: Application, campaign: Campaign,
