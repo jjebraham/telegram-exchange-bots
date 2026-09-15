@@ -41,7 +41,9 @@ async def cmd_campaign_create(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as exc:
         await update.message.reply_text(f"Could not create campaign: {exc}")
         return
-    await update.message.reply_text(f"Created draft campaign {campaign.slug}. Activate with /campaign_activate {campaign.slug}")
+    await update.message.reply_text(
+        f"Created draft campaign {campaign.slug}. Activate with /campaign_activate {campaign.slug}"
+    )
 
 
 async def cmd_campaign_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -50,7 +52,9 @@ async def cmd_campaign_config(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     parts = [part.strip() for part in " ".join(context.args).split("|")]
     if len(parts) != 5:
-        await update.message.reply_text("Usage: /campaign_config slug | invites_per_point | min_stay_hours | max_points | winners")
+        await update.message.reply_text(
+            "Usage: /campaign_config slug | invites_per_point | min_stay_hours | max_points | winners"
+        )
         return
     try:
         campaign = db.configure_campaign(parts[0], *(int(x) for x in parts[1:]))
@@ -59,7 +63,8 @@ async def cmd_campaign_config(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await update.message.reply_text(
         f"Updated {campaign.slug}: {campaign.invites_per_point} invites/point, "
-        f"{campaign.min_stay_hours}h stay, max {campaign.max_points or '∞'} points, {campaign.num_winners} winners."
+        f"{campaign.min_stay_hours}h stay, max {campaign.max_points or '∞'} points, "
+        f"{campaign.num_winners} winners."
     )
 
 
@@ -75,7 +80,10 @@ async def cmd_campaign_activate(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as exc:
         await update.message.reply_text(f"Could not activate campaign: {exc}")
         return
-    await update.message.reply_text(f"Campaign {campaign.slug} is active. Live now: {'yes' if campaign.is_live() else 'no (check start/end times)'}")
+    await update.message.reply_text(
+        f"Campaign {campaign.slug} is active. "
+        f"Live now: {'yes' if campaign.is_live() else 'no (check start/end times)'}"
+    )
 
 
 async def cmd_campaign_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,6 +132,38 @@ async def cmd_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_funnel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    settings, db = services(context)
+    if denied(update, settings) or not update.message:
+        return
+    campaign = db.get_campaign(context.args[0]) if context.args else db.live_campaign()
+    if not campaign:
+        await update.message.reply_text("Usage: /funnel [campaign_slug] — campaign not found.")
+        return
+
+    stats = db.funnel_stats(campaign)
+    lines = [
+        f"📈 Funnel — {campaign.slug}",
+        "",
+        f"Bot starts tracked: {stats['bot_starts']}",
+        f"Participants with personal links: {stats['participants_with_links']}",
+        f"Referral deep-link opens tracked: {stats['referral_opens']}",
+        f"Unique referral candidates in DB: {stats['referral_candidates']}",
+        f"Joined referrals: {stats['joined_referrals']}",
+        f"Active referrals now: {stats['active_referrals']}",
+        f"Qualified referrals: {stats['qualified_referrals']}",
+    ]
+    if stats["sources"]:
+        lines.extend(["", "Start sources:"])
+        lines.extend(f"• {row['source']}: {row['count']}" for row in stats["sources"])
+    lines.extend([
+        "",
+        "Tracking note: bot-start/referral-open events are counted from the deployment of funnel tracking.",
+        "Telegram post views and completion of the native Share action are not visible to the bot.",
+    ])
+    await update.message.reply_text("\n".join(lines))
+
+
 async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings, db = services(context)
     if denied(update, settings) or not update.message:
@@ -141,10 +181,15 @@ async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [
         f"Audit {user_id} / {campaign.slug}",
         f"Qualified: {counts['qualified']} | Pending: {counts['pending']} | Left: {counts['left']}",
-        f"Points: {counts['points']}", f"Invite link: {audit['invite_link'] or '(none)'}",
+        f"Points: {counts['points']}",
+        f"Invite link: {audit['invite_link'] or '(none)'}",
     ]
     if audit["referred_by"]:
-        lines.append(f"Referred by: {audit['referred_by']['referrer_id']} | active={audit['referred_by']['active']} | stay_since={audit['referred_by']['stay_since']}")
+        lines.append(
+            f"Referred by: {audit['referred_by']['referrer_id']} | "
+            f"active={audit['referred_by']['active']} | "
+            f"stay_since={audit['referred_by']['stay_since']}"
+        )
     await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
 
 
@@ -177,8 +222,10 @@ async def verify_campaign(application: Application, campaign: Campaign) -> dict:
         elif active:
             valid_entrants.add(uid)
     return {
-        "qualified_checked": len(referral_ids), "invalid_referrals": invalid_referrals,
-        "entrant_checked": len(entrant_ids), "eligible_entrants": valid_entrants,
+        "qualified_checked": len(referral_ids),
+        "invalid_referrals": invalid_referrals,
+        "entrant_checked": len(entrant_ids),
+        "eligible_entrants": valid_entrants,
         "errors": sorted(set(errors)),
     }
 
@@ -196,12 +243,17 @@ async def cmd_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     report = await verify_campaign(context.application, campaign)
     if report["errors"]:
-        await update.message.reply_text(f"Verification incomplete: {len(report['errors'])} Telegram lookups failed. Do not draw until this is clean.")
+        await update.message.reply_text(
+            f"Verification incomplete: {len(report['errors'])} Telegram lookups failed. "
+            "Do not draw until this is clean."
+        )
         return
     await update.message.reply_text(
-        f"Verification complete for {campaign.slug}.\nQualified referrals checked: {report['qualified_checked']}\n"
+        f"Verification complete for {campaign.slug}.\n"
+        f"Qualified referrals checked: {report['qualified_checked']}\n"
         f"Invalid/left referrals removed: {len(report['invalid_referrals'])}\n"
-        f"Entrants checked: {report['entrant_checked']}\nEligible entrants: {len(report['eligible_entrants'])}"
+        f"Entrants checked: {report['entrant_checked']}\n"
+        f"Eligible entrants: {len(report['eligible_entrants'])}"
     )
 
 
@@ -222,7 +274,9 @@ async def cmd_draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("This campaign has already been drawn.")
         return
     if campaign.status == "active" and campaign.is_live():
-        await update.message.reply_text("Campaign is still live. Close it with /campaign_close before drawing.")
+        await update.message.reply_text(
+            "Campaign is still live. Close it with /campaign_close before drawing."
+        )
         return
     if campaign.status not in {"closed", "active"}:
         await update.message.reply_text(f"Campaign status {campaign.status!r} is not drawable.")
@@ -230,22 +284,32 @@ async def cmd_draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Running final Telegram membership verification…")
     report = await verify_campaign(context.application, campaign)
     if report["errors"]:
-        await update.message.reply_text(f"Draw aborted: {len(report['errors'])} membership checks failed. Run /verify again after fixing Telegram/API permissions.")
+        await update.message.reply_text(
+            f"Draw aborted: {len(report['errors'])} membership checks failed. "
+            "Run /verify again after fixing Telegram/API permissions."
+        )
         return
     entrants = db.current_entrants(campaign, eligible_user_ids=report["eligible_entrants"])
     if len(entrants) < campaign.num_winners:
-        await update.message.reply_text(f"Only {len(entrants)} eligible entrants; need at least {campaign.num_winners}.")
+        await update.message.reply_text(
+            f"Only {len(entrants)} eligible entrants; need at least {campaign.num_winners}."
+        )
         return
     winners = weighted_draw(entrants, seed, campaign.num_winners)
     summary = (
-        f"qualified_checked={report['qualified_checked']};invalid_referrals={len(report['invalid_referrals'])};"
-        f"entrant_checked={report['entrant_checked']};eligible_entrants={len(report['eligible_entrants'])}"
+        f"qualified_checked={report['qualified_checked']};"
+        f"invalid_referrals={len(report['invalid_referrals'])};"
+        f"entrant_checked={report['entrant_checked']};"
+        f"eligible_entrants={len(report['eligible_entrants'])}"
     )
     digest = db.save_draw(campaign, seed, entrants, winners, summary)
     lines = [
         f"<b>🎁 Draw complete — {escape(campaign.name)}</b>\n",
-        f"Entrants: <b>{len(entrants)}</b>", f"Tickets: <b>{sum(t for _, t in entrants)}</b>",
-        f"Seed: <code>{escape(seed)}</code>", f"Entrant SHA-256: <code>{digest}</code>\n", "<b>Winners:</b>",
+        f"Entrants: <b>{len(entrants)}</b>",
+        f"Tickets: <b>{sum(t for _, t in entrants)}</b>",
+        f"Seed: <code>{escape(seed)}</code>",
+        f"Entrant SHA-256: <code>{digest}</code>\n",
+        "<b>Winners:</b>",
     ]
     for index, uid in enumerate(winners, 1):
         lines.append(f"{index}. <code>{uid}</code>")
