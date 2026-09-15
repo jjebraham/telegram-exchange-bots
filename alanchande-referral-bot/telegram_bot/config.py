@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
+from datetime import timedelta
 
 from telegram import ChatMemberUpdated
 from telegram.constants import ChatMemberStatus
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 
 log = logging.getLogger("alanchande_referral_bot")
 
@@ -22,6 +25,8 @@ class Settings:
     pending_reminder_check_seconds: int = 300
     reconciliation_check_seconds: int = 21600
     reconciliation_batch_size: int = 200
+    telegram_retry_attempts: int = 4
+    telegram_retry_base_seconds: int = 1
     default_invites_per_point: int = 2
     default_min_stay_hours: int = 168
     default_max_points: int = 20
@@ -81,6 +86,8 @@ class Settings:
             pending_reminder_check_seconds=int_env("PENDING_REMINDER_CHECK_SECONDS", 300, 60),
             reconciliation_check_seconds=int_env("RECONCILIATION_CHECK_SECONDS", 21600, 900),
             reconciliation_batch_size=int_env("RECONCILIATION_BATCH_SIZE", 200, 10),
+            telegram_retry_attempts=int_env("TELEGRAM_RETRY_ATTEMPTS", 4, 1),
+            telegram_retry_base_seconds=int_env("TELEGRAM_RETRY_BASE_SECONDS", 1, 1),
             default_invites_per_point=int_env("DEFAULT_INVITES_PER_POINT", 2, 1),
             default_min_stay_hours=int_env("DEFAULT_MIN_STAY_HOURS", 168, 0),
             default_max_points=int_env("DEFAULT_MAX_POINTS", 20, 0),
@@ -114,9 +121,42 @@ def chat_member_is_active(member) -> bool:
     return member.status == ChatMemberStatus.RESTRICTED and bool(getattr(member, "is_member", False))
 
 
+def _retry_after_seconds(exc: RetryAfter) -> float:
+    value = exc.retry_after
+    if isinstance(value, timedelta):
+        return max(0.0, value.total_seconds())
+    return max(0.0, float(value))
+
+
 async def telegram_membership(bot, settings: Settings, user_id: int) -> bool:
-    member = await bot.get_chat_member(settings.channel_ref, user_id)
-    return chat_member_is_active(member)
+    """Rate-limit-aware membership lookup used by all critical verification paths."""
+    attempts = max(1, settings.telegram_retry_attempts)
+    for attempt in range(attempts):
+        try:
+            member = await bot.get_chat_member(settings.channel_ref, user_id)
+            return chat_member_is_active(member)
+        except (BadRequest, Forbidden):
+            # Permanent/request-specific failures need caller-specific handling.
+            raise
+        except RetryAfter as exc:
+            if attempt == attempts - 1:
+                raise
+            delay = _retry_after_seconds(exc) + 0.25
+            log.warning("Telegram rate limit for membership user=%s; retrying in %.2fs", user_id, delay)
+            await asyncio.sleep(delay)
+        except NetworkError:
+            if attempt == attempts - 1:
+                raise
+            delay = settings.telegram_retry_base_seconds * (2 ** attempt)
+            log.warning("Telegram network error for membership user=%s; retrying in %ss", user_id, delay)
+            await asyncio.sleep(delay)
+        except TelegramError:
+            if attempt == attempts - 1:
+                raise
+            delay = settings.telegram_retry_base_seconds * (2 ** attempt)
+            log.exception("Telegram membership error user=%s; retrying in %ss", user_id, delay)
+            await asyncio.sleep(delay)
+    raise RuntimeError("unreachable membership retry state")
 
 
 def hours_label(hours: int) -> str:
