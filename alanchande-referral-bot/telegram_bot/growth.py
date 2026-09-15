@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -250,7 +251,7 @@ def promo_post_text(campaign: Campaign, promo_link: str, variant: str) -> str:
             f"🔥 <b>مسابقه {escape(campaign.name)} شروع شده!</b>\n\n"
             f"⭐ هر <b>{campaign.invites_per_point} دعوت فعال</b> = ۱ امتیاز موقت؛ "
             "امتیازت همان لحظه در ربات دیده می‌شود.\n"
-            f"🎟 بعد از تکمیل دوره عضویت، بلیت قرعه‌کشی تأیید می‌شود.\n\n"
+            "🎟 بعد از تکمیل دوره عضویت، بلیت قرعه‌کشی تأیید می‌شود.\n\n"
             f"🏆 <b>{campaign.num_winners} برنده</b>\n"
             f"🎁 {escape(campaign.prize_text)}\n\n"
             f"⏳ {left} تا پایان ثبت دعوت‌ها"
@@ -326,6 +327,64 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"candidate→join={_pct(row['candidate_to_join_pct'])}",
         ])
     lines.append("\nlegacy/untracked = activity whose referrer predates first-touch source tracking.")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def cmd_funnel_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings, db = services(context)
+    if not update.message or not is_admin(update, settings):
+        return
+    campaign = db.get_campaign(context.args[0]) if context.args else db.live_campaign()
+    if not campaign:
+        await update.message.reply_text("Usage: /funnel [campaign_slug]")
+        return
+
+    stats = db.funnel_stats(campaign)
+    report = source_performance(db, campaign)
+    tracked = [row for row in report["rows"] if row["source"] != "legacy/untracked"]
+    legacy = next((row for row in report["rows"] if row["source"] == "legacy/untracked"), None)
+    tracked_links = sum(row["links"] for row in tracked)
+    tracked_candidates = sum(row["candidates"] for row in tracked)
+    tracked_joins = sum(row["joins"] for row in tracked)
+    tracked_active = sum(row["active"] for row in tracked)
+    tracked_qualified = sum(row["qualified"] for row in tracked)
+    start_to_enter = (
+        round(stats["entered_contest"] * 100.0 / stats["bot_starts"], 1)
+        if stats["bot_starts"] else None
+    )
+
+    lines = [f"📈 Funnel — {campaign.slug}", ""]
+    lines.append("📡 Tracked since analytics instrumentation")
+    lines.append(f"Tracking began: {report['tracking_started_at'] or 'no tracked start yet'}")
+    lines.extend([
+        f"• bot starts: {stats['bot_starts']}",
+        f"• entered contest events: {stats['entered_contest']} ({_pct(start_to_enter)} of starts)",
+        f"• referral-link opens: {stats['referral_opens']}",
+        f"• tracked-source participants with links: {tracked_links}",
+        f"• tracked-source referral candidates: {tracked_candidates}",
+        f"• tracked-source joined referrals: {tracked_joins}",
+        f"• tracked-source active referrals: {tracked_active}",
+        f"• tracked-source qualified referrals: {tracked_qualified}",
+        "",
+        "📚 All-time database totals",
+        f"• participants with personal links: {stats['participants_with_links']}",
+        f"• unique referral candidates: {stats['referral_candidates']}",
+        f"• joined referrals: {stats['joined_referrals']}",
+        f"• active referrals now: {stats['active_referrals']}",
+        f"• qualified referrals now: {stats['qualified_referrals']}",
+    ])
+    if legacy:
+        lines.extend([
+            "",
+            "🕰 Legacy/untracked downstream activity",
+            f"• candidates={legacy['candidates']} joins={legacy['joins']} active={legacy['active']} qualified={legacy['qualified']}",
+        ])
+    lines.extend([
+        "",
+        "Use /sources for first-touch source and A/B performance.",
+        "Historical DB totals can be larger than tracked starts because analytics was deployed after the campaign began.",
+        "Telegram post views and native Share completion are not visible to the bot.",
+    ])
     await update.message.reply_text("\n".join(lines))
 
 
