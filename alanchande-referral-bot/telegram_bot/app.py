@@ -26,13 +26,18 @@ from .admin_handlers import (
     cmd_campaigns,
     cmd_draw,
     cmd_flags,
-    cmd_funnel,
     cmd_snapshot,
     cmd_verify,
 )
 from .config import Settings
 from .context import is_admin, services
-from .growth import cmd_promo_link, cmd_promo_post, cmd_sources, cmd_weekly_post
+from .growth import (
+    cmd_funnel_clear,
+    cmd_promo_link,
+    cmd_promo_post,
+    cmd_sources,
+    cmd_weekly_post,
+)
 from .live_runtime import on_chat_member, post_init, post_stop
 from .promo_handlers import cmd_start_entry, on_promo_enter
 from .referral_success import on_referral_check_and_welcome
@@ -209,7 +214,7 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("campaign_close", cmd_campaign_close))
     app.add_handler(CommandHandler("campaigns", cmd_campaigns))
     app.add_handler(CommandHandler("stats", cmd_admin_stats))
-    app.add_handler(CommandHandler("funnel", cmd_funnel))
+    app.add_handler(CommandHandler("funnel", cmd_funnel_clear))
     app.add_handler(CommandHandler("trend", cmd_trend))
     app.add_handler(CommandHandler("sources", cmd_sources))
     app.add_handler(CommandHandler("promo_link", cmd_promo_link))
