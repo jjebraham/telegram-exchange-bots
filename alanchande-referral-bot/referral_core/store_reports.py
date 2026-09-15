@@ -10,21 +10,53 @@ from .models import Campaign, entrant_snapshot, iso_utc, points_from_invites, ut
 class ReportsMixin:
     def leaderboard(self, campaign: Campaign, limit: int = 10,
                     now: datetime | None = None) -> list[dict]:
+        """Return a live leaderboard ranked by provisional/current score.
+
+        Current score is based on all referrals that are still members now.
+        Confirmed score keeps the retention requirement and is the only score
+        used by ``current_entrants`` and the final draw.
+        """
         cutoff = iso_utc(campaign.cutoff(now))
         with self.connect() as conn:
             rows = conn.execute(
-                """SELECT r.referrer_id,COUNT(*) AS qualified,u.first_name,u.username
+                """SELECT r.referrer_id,
+                          SUM(CASE WHEN r.active=1 THEN 1 ELSE 0 END) AS active_count,
+                          SUM(CASE WHEN r.active=1 AND r.stay_since<=? THEN 1 ELSE 0 END) AS qualified,
+                          u.first_name,u.username
                    FROM referrals r JOIN users u ON u.user_id=r.referrer_id
-                   WHERE r.campaign_id=? AND r.active=1 AND r.stay_since<=?
-                   GROUP BY r.referrer_id HAVING COUNT(*)>=?
-                   ORDER BY qualified DESC,r.referrer_id ASC LIMIT ?""",
-                (campaign.id, cutoff, campaign.invites_per_point, max(1, limit)),
+                   WHERE r.campaign_id=?
+                   GROUP BY r.referrer_id
+                   HAVING SUM(CASE WHEN r.active=1 THEN 1 ELSE 0 END)>0""",
+                (cutoff, campaign.id),
             ).fetchall()
-        return [{
-            "user_id": row["referrer_id"], "qualified": row["qualified"],
-            "points": points_from_invites(row["qualified"], campaign.invites_per_point, campaign.max_points),
-            "first_name": row["first_name"], "username": row["username"],
-        } for row in rows]
+
+        result = []
+        for row in rows:
+            active = int(row["active_count"] or 0)
+            qualified = int(row["qualified"] or 0)
+            result.append({
+                "user_id": int(row["referrer_id"]),
+                "active": active,
+                "qualified": qualified,
+                "current_points": points_from_invites(
+                    active, campaign.invites_per_point, campaign.max_points
+                ),
+                "confirmed_points": points_from_invites(
+                    qualified, campaign.invites_per_point, campaign.max_points
+                ),
+                "first_name": row["first_name"],
+                "username": row["username"],
+            })
+
+        result.sort(
+            key=lambda row: (
+                -row["current_points"],
+                -row["active"],
+                -row["confirmed_points"],
+                row["user_id"],
+            )
+        )
+        return result[:max(1, limit)]
 
     def current_entrants(self, campaign: Campaign, now: datetime | None = None,
                          eligible_user_ids: set[int] | None = None) -> list[tuple[int, int]]:
