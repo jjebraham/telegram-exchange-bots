@@ -121,15 +121,26 @@ def render_referrals(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
 def render_top(campaign: Campaign, db: ReferralDB) -> str:
     rows = db.leaderboard(campaign, limit=10)
     if not rows:
-        return "<b>🏆 جدول مسابقه</b>\n\nهنوز کسی امتیاز تأییدشده نگرفته است."
+        return (
+            f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n\n"
+            "هنوز هیچ دعوت فعالی در مسابقه ثبت نشده است."
+        )
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n"]
     for index, row in enumerate(rows):
         badge = medals[index] if index < 3 else f"{index + 1}."
         name = escape(row["first_name"] or ("@" + row["username"] if row["username"] else "کاربر"))
-        lines.append(f"{badge} {name} — <b>{row['points']}</b> 🎟 ({row['qualified']} دعوت تأییدشده)")
-    lines.append("\nℹ️ جدول مسابقه فقط امتیازهای تأییدشده برای قرعه‌کشی را نمایش می‌دهد.")
-    return "\n".join(lines)
+        lines.append(
+            f"{badge} <b>{name}</b>\n"
+            f"🎟 فعلی: <b>{row['current_points']}</b> | "
+            f"🏆 تأییدشده: <b>{row['confirmed_points']}</b> | "
+            f"👥 فعال: <b>{row['active']}</b>"
+        )
+    lines.append(
+        "\nℹ️ رتبه‌بندی بالا بر اساس <b>امتیاز فعلی</b> است. "
+        "فقط <b>امتیاز تأییدشده</b> در قرعه‌کشی نهایی استفاده می‌شود."
+    )
+    return "\n\n".join(lines)
 
 
 def render_rules(campaign: Campaign) -> str:
