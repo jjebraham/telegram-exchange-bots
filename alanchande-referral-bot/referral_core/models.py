@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 UTC = timezone.utc
+ISTANBUL = timezone(timedelta(hours=3))
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,39}$")
 
 
@@ -30,6 +31,14 @@ def parse_datetime(value: str) -> datetime:
     if dt.tzinfo is None:
         raise ValueError("datetime must include a UTC offset, e.g. +03:00")
     return dt.astimezone(UTC)
+
+
+def default_draw_at(end_at: datetime) -> datetime:
+    """Default draw instant: 21:00 Istanbul on the calendar day after campaign end."""
+    end_local = end_at.astimezone(ISTANBUL)
+    return (end_local + timedelta(days=1)).replace(
+        hour=21, minute=0, second=0, microsecond=0,
+    ).astimezone(UTC)
 
 
 def points_from_invites(invites: int, invites_per_point: int, max_points: int) -> int:
@@ -77,12 +86,15 @@ class Campaign:
     name: str
     start_at: str
     end_at: str
+    draw_at: str
     status: str
     invites_per_point: int
     min_stay_hours: int
     max_points: int
     num_winners: int
     prize_text: str
+    rules_locked_at: str | None = None
+    rules_version: int = 1
 
     @property
     def start_dt(self) -> datetime:
@@ -92,10 +104,20 @@ class Campaign:
     def end_dt(self) -> datetime:
         return parse_datetime(self.end_at)
 
+    @property
+    def draw_dt(self) -> datetime:
+        return parse_datetime(self.draw_at)
+
+    @property
+    def final_qualification_cutoff(self) -> datetime:
+        """Latest stay_since that can complete retention by the fixed draw time."""
+        return self.draw_dt - timedelta(hours=self.min_stay_hours)
+
     def is_live(self, now: datetime | None = None) -> bool:
         now = (now or utcnow()).astimezone(UTC)
         return self.status == "active" and self.start_dt <= now < self.end_dt
 
     def cutoff(self, now: datetime | None = None) -> datetime:
+        """Dynamic qualification cutoff used for live/current confirmed-score displays."""
         now = (now or utcnow()).astimezone(UTC)
         return now - timedelta(hours=self.min_stay_hours)
