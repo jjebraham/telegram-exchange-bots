@@ -34,16 +34,22 @@ class ReportsMixin:
         for row in rows:
             active = int(row["active_count"] or 0)
             qualified = int(row["qualified"] or 0)
+            current_points = points_from_invites(
+                active, campaign.invites_per_point, campaign.max_points
+            )
+            if current_points <= 0:
+                continue
+            confirmed_points = points_from_invites(
+                qualified, campaign.invites_per_point, campaign.max_points
+            )
             result.append({
                 "user_id": int(row["referrer_id"]),
                 "active": active,
                 "qualified": qualified,
-                "current_points": points_from_invites(
-                    active, campaign.invites_per_point, campaign.max_points
-                ),
-                "confirmed_points": points_from_invites(
-                    qualified, campaign.invites_per_point, campaign.max_points
-                ),
+                "current_points": current_points,
+                "confirmed_points": confirmed_points,
+                # Backward-compatible alias: lottery/draw points remain confirmed only.
+                "points": confirmed_points,
                 "first_name": row["first_name"],
                 "username": row["username"],
             })
