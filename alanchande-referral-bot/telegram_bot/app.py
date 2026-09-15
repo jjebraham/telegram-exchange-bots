@@ -19,14 +19,15 @@ from .admin_handlers import (
     cmd_campaign_create,
     cmd_campaigns,
     cmd_draw,
+    cmd_funnel,
     cmd_verify,
 )
 from .config import Settings
+from .promo_handlers import cmd_start_entry, on_promo_enter
 from .referral_success import on_referral_check_and_welcome
 from .reminders import post_init, post_stop
 from .user_handlers import (
     cmd_menu,
-    cmd_start,
     cmd_stats_user,
     on_chat_member,
     on_menu_callback,
@@ -48,10 +49,11 @@ def create_application(settings: Settings) -> Application:
     app.bot_data["settings"] = settings
     app.bot_data["db"] = db
 
-    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("start", cmd_start_entry))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("me", cmd_stats_user))
     app.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
+    app.add_handler(CallbackQueryHandler(on_promo_enter, pattern=r"^promo:enter:"))
     app.add_handler(CallbackQueryHandler(on_referral_check_and_welcome, pattern=r"^ref:check:"))
     app.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
@@ -61,6 +63,7 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("campaign_close", cmd_campaign_close))
     app.add_handler(CommandHandler("campaigns", cmd_campaigns))
     app.add_handler(CommandHandler("stats", cmd_admin_stats))
+    app.add_handler(CommandHandler("funnel", cmd_funnel))
     app.add_handler(CommandHandler("audit", cmd_audit))
     app.add_handler(CommandHandler("verify", cmd_verify))
     app.add_handler(CommandHandler("draw", cmd_draw))
