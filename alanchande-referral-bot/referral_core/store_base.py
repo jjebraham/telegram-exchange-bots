@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -17,6 +17,8 @@ from .models import (
     utcnow,
 )
 from .schema import SCHEMA
+
+ISTANBUL = timezone(timedelta(hours=3))
 
 
 class ReferralDBBase:
@@ -70,7 +72,7 @@ class ReferralDBBase:
             )
 
         conn.execute(
-            "INSERT OR IGNORE INTO schema_version(version,applied_at) VALUES(2,?)",
+            "INSERT OR IGNORE INTO schema_version(version,applied_at) VALUES(3,?)",
             (iso_utc(utcnow()),),
         )
 
@@ -229,6 +231,242 @@ class ReferralDBBase:
                    VALUES(?,?,?,?,?)""",
                 (campaign_id, int(admin_user_id), action[:64], payload, ts),
             )
+
+    def capture_daily_metrics(self, campaign: Campaign, now: datetime | None = None) -> dict:
+        """Upsert one Istanbul-calendar-day analytics snapshot for trend reporting."""
+        at = (now or utcnow()).astimezone(UTC)
+        funnel = self.funnel_stats(campaign, at)  # type: ignore[attr-defined]
+        admin = self.admin_stats(campaign, at)  # type: ignore[attr-defined]
+        with self.connect() as conn:
+            continued = conn.execute(
+                """SELECT COUNT(DISTINCT r.joined_user_id) AS n
+                   FROM referrals r JOIN invite_links il
+                     ON il.campaign_id=r.campaign_id AND il.user_id=r.joined_user_id
+                   WHERE r.campaign_id=?""",
+                (campaign.id,),
+            ).fetchone()
+            refs = conn.execute(
+                """SELECT joined_user_id,joined_at,left_at FROM referrals
+                   WHERE campaign_id=?""",
+                (campaign.id,),
+            ).fetchall()
+            left_rows = conn.execute(
+                """SELECT joined_user_id,MIN(event_at) AS first_left FROM referral_events
+                   WHERE campaign_id=? AND event_type='left' GROUP BY joined_user_id""",
+                (campaign.id,),
+            ).fetchall()
+
+        first_left = {
+            int(row["joined_user_id"]): parse_datetime(row["first_left"])
+            for row in left_rows if row["first_left"]
+        }
+
+        def retention(hours: int) -> tuple[float | None, int]:
+            retained = eligible = 0
+            horizon = timedelta(hours=hours)
+            for row in refs:
+                joined = parse_datetime(row["joined_at"])
+                target = joined + horizon
+                if at < target:
+                    continue
+                eligible += 1
+                left = first_left.get(int(row["joined_user_id"]))
+                if left is None and row["left_at"]:
+                    left = parse_datetime(row["left_at"])
+                if left is None or left >= target:
+                    retained += 1
+            return ((round(retained * 100.0 / eligible, 1) if eligible else None), eligible)
+
+        d1, d1_n = retention(24)
+        d7, d7_n = retention(168)
+        participants = int(funnel["participants_with_links"])
+        referred_participants = int(continued["n"] or 0)
+        metrics = {
+            "bot_starts": int(funnel["bot_starts"]),
+            "participants": participants,
+            "referral_opens": int(funnel["referral_opens"]),
+            "joined": int(funnel["joined_referrals"]),
+            "active": int(funnel["active_referrals"]),
+            "qualified": int(funnel["qualified_referrals"]),
+            "tickets": int(admin["tickets"]),
+            "k_factor_proxy": round(referred_participants / participants, 3) if participants else 0.0,
+            "d1_retention_pct": d1,
+            "d1_sample": d1_n,
+            "d7_retention_pct": d7,
+            "d7_sample": d7_n,
+        }
+        date_key = at.astimezone(ISTANBUL).date().isoformat()
+        ts = iso_utc(at)
+        payload = json.dumps(metrics, sort_keys=True, separators=(",", ":"))
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO campaign_daily_metrics(
+                       campaign_id,snapshot_date,metrics_json,created_at,updated_at
+                   ) VALUES(?,?,?,?,?)
+                   ON CONFLICT(campaign_id,snapshot_date) DO UPDATE SET
+                     metrics_json=excluded.metrics_json,updated_at=excluded.updated_at""",
+                (campaign.id, date_key, payload, ts, ts),
+            )
+        return {"snapshot_date": date_key, **metrics}
+
+    def daily_metrics(self, campaign_id: int, limit: int = 14) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT snapshot_date,metrics_json,updated_at FROM campaign_daily_metrics
+                   WHERE campaign_id=? ORDER BY snapshot_date DESC LIMIT ?""",
+                (campaign_id, max(1, limit)),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = json.loads(row["metrics_json"])
+            item.update({"snapshot_date": row["snapshot_date"], "updated_at": row["updated_at"]})
+            result.append(item)
+        return result
+
+    def zero_referral_nudge_candidates(self, campaign_id: int, older_than: datetime,
+                                       limit: int = 100) -> list[dict]:
+        cutoff = iso_utc(older_than)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT il.user_id,il.invite_link,il.created_at
+                   FROM invite_links il
+                   WHERE il.campaign_id=? AND il.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM referrals r
+                       WHERE r.campaign_id=il.campaign_id AND r.referrer_id=il.user_id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM pending_referrals p
+                       WHERE p.campaign_id=il.campaign_id AND p.referrer_id=il.user_id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM funnel_events f
+                       WHERE f.campaign_id=il.campaign_id AND f.user_id=il.user_id
+                         AND f.event_type='nudge_zero_referral_sent'
+                     )
+                   ORDER BY il.created_at ASC LIMIT ?""",
+                (campaign_id, cutoff, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def promo_abandon_nudge_candidates(self, campaign_id: int, older_than: datetime,
+                                       limit: int = 100) -> list[dict]:
+        cutoff = iso_utc(older_than)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT f.user_id,MIN(f.created_at) AS started_at,MIN(f.source) AS source
+                   FROM funnel_events f
+                   WHERE f.campaign_id=? AND f.event_type='bot_start' AND f.created_at<=?
+                     AND f.source NOT IN ('','organic','referral','existing_member')
+                     AND NOT EXISTS (
+                       SELECT 1 FROM invite_links il
+                       WHERE il.campaign_id=f.campaign_id AND il.user_id=f.user_id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM funnel_events sent
+                       WHERE sent.campaign_id=f.campaign_id AND sent.user_id=f.user_id
+                         AND sent.event_type='nudge_promo_abandon_sent'
+                     )
+                   GROUP BY f.user_id ORDER BY started_at ASC LIMIT ?""",
+                (campaign_id, cutoff, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def notification_gate(self, campaign_id: int, user_id: int, max_messages: int,
+                          window_seconds: int, now: datetime | None = None) -> bool:
+        """Allow a bounded number of automated event messages per participant/window."""
+        at = (now or utcnow()).astimezone(UTC)
+        ts = iso_utc(at)
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM notification_throttle WHERE campaign_id=? AND user_id=?",
+                (campaign_id, user_id),
+            ).fetchone()
+            if not row or (at - parse_datetime(row["window_started_at"])).total_seconds() >= window_seconds:
+                conn.execute(
+                    """INSERT INTO notification_throttle(
+                           campaign_id,user_id,window_started_at,sent_count,suppressed_count,updated_at
+                       ) VALUES(?,?,?,1,0,?)
+                       ON CONFLICT(campaign_id,user_id) DO UPDATE SET
+                         window_started_at=excluded.window_started_at,sent_count=1,
+                         suppressed_count=0,updated_at=excluded.updated_at""",
+                    (campaign_id, user_id, ts, ts),
+                )
+                return True
+            if int(row["sent_count"]) < max(1, max_messages):
+                conn.execute(
+                    """UPDATE notification_throttle SET sent_count=sent_count+1,updated_at=?
+                       WHERE campaign_id=? AND user_id=?""",
+                    (ts, campaign_id, user_id),
+                )
+                return True
+            conn.execute(
+                """UPDATE notification_throttle SET suppressed_count=suppressed_count+1,updated_at=?
+                   WHERE campaign_id=? AND user_id=?""",
+                (ts, campaign_id, user_id),
+            )
+            return False
+
+    def notification_summaries_due(self, campaign_id: int, older_than: datetime,
+                                   limit: int = 100) -> list[dict]:
+        cutoff = iso_utc(older_than)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT user_id,suppressed_count FROM notification_throttle
+                   WHERE campaign_id=? AND suppressed_count>0 AND updated_at<=?
+                   ORDER BY updated_at ASC LIMIT ?""",
+                (campaign_id, cutoff, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def clear_notification_summary(self, campaign_id: int, user_id: int,
+                                   now: datetime | None = None) -> None:
+        ts = iso_utc(now or utcnow())
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE notification_throttle SET window_started_at=?,sent_count=0,
+                   suppressed_count=0,updated_at=? WHERE campaign_id=? AND user_id=?""",
+                (ts, ts, campaign_id, user_id),
+            )
+
+    def set_maintenance_status(self, name: str, ok: bool, details: dict | None = None,
+                               error: str | None = None, now: datetime | None = None) -> None:
+        ts = iso_utc(now or utcnow())
+        payload = json.dumps(details or {}, sort_keys=True, separators=(",", ":"))
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM maintenance_status WHERE name=?", (name,)).fetchone()
+            if not row:
+                conn.execute(
+                    """INSERT INTO maintenance_status(
+                           name,last_ok_at,last_error_at,last_error,details_json,updated_at
+                       ) VALUES(?,?,?,?,?,?)""",
+                    (name, ts if ok else None, None if ok else ts,
+                     None if ok else (error or "unknown error")[:500], payload, ts),
+                )
+            elif ok:
+                conn.execute(
+                    """UPDATE maintenance_status SET last_ok_at=?,last_error=NULL,
+                       details_json=?,updated_at=? WHERE name=?""",
+                    (ts, payload, ts, name),
+                )
+            else:
+                conn.execute(
+                    """UPDATE maintenance_status SET last_error_at=?,last_error=?,
+                       details_json=?,updated_at=? WHERE name=?""",
+                    (ts, (error or "unknown error")[:500], payload, ts, name),
+                )
+
+    def maintenance_statuses(self) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM maintenance_status ORDER BY name").fetchall()
+        return [dict(row) for row in rows]
+
+    def pending_referrals_total(self, campaign_id: int) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM pending_referrals WHERE campaign_id=?", (campaign_id,)
+            ).fetchone()
+        return int(row["n"] or 0)
 
     def get_invite_link(self, campaign_id: int, user_id: int) -> str | None:
         with self.connect() as conn:
