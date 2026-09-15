@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Create and verify consistent SQLite backups.
+"""Create, verify, and optionally sync consistent SQLite backups.
 
-Normal backup:
+Normal local backup:
 
     DB_PATH=/path/referral_bot.db BACKUP_DIR=/path/backups \
     python scripts/backup_db.py
 
-Restore/integrity test of the newest backup:
+Optional off-server copy using rclone:
 
-    DB_PATH=/path/referral_bot.db BACKUP_DIR=/path/backups RESTORE_TEST=1 \
-    python scripts/backup_db.py
+    BACKUP_RCLONE_DEST='remote:alanchande-backups' python scripts/backup_db.py
 
-Set BACKUP_FILE=/path/file.sqlite together with RESTORE_TEST=1 to test a
-specific snapshot. SQLite's backup API is safe while the live bot is running in
-WAL mode. BACKUP_RETENTION_DAYS defaults to 30.
+Restore/integrity test of the newest local backup:
+
+    RESTORE_TEST=1 python scripts/backup_db.py
+
+Optional Telegram failure alerts use BOT_TOKEN plus BACKUP_ALERT_CHAT_ID. If the
+chat ID is omitted, the first ADMIN_IDS value is used. BACKUP_ALERT_ON_SUCCESS=1
+can be enabled for success notices, but failures are alerted automatically when
+credentials are available.
 """
 
 from __future__ import annotations
@@ -23,8 +27,11 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -41,6 +48,32 @@ def sha256_file(path: Path) -> str:
 
 def truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def alert_chat_id() -> str:
+    explicit = os.environ.get("BACKUP_ALERT_CHAT_ID", "").strip()
+    if explicit:
+        return explicit
+    admins = os.environ.get("ADMIN_IDS", "").split(",")
+    return admins[0].strip() if admins and admins[0].strip() else ""
+
+
+def send_telegram_alert(text: str) -> None:
+    token = os.environ.get("BOT_TOKEN", "").strip()
+    chat_id = alert_chat_id()
+    if not token or not chat_id:
+        return
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=data,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            response.read()
+    except Exception as exc:
+        print(json.dumps({"backup_alert_error": str(exc)}, sort_keys=True))
 
 
 def latest_backup(backup_dir: Path) -> Path:
@@ -67,8 +100,6 @@ def verify_backup(backup: Path) -> dict:
         if expected and expected != digest:
             raise SystemExit("Backup SHA-256 does not match its manifest")
 
-    # Copy the snapshot to a disposable path and open that copy. This exercises
-    # the restore path without ever touching the production DB.
     with tempfile.TemporaryDirectory(prefix="alanchande-restore-") as temp_dir:
         restored = Path(temp_dir) / "restored.sqlite"
         shutil.copy2(backup, restored)
@@ -101,10 +132,12 @@ def verify_backup(backup: Path) -> dict:
         "counts": counts,
         "restore_test": "passed",
         "manifest_present": bool(manifest),
+        "remote_uploaded": bool(manifest.get("remote_uploaded")),
+        "remote_destination": manifest.get("remote_destination", ""),
     }
 
 
-def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> dict:
+def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> tuple[dict, Path]:
     if not db_path.exists():
         raise SystemExit(f"Database does not exist: {db_path}")
 
@@ -135,6 +168,8 @@ def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> dict:
         "backup": str(target),
         "size_bytes": target.stat().st_size,
         "sha256": digest,
+        "remote_uploaded": False,
+        "remote_destination": "",
     }
     manifest_path = target.with_suffix(target.suffix + ".json")
     manifest_path.write_text(
@@ -147,6 +182,41 @@ def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> dict:
             old.unlink(missing_ok=True)
             old.with_suffix(old.suffix + ".json").unlink(missing_ok=True)
 
+    return manifest, target
+
+
+def sync_remote(target: Path, manifest: dict, remote_dest: str) -> dict:
+    executable = shutil.which("rclone")
+    if not executable:
+        raise RuntimeError("BACKUP_RCLONE_DEST is configured but rclone is not installed")
+    remote_base = remote_dest.rstrip("/")
+    remote_db = f"{remote_base}/{target.name}"
+    subprocess.run(
+        [executable, "copyto", str(target), remote_db, "--retries", "3", "--low-level-retries", "5"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=600,
+    )
+    manifest["remote_uploaded"] = True
+    manifest["remote_destination"] = remote_db
+    manifest["remote_uploaded_at"] = datetime.now(UTC).isoformat()
+    manifest_path = target.with_suffix(target.suffix + ".json")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    subprocess.run(
+        [
+            executable, "copyto", str(manifest_path),
+            f"{remote_base}/{manifest_path.name}", "--retries", "3", "--low-level-retries", "5",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=300,
+    )
     return manifest
 
 
@@ -163,7 +233,23 @@ def main() -> None:
         print(json.dumps(verify_backup(backup), sort_keys=True))
         return
 
-    print(json.dumps(create_backup(db_path, backup_dir, retention_days), sort_keys=True))
+    try:
+        manifest, target = create_backup(db_path, backup_dir, retention_days)
+        remote_dest = os.environ.get("BACKUP_RCLONE_DEST", "").strip()
+        if remote_dest:
+            manifest = sync_remote(target, manifest, remote_dest)
+        print(json.dumps(manifest, sort_keys=True))
+        if truthy("BACKUP_ALERT_ON_SUCCESS"):
+            remote = " + off-server" if manifest.get("remote_uploaded") else ""
+            send_telegram_alert(
+                f"✅ AlanChande backup OK{remote}\n{target.name}\nSHA-256: {manifest['sha256']}"
+            )
+    except SystemExit as exc:
+        send_telegram_alert(f"❌ AlanChande backup failed\n{exc}")
+        raise
+    except Exception as exc:
+        send_telegram_alert(f"❌ AlanChande backup failed\n{type(exc).__name__}: {exc}")
+        raise
 
 
 if __name__ == "__main__":
