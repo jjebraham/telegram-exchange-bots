@@ -20,6 +20,8 @@ class Settings:
     qualification_check_seconds: int = 3600
     pending_reminder_minutes: int = 15
     pending_reminder_check_seconds: int = 300
+    reconciliation_check_seconds: int = 21600
+    reconciliation_batch_size: int = 200
     default_invites_per_point: int = 2
     default_min_stay_hours: int = 168
     default_max_points: int = 20
@@ -77,6 +79,8 @@ class Settings:
             qualification_check_seconds=int_env("QUALIFICATION_CHECK_SECONDS", 3600, 300),
             pending_reminder_minutes=int_env("PENDING_REMINDER_MINUTES", 15, 1),
             pending_reminder_check_seconds=int_env("PENDING_REMINDER_CHECK_SECONDS", 300, 60),
+            reconciliation_check_seconds=int_env("RECONCILIATION_CHECK_SECONDS", 21600, 900),
+            reconciliation_batch_size=int_env("RECONCILIATION_BATCH_SIZE", 200, 10),
             default_invites_per_point=int_env("DEFAULT_INVITES_PER_POINT", 2, 1),
             default_min_stay_hours=int_env("DEFAULT_MIN_STAY_HOURS", 168, 0),
             default_max_points=int_env("DEFAULT_MAX_POINTS", 20, 0),
