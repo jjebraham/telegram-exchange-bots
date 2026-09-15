@@ -12,14 +12,18 @@ from telegram.ext import (
 from referral_core import ReferralDB
 from .admin_handlers import (
     cmd_admin_stats,
+    cmd_adminlog,
     cmd_audit,
     cmd_campaign_activate,
     cmd_campaign_close,
     cmd_campaign_config,
     cmd_campaign_create,
+    cmd_campaign_draw_at,
     cmd_campaigns,
     cmd_draw,
+    cmd_flags,
     cmd_funnel,
+    cmd_snapshot,
     cmd_verify,
 )
 from .config import Settings
@@ -59,13 +63,17 @@ def create_application(settings: Settings) -> Application:
 
     app.add_handler(CommandHandler("campaign_create", cmd_campaign_create))
     app.add_handler(CommandHandler("campaign_config", cmd_campaign_config))
+    app.add_handler(CommandHandler("campaign_draw_at", cmd_campaign_draw_at))
     app.add_handler(CommandHandler("campaign_activate", cmd_campaign_activate))
     app.add_handler(CommandHandler("campaign_close", cmd_campaign_close))
     app.add_handler(CommandHandler("campaigns", cmd_campaigns))
     app.add_handler(CommandHandler("stats", cmd_admin_stats))
     app.add_handler(CommandHandler("funnel", cmd_funnel))
     app.add_handler(CommandHandler("audit", cmd_audit))
+    app.add_handler(CommandHandler("flags", cmd_flags))
+    app.add_handler(CommandHandler("adminlog", cmd_adminlog))
     app.add_handler(CommandHandler("verify", cmd_verify))
+    app.add_handler(CommandHandler("snapshot", cmd_snapshot))
     app.add_handler(CommandHandler("draw", cmd_draw))
     return app
 
