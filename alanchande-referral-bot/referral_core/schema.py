@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS participant_welcomes (
     sent_at TEXT NOT NULL,
     PRIMARY KEY(campaign_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS funnel_events (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(campaign_id, user_id, event_type, source)
+);
+CREATE INDEX IF NOT EXISTS idx_funnel_events_campaign_type
+    ON funnel_events(campaign_id, event_type);
 CREATE TABLE IF NOT EXISTS referrals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
