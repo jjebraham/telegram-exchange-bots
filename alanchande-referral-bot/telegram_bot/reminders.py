@@ -242,12 +242,72 @@ async def analytics_snapshot_pass(application: Application) -> dict:
     return {"campaign": campaign.slug, **metrics}
 
 
+def _early_share_nudge_candidates(db: ReferralDB, campaign_id: int, cutoff, limit: int = 100) -> list[dict]:
+    """Participants with a link but no pending/joined referral and no early share nudge yet."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT l.user_id,l.created_at
+               FROM invite_links l
+               WHERE l.campaign_id=? AND l.created_at<=?
+                 AND EXISTS (
+                     SELECT 1 FROM funnel_events e
+                     WHERE e.campaign_id=l.campaign_id AND e.user_id=l.user_id
+                       AND e.event_type='entered_contest'
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM pending_referrals p
+                     WHERE p.campaign_id=l.campaign_id AND p.referrer_id=l.user_id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM referrals r
+                     WHERE r.campaign_id=l.campaign_id AND r.referrer_id=l.user_id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM funnel_events e
+                     WHERE e.campaign_id=l.campaign_id AND e.user_id=l.user_id
+                       AND e.event_type='nudge_early_share_sent'
+                 )
+               ORDER BY l.created_at ASC
+               LIMIT ?""",
+            (campaign_id, cutoff.isoformat(), limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 async def nudge_pass(application: Application) -> dict:
     settings: Settings = application.bot_data["settings"]
     db: ReferralDB = application.bot_data["db"]
     campaign = db.live_campaign()
     if not campaign:
-        return {"campaign": None, "zero_referral": 0, "promo_abandon": 0, "summaries": 0}
+        return {"campaign": None, "early_share": 0, "zero_referral": 0, "promo_abandon": 0, "summaries": 0}
+
+    early_rows = _early_share_nudge_candidates(
+        db,
+        campaign.id,
+        utcnow() - timedelta(hours=settings.early_share_nudge_hours),
+        limit=100,
+    )
+    early_sent = 0
+    for row in early_rows:
+        uid = int(row["user_id"])
+        if not _notification_allowed(application, campaign.id, uid):
+            continue
+        try:
+            await application.bot.send_message(
+                uid,
+                "📤 <b>لینک اختصاصی‌ات آماده است، ولی هنوز دعوتی از طرف تو شروع نشده.</b>\n\n"
+                "همین الان لینک رو برای ۲–۳ نفر بفرست؛ اولین کلیک دوستت یعنی حلقه دعوتت شروع شده. 🚀",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📤 دیدن و فرستادن لینک دعوت", callback_data="menu:link")]
+                ]),
+            )
+            early_sent += 1
+            db.track_funnel_event(campaign.id, uid, "nudge_early_share_sent", "")
+        except (Forbidden, BadRequest):
+            db.track_funnel_event(campaign.id, uid, "nudge_early_share_sent", "unreachable")
+        except TelegramError:
+            log.exception("Early-share nudge failed user=%s", uid)
 
     zero_rows = db.zero_referral_nudge_candidates(
         campaign.id,
@@ -326,6 +386,7 @@ async def nudge_pass(application: Application) -> dict:
 
     return {
         "campaign": campaign.slug,
+        "early_share": early_sent,
         "zero_referral": zero_sent,
         "promo_abandon": promo_sent,
         "summaries": summaries,
