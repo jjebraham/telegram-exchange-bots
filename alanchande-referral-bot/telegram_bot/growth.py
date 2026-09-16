@@ -246,25 +246,29 @@ def weekly_post_text(db, campaign: Campaign, promo_link: str) -> str:
 
 def promo_post_text(campaign: Campaign, promo_link: str, variant: str) -> str:
     left = remaining_text((campaign.end_dt - utcnow()).total_seconds())
+
     if variant == "b":
-        body = (
-            f"🔥 <b>مسابقه {escape(campaign.name)} شروع شده!</b>\n\n"
-            f"⭐ هر <b>{campaign.invites_per_point} دعوت فعال</b> = ۱ امتیاز موقت؛ "
-            "امتیازت همان لحظه در ربات دیده می‌شود.\n"
-            "🎟 بعد از تکمیل دوره عضویت، بلیت قرعه‌کشی تأیید می‌شود.\n\n"
-            f"🏆 <b>{campaign.num_winners} برنده</b>\n"
-            f"🎁 {escape(campaign.prize_text)}\n\n"
-            f"⏳ {left} تا پایان ثبت دعوت‌ها"
-        )
-    else:
-        body = (
+        return (
             f"🎁 <b>{escape(campaign.name)} — جایزه نقدی</b>\n\n"
             f"🏆 <b>{campaign.num_winners} برنده</b>\n"
             f"💰 {escape(campaign.prize_text)}\n\n"
-            "فقط وارد ربات شو، لینک اختصاصی خودت را بگیر و برای دوستات بفرست.\n"
-            f"⭐ هر {campaign.invites_per_point} دعوت فعال = ۱ امتیاز موقت\n\n"
-            f"⏳ {left} تا پایان ثبت دعوت‌ها"
+            "✅ اعضای فعلی کانال هم می‌تونن شرکت کنن.\n"
+            f"👥 هر <b>{campaign.invites_per_point} دوست</b> که با لینک تو عضو بشن = ۱ امتیاز\n"
+            "🎟 بعد از تکمیل مدت عضویت، امتیازت برای قرعه‌کشی نهایی تأیید میشه.\n\n"
+            "🔐 قوانین مسابقه بعد از شروع تغییر نمی‌کنه.\n"
+            "🎲 قرعه‌کشی شفاف و قابل بررسی انجام میشه.\n\n"
+            f"⏳ {left} تا پایان ثبت دعوت‌ها\n\n"
+            "👇 <b>برای شرکت فقط دکمه زیر رو بزن</b>"
         )
+
+    body = (
+        f"🎁 <b>{escape(campaign.name)} — جایزه نقدی</b>\n\n"
+        f"🏆 <b>{campaign.num_winners} برنده</b>\n"
+        f"💰 {escape(campaign.prize_text)}\n\n"
+        "فقط وارد ربات شو، لینک اختصاصی خودت را بگیر و برای دوستات بفرست.\n"
+        f"⭐ هر {campaign.invites_per_point} دعوت فعال = ۱ امتیاز موقت\n\n"
+        f"⏳ {left} تا پایان ثبت دعوت‌ها"
+    )
     return body + f"\n\n👇 شرکت در مسابقه:\n{promo_link}"
 
 

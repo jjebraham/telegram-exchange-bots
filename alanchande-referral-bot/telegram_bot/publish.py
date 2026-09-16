@@ -26,22 +26,50 @@ def parse_publish_args(args: list[str]) -> tuple[str, str]:
     return source, variant
 
 
-def _channel_keyboard(channel_url: str, promo_link: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+def _channel_keyboard(
+    channel_url: str,
+    promo_link: str,
+    variant: str = "a",
+) -> InlineKeyboardMarkup:
+    rows = [
         [InlineKeyboardButton("🎁 شرکت در مسابقه", url=promo_link)],
-        [InlineKeyboardButton("📢 کانال الان چنده؟", url=channel_url)],
-    ])
+    ]
+
+    if variant != "b":
+        rows.append([
+            InlineKeyboardButton("📢 کانال الان چنده؟", url=channel_url)
+        ])
+
+    return InlineKeyboardMarkup(rows)
 
 
-def _preview_keyboard(channel_url: str, promo_link: str, token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+def _preview_keyboard(
+    channel_url: str,
+    promo_link: str,
+    token: str,
+    variant: str = "a",
+) -> InlineKeyboardMarkup:
+    rows = [
         [InlineKeyboardButton("🎁 شرکت در مسابقه", url=promo_link)],
-        [InlineKeyboardButton("📢 کانال الان چنده؟", url=channel_url)],
-        [
-            InlineKeyboardButton("✅ انتشار در کانال", callback_data=f"publishpromo:yes:{token}"),
-            InlineKeyboardButton("❌ لغو", callback_data=f"publishpromo:no:{token}"),
-        ],
+    ]
+
+    if variant != "b":
+        rows.append([
+            InlineKeyboardButton("📢 کانال الان چنده؟", url=channel_url)
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "✅ انتشار در کانال",
+            callback_data=f"publishpromo:yes:{token}",
+        ),
+        InlineKeyboardButton(
+            "❌ لغو",
+            callback_data=f"publishpromo:no:{token}",
+        ),
     ])
+
+    return InlineKeyboardMarkup(rows)
 
 
 async def _bot_username(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -106,7 +134,7 @@ async def cmd_publish_promo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=_preview_keyboard(settings.channel_url, promo_link, token),
+        reply_markup=_preview_keyboard(settings.channel_url, promo_link, token, variant),
         disable_web_page_preview=True,
     )
 
@@ -169,7 +197,7 @@ async def on_publish_promo_callback(update: Update, context: ContextTypes.DEFAUL
             chat_id=settings.channel_ref,
             text=str(preview["text"]),
             parse_mode=ParseMode.HTML,
-            reply_markup=_channel_keyboard(settings.channel_url, str(preview["promo_link"])),
+            reply_markup=_channel_keyboard(settings.channel_url, str(preview["promo_link"]), str(preview["variant"])),
             disable_web_page_preview=True,
         )
     except (Forbidden, BadRequest) as exc:
@@ -204,7 +232,7 @@ async def on_publish_promo_callback(update: Update, context: ContextTypes.DEFAUL
 
     try:
         await query.edit_message_reply_markup(
-            reply_markup=_channel_keyboard(settings.channel_url, str(preview["promo_link"]))
+            reply_markup=_channel_keyboard(settings.channel_url, str(preview["promo_link"]), str(preview["variant"]))
         )
     except BadRequest:
         pass

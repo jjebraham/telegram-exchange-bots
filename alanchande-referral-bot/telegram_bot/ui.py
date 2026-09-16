@@ -33,16 +33,25 @@ def back_keyboard() -> InlineKeyboardMarkup:
 def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
     if campaign:
         share_text = (
-            f"من تو مسابقه {campaign.name} «الان چنده؟» شرکت کردم 🎁\n"
-            f"{campaign.num_winners} نفر برنده می‌شن. از لینک من وارد شو؛ بعد از عضویت، "
-            "خودت هم می‌تونی لینک دعوت بگیری 👇"
+            f"🎁 من تو مسابقه {campaign.name} «الان چنده؟» شرکت کردم.\n"
+            f"🏆 {campaign.num_winners} نفر برنده می‌شن.\n\n"
+            "اگه دوست داشتی از لینک من وارد شو 👇\n"
+            "بعد از عضویت، خودت هم می‌تونی لینک اختصاصی بگیری و شرکت کنی."
         )
     else:
-        share_text = "من تو مسابقه «الان چنده؟» شرکت کردم 🎁 از لینک من وارد شو 👇"
-    share_url = "https://t.me/share/url?" + urlencode({"url": link, "text": share_text})
+        share_text = (
+            "🎁 من تو مسابقه «الان چنده؟» شرکت کردم.\n"
+            "اگه دوست داشتی از لینک من وارد شو 👇"
+        )
+
+    share_url = "https://t.me/share/url?" + urlencode({
+        "url": link,
+        "text": share_text,
+    })
+
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 ارسال برای دوستان", url=share_url)],
-        [InlineKeyboardButton("📢 مشاهده کانال", url=settings.channel_url)],
+        [InlineKeyboardButton("📤 دعوت دوست و گرفتن امتیاز", url=share_url)],
+        [InlineKeyboardButton("📊 امتیاز من", callback_data="menu:stats")],
         [InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")],
     ])
 
