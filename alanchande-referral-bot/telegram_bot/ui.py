@@ -33,15 +33,14 @@ def back_keyboard() -> InlineKeyboardMarkup:
 def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
     if campaign:
         share_text = (
-            f"🎁 من تو مسابقه {campaign.name} «الان چنده؟» شرکت کردم.\n"
-            f"🏆 {campaign.num_winners} نفر برنده می‌شن.\n\n"
-            "اگه دوست داشتی از لینک من وارد شو 👇\n"
-            "بعد از عضویت، خودت هم می‌تونی لینک اختصاصی بگیری و شرکت کنی."
+            f"🎁 بیا در مسابقه {campaign.name} «الان چنده؟» شرکت کن!\n"
+            f"🏆 {campaign.num_winners} برنده داریم.\n\n"
+            "با لینک من وارد ربات شو؛ بعد از عضویت، خودت هم لینک اختصاصی می‌گیری 👇"
         )
     else:
         share_text = (
-            "🎁 من تو مسابقه «الان چنده؟» شرکت کردم.\n"
-            "اگه دوست داشتی از لینک من وارد شو 👇"
+            "🎁 بیا در مسابقه «الان چنده؟» شرکت کن!\n"
+            "با لینک من وارد شو 👇"
         )
 
     share_url = "https://t.me/share/url?" + urlencode({
@@ -50,9 +49,9 @@ def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = Non
     })
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 دعوت دوست و گرفتن امتیاز", url=share_url)],
-        [InlineKeyboardButton("📊 امتیاز من", callback_data="menu:stats")],
-        [InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")],
+        [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
+        [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
+        [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
     ])
 
 
@@ -103,6 +102,7 @@ def menu_text(campaign: Campaign, first_name: str) -> str:
         "لینک اختصاصی‌ات را برای دوستانت بفرست. آن‌ها باید اول از لینک تو وارد ربات شوند و بعد عضو کانال شوند.\n\n"
         f"⭐ هر <b>{campaign.invites_per_point} دعوت فعال</b> = <b>۱ امتیاز موقت</b>\n"
         f"🎟 بعد از <b>{hours_label(campaign.min_stay_hours)}</b> عضویت پیوسته، همان امتیاز به <b>بلیت تأییدشده قرعه‌کشی</b> تبدیل می‌شود.\n\n"
+        f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}\n"
         f"⏰ <b>پایان ثبت دعوت:</b> {campaign_end_text(campaign)}\n"
         f"📅 <b>زمان قرعه‌کشی:</b> {draw_schedule_text(campaign)}\n\n"
         f"در پایان <b>{campaign.num_winners} برنده</b> با قرعه‌کشی وزن‌دار انتخاب می‌شوند؛ "
@@ -119,10 +119,17 @@ def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
 
     if campaign.max_points and counts["current_points"] >= campaign.max_points:
         next_text = "✅ به سقف امتیاز موقت این مسابقه رسیده‌ای."
+        progress_text = "🎯 پیشرفت امتیاز بعدی: سقف مسابقه تکمیل شده است."
     else:
         remainder = counts["active"] % campaign.invites_per_point
         need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+        filled = int(round((remainder / campaign.invites_per_point) * 10)) if campaign.invites_per_point else 0
+        progress_bar = "█" * filled + "░" * (10 - filled)
         next_text = f"🔥 تا امتیاز موقت بعدی فقط <b>{need}</b> دعوت فعال دیگر لازم داری."
+        progress_text = (
+            f"🎯 پیشرفت امتیاز بعدی: <b>{progress_bar}</b> "
+            f"{remainder}/{campaign.invites_per_point}"
+        )
 
     rank_text = (
         f"📍 رتبه فعلی تو: <b>#{rank}</b> از <b>{ranked_total}</b> نفر"
@@ -154,7 +161,9 @@ def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
         f"✅ دعوت تأییدشده: <b>{counts['qualified']}</b>\n"
         f"⏳ در انتظار تأیید: <b>{counts['pending']}</b>\n"
         f"❌ خارج‌شده: <b>{counts['left']}</b>\n\n"
-        f"{next_text}\n{rank_text}\n{pending_open_text}{extra}\n\n{retention_note}"
+        f"{progress_text}\n{next_text}\n{rank_text}\n{pending_open_text}{extra}\n\n"
+        f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}\n\n"
+        f"{retention_note}"
         f"{_late_referral_warning(campaign)}"
     )
 
@@ -257,6 +266,7 @@ def render_prizes(campaign: Campaign) -> str:
     return (
         f"<b>🎁 جوایز — {escape(campaign.name)}</b>\n\n{prize}\n\n"
         f"🏆 تعداد برندگان: <b>{campaign.num_winners}</b> نفر\n"
+        f"⏳ آخرین زمان ورود دعوت جدید برای تأیید: <b>{final_join_cutoff_text(campaign)}</b>\n"
         f"⏰ پایان ثبت دعوت: <b>{campaign_end_text(campaign)}</b>\n"
         f"📅 زمان قرعه‌کشی: <b>{draw_schedule_text(campaign)}</b>"
     )
