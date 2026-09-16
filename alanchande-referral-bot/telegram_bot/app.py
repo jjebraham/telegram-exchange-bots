@@ -40,6 +40,7 @@ from .growth import (
 )
 from .live_runtime import on_chat_member, post_init, post_stop
 from .promo_handlers import cmd_start_entry, on_promo_enter
+from .publish import cmd_publish_promo, on_publish_promo_callback
 from .referral_success import on_referral_check_and_welcome
 from .user_handlers import cmd_menu, cmd_stats_user, on_menu_callback
 
@@ -204,6 +205,7 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("me", cmd_stats_user))
     app.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     app.add_handler(CallbackQueryHandler(on_promo_enter, pattern=r"^promo:enter:"))
+    app.add_handler(CallbackQueryHandler(on_publish_promo_callback, pattern=r"^publishpromo:"))
     app.add_handler(CallbackQueryHandler(on_referral_check_and_welcome, pattern=r"^ref:check:"))
     app.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
@@ -219,6 +221,7 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("sources", cmd_sources))
     app.add_handler(CommandHandler("promo_link", cmd_promo_link))
     app.add_handler(CommandHandler("promo_post", cmd_promo_post))
+    app.add_handler(CommandHandler("publish_promo", cmd_publish_promo))
     app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("weekly_post", cmd_weekly_post))
     app.add_handler(CommandHandler("audit", cmd_audit))
