@@ -27,6 +27,7 @@ class Settings:
     reconciliation_batch_size: int = 200
     analytics_snapshot_seconds: int = 3600
     nudge_check_seconds: int = 3600
+    early_share_nudge_hours: int = 2
     zero_referral_nudge_hours: int = 24
     promo_abandon_nudge_hours: int = 3
     notification_window_seconds: int = 600
@@ -103,6 +104,7 @@ class Settings:
             reconciliation_batch_size=int_env("RECONCILIATION_BATCH_SIZE", 200, 10),
             analytics_snapshot_seconds=int_env("ANALYTICS_SNAPSHOT_SECONDS", 3600, 900),
             nudge_check_seconds=int_env("NUDGE_CHECK_SECONDS", 3600, 900),
+            early_share_nudge_hours=int_env("EARLY_SHARE_NUDGE_HOURS", 2, 1),
             zero_referral_nudge_hours=int_env("ZERO_REFERRAL_NUDGE_HOURS", 24, 1),
             promo_abandon_nudge_hours=int_env("PROMO_ABANDON_NUDGE_HOURS", 3, 1),
             notification_window_seconds=int_env("NOTIFICATION_WINDOW_SECONDS", 600, 60),
