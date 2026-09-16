@@ -17,7 +17,17 @@ from .context import is_admin, services
 
 log = logging.getLogger("alanchande_referral_bot")
 ISTANBUL = timezone(timedelta(hours=3))
+IRAN = timezone(timedelta(hours=3, minutes=30))
 _SOURCE_RE = re.compile(r"[^a-z0-9_-]+")
+_ONBOARDING_EVENTS = {
+    "bot_start_new",
+    "bot_start_returning",
+    "entry_screen_shown",
+    "entry_cta_clicked",
+    "membership_check_passed",
+    "membership_check_failed",
+    "membership_check_error",
+}
 
 
 def normalize_promo_source(raw: str) -> str:
@@ -57,6 +67,15 @@ def remaining_text(seconds: int) -> str:
     return f"{hours} ساعت"
 
 
+def qualification_cutoff_text(campaign: Campaign) -> str:
+    cutoff_ist = campaign.final_qualification_cutoff.astimezone(ISTANBUL)
+    cutoff_ir = campaign.final_qualification_cutoff.astimezone(IRAN)
+    return (
+        f"{cutoff_ist:%Y/%m/%d} {cutoff_ist:%H:%M} استانبول / "
+        f"{cutoff_ir:%Y/%m/%d} {cutoff_ir:%H:%M} ایران"
+    )
+
+
 async def _bot_username(context: ContextTypes.DEFAULT_TYPE) -> str:
     username = context.bot.username
     if not username:
@@ -77,7 +96,7 @@ def _first_touch_sources(db, campaign_id: int) -> tuple[dict[int, str], str | No
         rows = conn.execute(
             """SELECT user_id,source,created_at FROM funnel_events
                WHERE campaign_id=? AND event_type='bot_start'
-               ORDER BY created_at ASC, user_id ASC""",
+               ORDER BY created_at ASC, user_id ASC, source ASC""",
             (campaign_id,),
         ).fetchall()
     first: dict[int, str] = {}
@@ -89,9 +108,26 @@ def _first_touch_sources(db, campaign_id: int) -> tuple[dict[int, str], str | No
     return first, tracking_started
 
 
+def _onboarding_event_users(db, campaign_id: int) -> dict[str, dict[str, set[int]]]:
+    placeholders = ",".join("?" for _ in _ONBOARDING_EVENTS)
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"""SELECT user_id,event_type,source FROM funnel_events
+                WHERE campaign_id=? AND event_type IN ({placeholders})""",
+            (campaign_id, *sorted(_ONBOARDING_EVENTS)),
+        ).fetchall()
+    result: dict[str, dict[str, set[int]]] = {}
+    for row in rows:
+        source = str(row["source"] or "organic")
+        event_type = str(row["event_type"])
+        result.setdefault(source, {}).setdefault(event_type, set()).add(int(row["user_id"]))
+    return result
+
+
 def source_performance(db, campaign: Campaign) -> dict:
-    """First-touch source attribution for tracked participants and their referral trees."""
+    """First-touch source attribution plus post-deploy onboarding instrumentation."""
     first_source, tracking_started = _first_touch_sources(db, campaign.id)
+    onboarding = _onboarding_event_users(db, campaign.id)
     cutoff = campaign.cutoff(utcnow())
     with db.connect() as conn:
         entered = {
@@ -141,6 +177,15 @@ def source_performance(db, campaign: Campaign) -> dict:
             "joins": 0,
             "active": 0,
             "qualified": 0,
+            "new_starts": 0,
+            "returning_starts": 0,
+            "unclassified_starts": 0,
+            "new_entered": 0,
+            "entry_shown": 0,
+            "entry_cta": 0,
+            "membership_passed": 0,
+            "membership_failed": 0,
+            "membership_error": 0,
         })
 
     for uid, source in first_source.items():
@@ -150,6 +195,19 @@ def source_performance(db, campaign: Campaign) -> dict:
             item["entered"] += 1
         if uid in links:
             item["links"] += 1
+
+    for source, events in onboarding.items():
+        item = bucket(source)
+        new_users = events.get("bot_start_new", set())
+        returning_users = events.get("bot_start_returning", set())
+        item["new_starts"] = len(new_users)
+        item["returning_starts"] = len(returning_users)
+        item["new_entered"] = len(new_users & entered)
+        item["entry_shown"] = len(events.get("entry_screen_shown", set()))
+        item["entry_cta"] = len(events.get("entry_cta_clicked", set()))
+        item["membership_passed"] = len(events.get("membership_check_passed", set()))
+        item["membership_failed"] = len(events.get("membership_check_failed", set()))
+        item["membership_error"] = len(events.get("membership_check_error", set()))
 
     candidate_seen: set[int] = set()
     for row in list(pending) + list(refs):
@@ -174,11 +232,21 @@ def source_performance(db, campaign: Campaign) -> dict:
                 item["qualified"] += 1
 
     for item in buckets.values():
+        classified = item["new_starts"] + item["returning_starts"]
+        item["unclassified_starts"] = max(0, item["starts"] - classified)
         item["start_to_entered_pct"] = (
             round(item["entered"] * 100.0 / item["starts"], 1) if item["starts"] else None
         )
         item["start_to_link_pct"] = (
             round(item["links"] * 100.0 / item["starts"], 1) if item["starts"] else None
+        )
+        item["new_start_to_entered_pct"] = (
+            round(item["new_entered"] * 100.0 / item["new_starts"], 1)
+            if item["new_starts"] else None
+        )
+        item["entry_cta_pct"] = (
+            round(item["entry_cta"] * 100.0 / item["entry_shown"], 1)
+            if item["entry_shown"] else None
         )
         item["candidate_to_join_pct"] = (
             round(item["joins"] * 100.0 / item["candidates"], 1) if item["candidates"] else None
@@ -221,6 +289,7 @@ def weekly_post_text(db, campaign: Campaign, promo_link: str) -> str:
         f"🔥 دعوت‌های فعال: <b>{stats['active']}</b>",
         f"🎟 دعوت‌های تأییدشده: <b>{stats['qualified']}</b>",
         f"⏳ <b>{left}</b> تا پایان ثبت دعوت‌ها",
+        f"⚠️ آخرین زمان ورود دعوت جدید برای بلیت نهایی: <b>{qualification_cutoff_text(campaign)}</b>",
         "",
     ]
     if top:
@@ -246,6 +315,7 @@ def weekly_post_text(db, campaign: Campaign, promo_link: str) -> str:
 
 def promo_post_text(campaign: Campaign, promo_link: str, variant: str) -> str:
     left = remaining_text((campaign.end_dt - utcnow()).total_seconds())
+    cutoff = qualification_cutoff_text(campaign)
 
     if variant == "b":
         return (
@@ -257,6 +327,7 @@ def promo_post_text(campaign: Campaign, promo_link: str, variant: str) -> str:
             "🎟 بعد از تکمیل مدت عضویت، امتیازت برای قرعه‌کشی نهایی تأیید میشه.\n\n"
             "🔐 قوانین مسابقه بعد از شروع تغییر نمی‌کنه.\n"
             "🎲 قرعه‌کشی شفاف و قابل بررسی انجام میشه.\n\n"
+            f"⚠️ آخرین زمان ورود دعوت جدید برای بلیت نهایی: <b>{cutoff}</b>\n"
             f"⏳ {left} تا پایان ثبت دعوت‌ها\n\n"
             "👇 <b>برای شرکت فقط دکمه زیر رو بزن</b>"
         )
@@ -265,8 +336,11 @@ def promo_post_text(campaign: Campaign, promo_link: str, variant: str) -> str:
         f"🎁 <b>{escape(campaign.name)} — جایزه نقدی</b>\n\n"
         f"🏆 <b>{campaign.num_winners} برنده</b>\n"
         f"💰 {escape(campaign.prize_text)}\n\n"
+        "✅ اعضای فعلی کانال هم می‌تونن شرکت کنن.\n"
         "فقط وارد ربات شو، لینک اختصاصی خودت را بگیر و برای دوستات بفرست.\n"
         f"⭐ هر {campaign.invites_per_point} دعوت فعال = ۱ امتیاز موقت\n\n"
+        "🔐 قوانین مسابقه بعد از شروع تغییر نمی‌کنه.\n"
+        f"⚠️ آخرین زمان ورود دعوت جدید برای بلیت نهایی: <b>{cutoff}</b>\n"
         f"⏳ {left} تا پایان ثبت دعوت‌ها"
     )
     return body + f"\n\n👇 شرکت در مسابقه:\n{promo_link}"
@@ -326,11 +400,17 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"  starts={row['starts']} entered={row['entered']} links={row['links']} "
             f"opens={row['referral_opens']} candidates={row['candidates']}",
             f"  joins={row['joins']} active={row['active']} qualified={row['qualified']}",
+            f"  classified starts: new={row['new_starts']} returning={row['returning_starts']} "
+            f"unclassified={row['unclassified_starts']}",
+            f"  onboarding: shown={row['entry_shown']} cta={row['entry_cta']} "
+            f"member_ok={row['membership_passed']} member_no={row['membership_failed']} "
+            f"errors={row['membership_error']}",
             f"  start→enter={_pct(row['start_to_entered_pct'])} | "
-            f"start→link={_pct(row['start_to_link_pct'])} | "
-            f"candidate→join={_pct(row['candidate_to_join_pct'])}",
+            f"new start→enter={_pct(row['new_start_to_entered_pct'])} | "
+            f"shown→cta={_pct(row['entry_cta_pct'])} | candidate→join={_pct(row['candidate_to_join_pct'])}",
         ])
-    lines.append("\nlegacy/untracked = activity whose referrer predates first-touch source tracking.")
+    lines.append("\nclassified starts are available only after this onboarding instrumentation was deployed.")
+    lines.append("legacy/untracked = activity whose referrer predates first-touch source tracking.")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -352,6 +432,10 @@ async def cmd_funnel_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     tracked_joins = sum(row["joins"] for row in tracked)
     tracked_active = sum(row["active"] for row in tracked)
     tracked_qualified = sum(row["qualified"] for row in tracked)
+    new_starts = sum(row["new_starts"] for row in tracked)
+    returning_starts = sum(row["returning_starts"] for row in tracked)
+    new_entered = sum(row["new_entered"] for row in tracked)
+    new_start_to_enter = round(new_entered * 100.0 / new_starts, 1) if new_starts else None
     start_to_enter = (
         round(stats["entered_contest"] * 100.0 / stats["bot_starts"], 1)
         if stats["bot_starts"] else None
@@ -362,6 +446,9 @@ async def cmd_funnel_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     lines.append(f"Tracking began: {report['tracking_started_at'] or 'no tracked start yet'}")
     lines.extend([
         f"• bot starts: {stats['bot_starts']}",
+        f"• classified new starts: {new_starts}",
+        f"• classified returning starts: {returning_starts}",
+        f"• new-start → entered: {_pct(new_start_to_enter)}",
         f"• entered contest events: {stats['entered_contest']} ({_pct(start_to_enter)} of starts)",
         f"• referral-link opens: {stats['referral_opens']}",
         f"• tracked-source participants with links: {tracked_links}",
@@ -385,7 +472,7 @@ async def cmd_funnel_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ])
     lines.extend([
         "",
-        "Use /sources for first-touch source and A/B performance.",
+        "Use /sources for first-touch source, new-vs-returning starts and onboarding steps.",
         "Historical DB totals can be larger than tracked starts because analytics was deployed after the campaign began.",
         "Telegram post views and native Share completion are not visible to the bot.",
     ])
