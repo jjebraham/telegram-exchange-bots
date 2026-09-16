@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from .config import hours_label, telegram_membership
 from .context import services
-from .ui import link_keyboard, main_keyboard
+from .ui import final_join_cutoff_text, link_keyboard
 from .user_handlers import finalize_pending_referral, get_or_create_link
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -31,27 +31,28 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
         return False
 
     first_name = escape(user.first_name or "دوست عزیز")
+    if campaign.invites_per_point == 2:
+        first_step = "👥 اولین دعوت فعال = نصف راه تا اولین امتیاز"
+    else:
+        first_step = f"👥 برای اولین امتیاز به {campaign.invites_per_point} دعوت فعال نیاز داری"
+
     try:
         await context.bot.send_message(
             chat_id=user.id,
             text=(
                 f"🎉 <b>{first_name}، تبریک!</b>\n\n"
                 "عضویتت تأیید شد و حالا خودت هم داخل مسابقه‌ای.\n"
-                "دوستات رو دعوت کن و شانس برنده شدنت رو بیشتر کن! 🚀\n\n"
+                "لینک اختصاصی‌ات آماده است؛ همین حالا برای چند نفر بفرستش 👇\n\n"
+                f"<b>🔗 لینک اختصاصی دعوت تو:</b>\n{link}\n\n"
+                f"{first_step}\n"
                 f"⭐ هر <b>{campaign.invites_per_point}</b> دعوت فعال = <b>۱ امتیاز موقت</b>\n"
                 f"🎟 بعد از <b>{hours_label(campaign.min_stay_hours)}</b> ماندن پیوسته، "
                 "همان امتیاز به بلیت تأییدشده قرعه‌کشی تبدیل می‌شود.\n\n"
-                f"<b>🔗 لینک اختصاصی دعوت تو:</b>\n{link}\n\n"
-                "همین حالا می‌تونی با دکمه زیر برای دوستات بفرستی."
+                f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}"
             ),
             parse_mode=ParseMode.HTML,
             reply_markup=link_keyboard(settings, link, campaign),
             disable_web_page_preview=True,
-        )
-        await context.bot.send_message(
-            chat_id=user.id,
-            text="👇 منوی مسابقه هم همیشه از اینجا در دسترسه:",
-            reply_markup=main_keyboard(settings),
         )
     except (Forbidden, BadRequest) as exc:
         log.warning("Could not send participant welcome to user=%s: %s", user.id, exc)
