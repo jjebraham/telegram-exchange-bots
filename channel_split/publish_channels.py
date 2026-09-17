@@ -124,10 +124,10 @@ def build_kiani_rate_post(rates: dict[str, Decimal]) -> str:
 def build_alanchande_converter_post(rates: dict[str, Decimal]) -> str:
     sell_try = rates["buy_lira"]
     amounts = (
-        ("۱ میلیون", Decimal("1000000")),
-        ("۱۰ میلیون", Decimal("10000000")),
-        ("۵۰ میلیون", Decimal("50000000")),
-        ("۱۰۰ میلیون", Decimal("100000000")),
+        ("یک میلیون", Decimal("1000000")),
+        ("ده میلیون", Decimal("10000000")),
+        ("پنجاه میلیون", Decimal("50000000")),
+        ("صد میلیون", Decimal("100000000")),
     )
     lines = [
         "💰 <b>الان چند میشه؟</b>",
