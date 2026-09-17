@@ -22,7 +22,12 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from bank_compare import build_usd_comparison_post, fetch_usd_comparison
+from bank_compare import (
+    build_eur_comparison_post,
+    build_usd_comparison_post,
+    fetch_eur_comparison,
+    fetch_usd_comparison,
+)
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
@@ -233,6 +238,8 @@ def main() -> int:
         "--post",
         choices=(
             "bank-comparison",
+            "eur-bank-comparison",
+            "bank-comparisons",
             "alanchande-converter",
             "alanchande-snapshot",
             "kiani-rates",
@@ -250,7 +257,8 @@ def main() -> int:
     # (token_env, destination_env, text)
     jobs: list[tuple[str, str, str]] = []
     rates_cache: dict[str, Decimal] | None = None
-    quotes_cache: list[Any] | None = None
+    usd_quotes_cache: list[Any] | None = None
+    eur_quotes_cache: list[Any] | None = None
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -258,11 +266,17 @@ def main() -> int:
             rates_cache = fetch_kiani_rates(os.environ.get("KIANI_RATES_URL", DEFAULT_RATES_URL))
         return rates_cache
 
-    def get_quotes() -> list[Any]:
-        nonlocal quotes_cache
-        if quotes_cache is None:
-            quotes_cache = fetch_usd_comparison()
-        return quotes_cache
+    def get_usd_quotes() -> list[Any]:
+        nonlocal usd_quotes_cache
+        if usd_quotes_cache is None:
+            usd_quotes_cache = fetch_usd_comparison()
+        return usd_quotes_cache
+
+    def get_eur_quotes() -> list[Any]:
+        nonlocal eur_quotes_cache
+        if eur_quotes_cache is None:
+            eur_quotes_cache = fetch_eur_comparison()
+        return eur_quotes_cache
 
     def add_alanchande(text: str) -> None:
         jobs.append(("ALANCHANDE_TELEGRAM_BOT_TOKEN", "ALANCHANDE_CHANNEL_ID", text))
@@ -270,14 +284,17 @@ def main() -> int:
     def add_kiani(text: str) -> None:
         jobs.append(("KIANI_TELEGRAM_BOT_TOKEN", "KIANI_CHANNEL_ID", text))
 
-    if args.post in {"bank-comparison", "all"}:
-        add_alanchande(build_usd_comparison_post(get_quotes()))
+    if args.post in {"bank-comparison", "bank-comparisons", "all"}:
+        add_alanchande(build_usd_comparison_post(get_usd_quotes()))
+
+    if args.post in {"eur-bank-comparison", "bank-comparisons"}:
+        add_alanchande(build_eur_comparison_post(get_eur_quotes()))
 
     if args.post in {"alanchande-converter", "demo-formats"}:
         add_alanchande(build_alanchande_converter_post(get_rates()))
 
     if args.post in {"alanchande-snapshot", "demo-formats"}:
-        add_alanchande(build_alanchande_snapshot_post(get_rates(), get_quotes()))
+        add_alanchande(build_alanchande_snapshot_post(get_rates(), get_usd_quotes()))
 
     if args.post in {"kiani-rates", "all"}:
         add_kiani(build_kiani_rate_post(get_rates()))
