@@ -35,13 +35,13 @@ from .growth import (
     cmd_funnel_clear,
     cmd_promo_link,
     cmd_promo_post,
-    cmd_sources,
     cmd_weekly_post,
 )
 from .live_runtime import on_chat_member, post_init, post_stop
 from .promo_handlers import cmd_start_entry, on_promo_enter
 from .publish import cmd_publish_promo, on_publish_promo_callback
 from .referral_success import on_referral_check_and_welcome
+from .share_activation import cmd_sources
 from .user_handlers import cmd_menu, cmd_stats_user, on_menu_callback
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -236,7 +236,7 @@ def create_application(settings: Settings) -> Application:
 def main() -> None:
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s - %(asctime)s %(levelname)s %(name)s - %(message)s",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
