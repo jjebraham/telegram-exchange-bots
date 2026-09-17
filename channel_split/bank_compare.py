@@ -134,9 +134,6 @@ def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
     if not quotes:
         raise ValueError("No bank quotes supplied")
 
-    cheapest_to_buy = min(quotes, key=lambda q: q.sell)
-    best_to_sell = max(quotes, key=lambda q: q.buy)
-
     lines = [
         "🏦 <b>دلار امروز کجا بهتره؟</b>",
         "",
@@ -145,19 +142,6 @@ def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
         "",
     ]
     for q in quotes:
-        lines.append(
-            f"• {q.name}: <b>{_fmt(q.buy)}</b> | <b>{_fmt(q.sell)}</b>"
-        )
+        lines.append(f"• {q.name}: <b>{_fmt(q.buy)}</b> | <b>{_fmt(q.sell)}</b>")
 
-    lines.extend(
-        [
-            "",
-            f"🟢 برای خرید دلار: <b>{cheapest_to_buy.name}</b> — {_fmt(cheapest_to_buy.sell)} لیر",
-            f"🔵 برای فروش دلار: <b>{best_to_sell.name}</b> — {_fmt(best_to_sell.buy)} لیر",
-            "",
-            "ℹ️ ستون اول یعنی مجموعه دلار را از شما می‌خرد؛ ستون دوم یعنی دلار را به شما می‌فروشد.",
-            "نرخ‌ها اطلاع‌رسانی هستند و ممکن است نرخ نهایی معامله متفاوت باشد.",
-            "منبع مقایسه: kur.doviz.com",
-        ]
-    )
     return "\n".join(lines)
