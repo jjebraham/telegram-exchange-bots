@@ -67,7 +67,7 @@ def _positive_decimal(value: Any, key: str) -> Decimal:
 def fetch_kiani_rates(url: str = DEFAULT_RATES_URL, timeout: int = 20) -> dict[str, Decimal]:
     request = Request(
         url,
-        headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.1"},
+        headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.2"},
     )
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -96,8 +96,11 @@ def _fmt_cross(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01')):.2f}".rstrip("0").rstrip(".")
 
 
+def _now_text() -> str:
+    return datetime.now(ISTANBUL_TZ).strftime("%H:%M")
+
+
 def build_kiani_rate_post(rates: dict[str, Decimal]) -> str:
-    updated_at = datetime.now(ISTANBUL_TZ)
     return "\n".join(
         [
             "💱 <b>نرخ معامله صرافی کیانی</b>",
@@ -111,11 +114,91 @@ def build_kiani_rate_post(rates: dict[str, Decimal]) -> str:
             f"🔄 لیر → تتر: هر ۱ تتر = <b>{_fmt_cross(rates['lira_to_usdt'])}</b> لیر",
             f"🔄 تتر → لیر: هر ۱ تتر = <b>{_fmt_cross(rates['usdt_to_lira'])}</b> لیر",
             "",
-            f"🕒 بروزرسانی: {updated_at:%H:%M} به وقت استانبول",
+            f"🕒 بروزرسانی: {_now_text()} به وقت استانبول",
             "🤖 ثبت سفارش: @Kianiexchangebot",
             "📊 نرخ‌های بازار و محتوای تحلیلی: @alanchande_com",
         ]
     )
+
+
+def build_alanchande_converter_post(rates: dict[str, Decimal]) -> str:
+    sell_try = rates["buy_lira"]
+    amounts = (
+        ("۱ میلیون", Decimal("1000000")),
+        ("۱۰ میلیون", Decimal("10000000")),
+        ("۵۰ میلیون", Decimal("50000000")),
+        ("۱۰۰ میلیون", Decimal("100000000")),
+    )
+    lines = [
+        "💰 <b>الان چند میشه؟</b>",
+        "",
+        "تبدیل تومان به لیر با نرخ فعلی:",
+        "",
+    ]
+    for label, toman in amounts:
+        try_amount = toman / sell_try
+        lines.append(f"🇹🇷 {label} تومان ≈ <b>{_fmt_int(try_amount)}</b> لیر")
+    lines.extend(
+        [
+            "",
+            f"نرخ محاسبه: هر ۱ لیر = <b>{_fmt_int(sell_try)}</b> تومان",
+            f"🕒 {_now_text()} استانبول",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_alanchande_snapshot_post(rates: dict[str, Decimal], quotes: list[Any]) -> str:
+    kapali = next((q for q in quotes if q.name == "Kapalıçarşı"), None)
+    if kapali is None:
+        raise ValueError("Kapalıçarşı quote is required for market snapshot")
+
+    return "\n".join(
+        [
+            "📊 <b>نبض بازار | الان چنده؟</b>",
+            "",
+            f"🇹🇷 لیر: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
+            f"🪙 تتر: <b>{_fmt_int(rates['buy_usdt'])}</b> تومان",
+            f"💵 دلار/لیر بازار: <b>{_fmt_cross(kapali.buy)}</b> | <b>{_fmt_cross(kapali.sell)}</b>",
+            f"🔄 تتر/لیر: <b>{_fmt_cross(rates['lira_to_usdt'])}</b> لیر",
+            "",
+            f"🕒 {_now_text()} استانبول",
+        ]
+    )
+
+
+def build_kiani_try_post(rates: dict[str, Decimal]) -> str:
+    return "\n".join(
+        [
+            "🇹🇷 <b>نرخ لیر | صرافی کیانی</b>",
+            "",
+            f"فروش به شما: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
+            f"خرید از شما: <b>{_fmt_int(rates['sell_lira'])}</b> تومان",
+            "",
+            f"🕒 {_now_text()} استانبول",
+            "🤖 ثبت سفارش: @Kianiexchangebot",
+        ]
+    )
+
+
+def build_kiani_examples_post(rates: dict[str, Decimal]) -> str:
+    sell_try = rates["buy_lira"]
+    amounts = (Decimal("10000"), Decimal("50000"), Decimal("100000"))
+    lines = [
+        "🧮 <b>برای خرید لیر چقدر تومان لازم است؟</b>",
+        "",
+    ]
+    for try_amount in amounts:
+        toman = try_amount * sell_try
+        lines.append(f"🇹🇷 {_fmt_int(try_amount)} لیر ≈ <b>{_fmt_int(toman)}</b> تومان")
+    lines.extend(
+        [
+            "",
+            f"بر اساس نرخ فروش فعلی: <b>{_fmt_int(sell_try)}</b> تومان",
+            "🤖 ثبت سفارش: @Kianiexchangebot",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def telegram_send(token: str, chat_id: str, text: str, timeout: int = 20) -> dict[str, Any]:
@@ -148,7 +231,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--post",
-        choices=("bank-comparison", "kiani-rates", "all"),
+        choices=(
+            "bank-comparison",
+            "alanchande-converter",
+            "alanchande-snapshot",
+            "kiani-rates",
+            "kiani-try",
+            "kiani-examples",
+            "demo-formats",
+            "all",
+        ),
         default="all",
         help="Which split-channel post to build/send",
     )
@@ -157,26 +249,44 @@ def main() -> int:
 
     # (token_env, destination_env, text)
     jobs: list[tuple[str, str, str]] = []
+    rates_cache: dict[str, Decimal] | None = None
+    quotes_cache: list[Any] | None = None
+
+    def get_rates() -> dict[str, Decimal]:
+        nonlocal rates_cache
+        if rates_cache is None:
+            rates_cache = fetch_kiani_rates(os.environ.get("KIANI_RATES_URL", DEFAULT_RATES_URL))
+        return rates_cache
+
+    def get_quotes() -> list[Any]:
+        nonlocal quotes_cache
+        if quotes_cache is None:
+            quotes_cache = fetch_usd_comparison()
+        return quotes_cache
+
+    def add_alanchande(text: str) -> None:
+        jobs.append(("ALANCHANDE_TELEGRAM_BOT_TOKEN", "ALANCHANDE_CHANNEL_ID", text))
+
+    def add_kiani(text: str) -> None:
+        jobs.append(("KIANI_TELEGRAM_BOT_TOKEN", "KIANI_CHANNEL_ID", text))
 
     if args.post in {"bank-comparison", "all"}:
-        quotes = fetch_usd_comparison()
-        jobs.append(
-            (
-                "ALANCHANDE_TELEGRAM_BOT_TOKEN",
-                "ALANCHANDE_CHANNEL_ID",
-                build_usd_comparison_post(quotes),
-            )
-        )
+        add_alanchande(build_usd_comparison_post(get_quotes()))
+
+    if args.post in {"alanchande-converter", "demo-formats"}:
+        add_alanchande(build_alanchande_converter_post(get_rates()))
+
+    if args.post in {"alanchande-snapshot", "demo-formats"}:
+        add_alanchande(build_alanchande_snapshot_post(get_rates(), get_quotes()))
 
     if args.post in {"kiani-rates", "all"}:
-        rates = fetch_kiani_rates(os.environ.get("KIANI_RATES_URL", DEFAULT_RATES_URL))
-        jobs.append(
-            (
-                "KIANI_TELEGRAM_BOT_TOKEN",
-                "KIANI_CHANNEL_ID",
-                build_kiani_rate_post(rates),
-            )
-        )
+        add_kiani(build_kiani_rate_post(get_rates()))
+
+    if args.post in {"kiani-try", "demo-formats"}:
+        add_kiani(build_kiani_try_post(get_rates()))
+
+    if args.post in {"kiani-examples", "demo-formats"}:
+        add_kiani(build_kiani_examples_post(get_rates()))
 
     if args.dry_run:
         for token_env, destination_env, text in jobs:
