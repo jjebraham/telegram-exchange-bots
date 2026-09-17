@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Local SQLite history for AlanChande/Kiani market snapshots.
+"""Local SQLite history for neutral AlanChande market snapshots.
 
 The history database is intentionally local to the server and is not committed.
-It stores the neutral Kapalicarsi USD/TRY and EUR/TRY quotes plus Kiani's own
-transaction rates so later posts can calculate intraday changes, highs/lows and
-other historical summaries without depending on a third-party history API.
+It stores Kapalicarsi USD/TRY and EUR/TRY quotes so AlanChande can calculate
+intraday changes, highs/lows and later chart data without depending on Kiani's
+transaction-rate API.
 """
 
 from __future__ import annotations
@@ -30,10 +30,6 @@ class MarketSnapshot:
     usd_sell: Decimal
     eur_buy: Decimal
     eur_sell: Decimal
-    kiani_lira_sell: Decimal
-    kiani_lira_buy: Decimal
-    kiani_usdt_sell: Decimal
-    kiani_usdt_buy: Decimal
 
     @property
     def usd_mid(self) -> Decimal:
@@ -54,7 +50,6 @@ def _kapalicarsi(quotes: list[Any]) -> Any:
 def build_snapshot(
     usd_quotes: list[Any],
     eur_quotes: list[Any],
-    rates: dict[str, Decimal],
     *,
     now: datetime | None = None,
 ) -> MarketSnapshot:
@@ -69,16 +64,10 @@ def build_snapshot(
         usd_sell=Decimal(str(usd.sell)),
         eur_buy=Decimal(str(eur.buy)),
         eur_sell=Decimal(str(eur.sell)),
-        kiani_lira_sell=rates["buy_lira"],
-        kiani_lira_buy=rates["sell_lira"],
-        kiani_usdt_sell=rates["buy_usdt"],
-        kiani_usdt_buy=rates["sell_usdt"],
     )
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(db_path)
+def _create_table(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS market_snapshots (
@@ -89,14 +78,48 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             usd_buy TEXT NOT NULL,
             usd_sell TEXT NOT NULL,
             eur_buy TEXT NOT NULL,
-            eur_sell TEXT NOT NULL,
-            kiani_lira_sell TEXT NOT NULL,
-            kiani_lira_buy TEXT NOT NULL,
-            kiani_usdt_sell TEXT NOT NULL,
-            kiani_usdt_buy TEXT NOT NULL
+            eur_sell TEXT NOT NULL
         )
         """
     )
+
+
+def _migrate_old_kiani_schema(connection: sqlite3.Connection) -> None:
+    """Remove the first MVP's Kiani columns if that schema was already created."""
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_snapshots'"
+    ).fetchone()
+    if not exists:
+        return
+
+    columns = connection.execute("PRAGMA table_info(market_snapshots)").fetchall()
+    names = {str(row[1]) for row in columns}
+    if not any(name.startswith("kiani_") for name in names):
+        return
+
+    connection.execute("DROP INDEX IF EXISTS idx_market_snapshots_local_date")
+    connection.execute("ALTER TABLE market_snapshots RENAME TO market_snapshots_legacy")
+    _create_table(connection)
+    connection.execute(
+        """
+        INSERT INTO market_snapshots (
+            id, recorded_at_utc, local_date, local_time,
+            usd_buy, usd_sell, eur_buy, eur_sell
+        )
+        SELECT
+            id, recorded_at_utc, local_date, local_time,
+            usd_buy, usd_sell, eur_buy, eur_sell
+        FROM market_snapshots_legacy
+        """
+    )
+    connection.execute("DROP TABLE market_snapshots_legacy")
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(db_path)
+    _migrate_old_kiani_schema(connection)
+    _create_table(connection)
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_market_snapshots_local_date ON market_snapshots(local_date, id)"
     )
@@ -109,10 +132,8 @@ def record_snapshot(db_path: Path, snapshot: MarketSnapshot) -> int:
             """
             INSERT INTO market_snapshots (
                 recorded_at_utc, local_date, local_time,
-                usd_buy, usd_sell, eur_buy, eur_sell,
-                kiani_lira_sell, kiani_lira_buy,
-                kiani_usdt_sell, kiani_usdt_buy
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                usd_buy, usd_sell, eur_buy, eur_sell
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.recorded_at_utc,
@@ -122,10 +143,6 @@ def record_snapshot(db_path: Path, snapshot: MarketSnapshot) -> int:
                 str(snapshot.usd_sell),
                 str(snapshot.eur_buy),
                 str(snapshot.eur_sell),
-                str(snapshot.kiani_lira_sell),
-                str(snapshot.kiani_lira_buy),
-                str(snapshot.kiani_usdt_sell),
-                str(snapshot.kiani_usdt_buy),
             ),
         )
         return int(cursor.lastrowid)
@@ -140,10 +157,6 @@ def _row_to_snapshot(row: tuple[Any, ...]) -> MarketSnapshot:
         usd_sell=Decimal(str(row[4])),
         eur_buy=Decimal(str(row[5])),
         eur_sell=Decimal(str(row[6])),
-        kiani_lira_sell=Decimal(str(row[7])),
-        kiani_lira_buy=Decimal(str(row[8])),
-        kiani_usdt_sell=Decimal(str(row[9])),
-        kiani_usdt_buy=Decimal(str(row[10])),
     )
 
 
@@ -154,9 +167,7 @@ def load_day(db_path: Path, local_date: str) -> list[MarketSnapshot]:
         rows = connection.execute(
             """
             SELECT recorded_at_utc, local_date, local_time,
-                   usd_buy, usd_sell, eur_buy, eur_sell,
-                   kiani_lira_sell, kiani_lira_buy,
-                   kiani_usdt_sell, kiani_usdt_buy
+                   usd_buy, usd_sell, eur_buy, eur_sell
             FROM market_snapshots
             WHERE local_date = ?
             ORDER BY id ASC
