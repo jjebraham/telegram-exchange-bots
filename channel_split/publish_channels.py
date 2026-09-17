@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Publish AlanChande information posts and Kiani transaction posts.
 
-The channel IDs are always environment variables. That lets us test against two
-throw-away channels first, then move to the real channels by changing only the
-environment configuration.
+Each brand can use its own Telegram bot and its own destination channel. Channel
+IDs/usernames and bot tokens are always environment variables, so we can test
+against two throw-away channels first and later move to production without code
+changes.
 """
 
 from __future__ import annotations
@@ -126,26 +127,39 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print posts instead of sending to Telegram")
     args = parser.parse_args()
 
-    jobs: list[tuple[str, str]] = []
+    # (token_env, destination_env, text)
+    jobs: list[tuple[str, str, str]] = []
 
     if args.post in {"bank-comparison", "all"}:
         quotes = fetch_usd_comparison()
-        jobs.append(("ALANCHANDE_CHANNEL_ID", build_usd_comparison_post(quotes)))
+        jobs.append(
+            (
+                "ALANCHANDE_TELEGRAM_BOT_TOKEN",
+                "ALANCHANDE_CHANNEL_ID",
+                build_usd_comparison_post(quotes),
+            )
+        )
 
     if args.post in {"kiani-rates", "all"}:
         rates = fetch_kiani_rates(os.environ.get("KIANI_RATES_URL", DEFAULT_RATES_URL))
-        jobs.append(("KIANI_CHANNEL_ID", build_kiani_rate_post(rates)))
+        jobs.append(
+            (
+                "KIANI_TELEGRAM_BOT_TOKEN",
+                "KIANI_CHANNEL_ID",
+                build_kiani_rate_post(rates),
+            )
+        )
 
     if args.dry_run:
-        for destination_env, text in jobs:
-            print(f"\n===== {destination_env} =====\n{text}\n")
+        for token_env, destination_env, text in jobs:
+            print(f"\n===== {destination_env} (bot: {token_env}) =====\n{text}\n")
         return 0
 
-    token = _required_env("TELEGRAM_BOT_TOKEN")
-    for destination_env, text in jobs:
+    for token_env, destination_env, text in jobs:
+        token = _required_env(token_env)
         chat_id = _required_env(destination_env)
         telegram_send(token, chat_id, text)
-        print(f"sent {args.post} -> {destination_env}")
+        print(f"sent -> {destination_env} using {token_env}")
 
     return 0
 
