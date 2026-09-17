@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -77,28 +78,47 @@ def _positive_decimal(value: Any, key: str) -> Decimal:
     return parsed
 
 
-def fetch_kiani_rates(url: str = DEFAULT_RATES_URL, timeout: int = 20) -> dict[str, Decimal]:
-    request = Request(
-        url,
-        headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.3"},
-    )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
-        raise RuntimeError(f"Kiani rates API returned HTTP {exc.code}") from exc
-    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Could not load Kiani rates: {exc}") from exc
+def fetch_kiani_rates(
+    url: str = DEFAULT_RATES_URL,
+    timeout: int = 20,
+    retries: int = 3,
+) -> dict[str, Decimal]:
+    last_error: Exception | None = None
 
-    raw = payload.get("rates") if isinstance(payload, dict) else None
-    if not isinstance(raw, dict):
-        raise ValueError("Kiani rates API response has no rates object")
+    for attempt in range(1, retries + 1):
+        request = Request(
+            url,
+            headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.4"},
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.load(response)
+        except HTTPError as exc:
+            last_error = exc
+            if exc.code in {502, 503, 504} and attempt < retries:
+                time.sleep(attempt)
+                continue
+            raise RuntimeError(f"Kiani rates API returned HTTP {exc.code}") from exc
+        except (URLError, TimeoutError) as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(attempt)
+                continue
+            raise RuntimeError(f"Could not load Kiani rates: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Could not decode Kiani rates response: {exc}") from exc
 
-    keys = ("buy_lira", "sell_lira", "buy_usdt", "sell_usdt", "lira_to_usdt", "usdt_to_lira")
-    missing = [key for key in keys if key not in raw]
-    if missing:
-        raise ValueError("Missing Kiani rates: " + ", ".join(missing))
-    return {key: _positive_decimal(raw[key], key) for key in keys}
+        raw = payload.get("rates") if isinstance(payload, dict) else None
+        if not isinstance(raw, dict):
+            raise ValueError("Kiani rates API response has no rates object")
+
+        keys = ("buy_lira", "sell_lira", "buy_usdt", "sell_usdt", "lira_to_usdt", "usdt_to_lira")
+        missing = [key for key in keys if key not in raw]
+        if missing:
+            raise ValueError("Missing Kiani rates: " + ", ".join(missing))
+        return {key: _positive_decimal(raw[key], key) for key in keys}
+
+    raise RuntimeError(f"Could not load Kiani rates: {last_error}")
 
 
 def _fmt_int(value: Decimal) -> str:
@@ -274,7 +294,7 @@ def main() -> int:
     history_actions.add_argument(
         "--record-history",
         action="store_true",
-        help="Fetch current market data, store one local SQLite snapshot, then exit",
+        help="Fetch neutral market data, store one local SQLite snapshot, then exit",
     )
     history_actions.add_argument(
         "--history-status",
@@ -309,7 +329,8 @@ def main() -> int:
         return eur_quotes_cache
 
     def current_history_snapshot():
-        return build_snapshot(get_usd_quotes(), get_eur_quotes(), get_rates())
+        # AlanChande history intentionally depends only on neutral market feeds.
+        return build_snapshot(get_usd_quotes(), get_eur_quotes())
 
     def add_alanchande(text: str) -> None:
         jobs.append(("ALANCHANDE_TELEGRAM_BOT_TOKEN", "ALANCHANDE_CHANNEL_ID", text))
