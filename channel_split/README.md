@@ -5,9 +5,22 @@ This directory is the first implementation of the two-brand Telegram model:
 - **AlanChande** = market information / utilities / comparisons.
 - **Kiani Exchange** = Kiani's actual buy/sell and transaction rates.
 
-No production Telegram channel ID is hard-coded. The same scripts can be tested
-against two brand-new channels and later switched to production only by changing
-environment variables.
+No production Telegram channel ID or bot token is hard-coded. The same scripts
+can be tested against two brand-new channels and later switched to production
+only by changing environment variables.
+
+## Test publishing bots
+
+The current test rollout uses two separate Telegram bots:
+
+- `@alanchandetestbot` — publishes AlanChande informational/test posts.
+- `@kianiexchangetestbot` — publishes Kiani Exchange transactional/test posts.
+
+Each bot should be added as an **administrator** only in its matching test
+channel, with permission to post messages.
+
+Do not commit BotFather tokens to GitHub. Keep them in environment variables or
+a server-side secret/env file excluded from Git.
 
 ## Current MVP posts
 
@@ -65,20 +78,28 @@ channels first.
 
 ## Test-channel setup
 
-Create two new Telegram channels manually, for example:
+Create two new Telegram **channels** separately from the bots, for example:
 
 - `AlanChande Test`
 - `Kiani Exchange Test`
 
-Add the Telegram publisher bot as **administrator** with permission to post
-messages.
+Then:
+
+1. Add `@alanchandetestbot` as admin of `AlanChande Test`.
+2. Add `@kianiexchangetestbot` as admin of `Kiani Exchange Test`.
+3. Give each bot permission to post messages.
+4. Obtain the two BotFather tokens privately on the server.
+5. Use either the public channel username (`@...`) or numeric `-100...` channel
+   ID as the destination value.
 
 Export:
 
 ```bash
-export TELEGRAM_BOT_TOKEN='...'
-export ALANCHANDE_CHANNEL_ID='-100...'
-export KIANI_CHANNEL_ID='-100...'
+export ALANCHANDE_TELEGRAM_BOT_TOKEN='...'
+export ALANCHANDE_CHANNEL_ID='@your_alanchande_test_channel'
+
+export KIANI_TELEGRAM_BOT_TOKEN='...'
+export KIANI_CHANNEL_ID='@your_kiani_test_channel'
 ```
 
 Then from this directory:
@@ -103,15 +124,18 @@ python3 publish_channels.py --post all
 
 ## Production cut-over
 
-After at least several days of test posting and source/error monitoring, no code
-change is required. Replace only:
+After several days of test posting and source/error monitoring, no code change
+is required. Replace the test secrets/destinations with the production values:
 
 ```bash
-ALANCHANDE_CHANNEL_ID=<real @alanchande_com numeric ID>
-KIANI_CHANNEL_ID=<real @ExchangeKiani numeric ID>
+ALANCHANDE_TELEGRAM_BOT_TOKEN=<production AlanChande publisher token>
+ALANCHANDE_CHANNEL_ID=@alanchande_com
+
+KIANI_TELEGRAM_BOT_TOKEN=<production Kiani publisher token>
+KIANI_CHANNEL_ID=@ExchangeKiani
 ```
 
-and ensure the bot is an admin in each production channel.
+and ensure each production publisher bot is an admin of its matching channel.
 
 ## Next implementation steps
 
