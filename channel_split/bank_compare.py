@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Fetch and format Turkish USD/TRY bank comparisons for AlanChande.
+"""Fetch and format Turkish FX bank comparisons for AlanChande.
 
 MVP data source
 ---------------
-The first implementation uses the public server-rendered comparison table on
+The implementation uses the public server-rendered comparison tables on
 kur.doviz.com. One request contains Kapalicarsi plus the Turkish bank rows we
-need, so we can validate the content format before wiring separate bank
-adapters.
+need, so USD/TRY and EUR/TRY can share the same parser and formatter.
 
 The module is intentionally provider-shaped: once official endpoints/keys are
 available, each bank can be replaced without changing the Telegram formatter.
@@ -22,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 USD_COMPARISON_URL = "https://kur.doviz.com/kapalicarsi/amerikan-dolari"
+EUR_COMPARISON_URL = "https://kur.doviz.com/kapalicarsi/euro"
 TARGETS = (
     "Kapalıçarşı",
     "Garanti BBVA",
@@ -106,13 +106,13 @@ def parse_comparison_html(html: str, targets: Iterable[str] = TARGETS) -> list[B
     return [found[name] for name in wanted]
 
 
-def fetch_usd_comparison(url: str = USD_COMPARISON_URL, timeout: int = 20) -> list[BankQuote]:
+def _fetch_comparison(url: str, timeout: int = 20) -> list[BankQuote]:
     request = Request(
         url,
         headers={
             "Accept": "text/html,application/xhtml+xml",
             "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
-            "User-Agent": "AlanChande-MarketPublisher/1.1",
+            "User-Agent": "AlanChande-MarketPublisher/1.2",
         },
     )
     try:
@@ -126,18 +126,26 @@ def fetch_usd_comparison(url: str = USD_COMPARISON_URL, timeout: int = 20) -> li
     return parse_comparison_html(html)
 
 
+def fetch_usd_comparison(url: str = USD_COMPARISON_URL, timeout: int = 20) -> list[BankQuote]:
+    return _fetch_comparison(url, timeout)
+
+
+def fetch_eur_comparison(url: str = EUR_COMPARISON_URL, timeout: int = 20) -> list[BankQuote]:
+    return _fetch_comparison(url, timeout)
+
+
 def _fmt(value: Decimal) -> str:
     return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
-def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
+def _build_comparison_post(quotes: list[BankQuote], *, title: str, pair: str) -> str:
     if not quotes:
         raise ValueError("No bank quotes supplied")
 
     lines = [
-        "🏦 <b>دلار امروز کجا بهتره؟</b>",
+        f"🏦 <b>{title}</b>",
         "",
-        "نرخ USD/TRY",
+        f"نرخ {pair}",
         "خرید از شما | فروش به شما",
         "",
     ]
@@ -145,3 +153,11 @@ def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
         lines.append(f"• {q.name}: <b>{_fmt(q.buy)}</b> | <b>{_fmt(q.sell)}</b>")
 
     return "\n".join(lines)
+
+
+def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
+    return _build_comparison_post(quotes, title="دلار امروز کجا بهتره؟", pair="USD/TRY")
+
+
+def build_eur_comparison_post(quotes: list[BankQuote]) -> str:
+    return _build_comparison_post(quotes, title="یورو امروز کجا بهتره؟", pair="EUR/TRY")
