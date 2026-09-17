@@ -6,18 +6,19 @@ This directory is the first implementation of the two-brand Telegram model:
 - **Kiani Exchange** = Kiani's actual buy/sell and transaction rates.
 
 No production Telegram channel ID or bot token is hard-coded. The same scripts
-can be tested against two brand-new channels and later switched to production
+are tested against dedicated test channels first and later switched to production
 only by changing environment variables.
 
-## Test publishing bots
+## Test publishing bots and channels
 
-The current test rollout uses two separate Telegram bots:
+The current test rollout uses two separate Telegram bots and two matching test
+channels:
 
-- `@alanchandetestbot` — publishes AlanChande informational/test posts.
-- `@kianiexchangetestbot` — publishes Kiani Exchange transactional/test posts.
+- `@alanchandetestbot` → publishes to `@alanchandetest`
+- `@kianiexchangetestbot` → publishes to `@kianiexchangetest`
 
-Each bot should be added as an **administrator** only in its matching test
-channel, with permission to post messages.
+Each bot must be added as an **administrator** only in its matching test channel,
+with permission to post messages.
 
 Do not commit BotFather tokens to GitHub. Keep them in environment variables or
 a server-side secret/env file excluded from Git.
@@ -73,33 +74,23 @@ and publishes TRY + USDT buy/sell rates to the Kiani test channel.
    if their terms and reliability are suitable.
 
 Important: before republishing any third-party data at production scale, verify
-the provider's reuse/licensing terms. This MVP is for the two private/test
-channels first.
+the provider's reuse/licensing terms. This MVP is for the two test channels first.
 
 ## Test-channel setup
 
-Create two new Telegram **channels** separately from the bots, for example:
-
-- `AlanChande Test`
-- `Kiani Exchange Test`
-
-Then:
-
-1. Add `@alanchandetestbot` as admin of `AlanChande Test`.
-2. Add `@kianiexchangetestbot` as admin of `Kiani Exchange Test`.
+1. Add `@alanchandetestbot` as admin of `@alanchandetest`.
+2. Add `@kianiexchangetestbot` as admin of `@kianiexchangetest`.
 3. Give each bot permission to post messages.
 4. Obtain the two BotFather tokens privately on the server.
-5. Use either the public channel username (`@...`) or numeric `-100...` channel
-   ID as the destination value.
 
 Export:
 
 ```bash
 export ALANCHANDE_TELEGRAM_BOT_TOKEN='...'
-export ALANCHANDE_CHANNEL_ID='@your_alanchande_test_channel'
+export ALANCHANDE_CHANNEL_ID='@alanchandetest'
 
 export KIANI_TELEGRAM_BOT_TOKEN='...'
-export KIANI_CHANNEL_ID='@your_kiani_test_channel'
+export KIANI_CHANNEL_ID='@kianiexchangetest'
 ```
 
 Then from this directory:
