@@ -14,6 +14,7 @@ from .config import Settings, extract_status_change, is_configured_channel
 from .context import services
 from .growth import daily_admin_digest_loop
 from .reminders import analytics_loop, nudge_loop, pending_reminder_loop, reconciliation_loop
+from .share_activation import install_zero_open_nudge_filter
 from .user_handlers import notify_referral_join
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -143,6 +144,11 @@ async def qualification_loop(application: Application) -> None:
 
 
 async def post_init(application: Application) -> None:
+    # Keep the existing nudge worker, but make its 2-hour candidate query mean
+    # exactly "personal link has produced zero observable opens". This preserves
+    # the 24-hour and promo-abandon nudges without running a second nudge loop.
+    install_zero_open_nudge_filter()
+
     application.bot_data["qualification_task"] = asyncio.create_task(
         qualification_loop(application), name="qualification-loop"
     )
