@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 from .config import telegram_membership
 from .context import services
 from .growth import normalize_promo_source, promo_variant
+from .share_activation import record_referral_open_received
 from .ui import (
     campaign_end_text,
     final_join_cutoff_text,
@@ -123,9 +124,10 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if payload.startswith("ref_"):
         owner = db.invite_owner(payload)
         if owner:
-            campaign, _ = owner
+            campaign, referrer_id = owner
             db.track_funnel_event(campaign.id, user.id, "bot_start", "referral")
             db.track_funnel_event(campaign.id, user.id, "referral_open", "referral")
+            record_referral_open_received(db, campaign.id, referrer_id, user.id)
         await legacy_cmd_start(update, context)
         return
 
