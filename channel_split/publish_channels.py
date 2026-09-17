@@ -28,6 +28,14 @@ from bank_compare import (
     fetch_eur_comparison,
     fetch_usd_comparison,
 )
+from market_history import (
+    DEFAULT_HISTORY_DB,
+    build_alanchande_daily_change_post,
+    build_snapshot,
+    history_status,
+    load_day,
+    record_snapshot,
+)
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
@@ -72,7 +80,7 @@ def _positive_decimal(value: Any, key: str) -> Decimal:
 def fetch_kiani_rates(url: str = DEFAULT_RATES_URL, timeout: int = 20) -> dict[str, Decimal]:
     request = Request(
         url,
-        headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.2"},
+        headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.3"},
     )
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -103,6 +111,16 @@ def _fmt_cross(value: Decimal) -> str:
 
 def _now_text() -> str:
     return datetime.now(ISTANBUL_TZ).strftime("%H:%M")
+
+
+def _history_db_path() -> Path:
+    configured = os.environ.get("MARKET_HISTORY_DB", "").strip()
+    if not configured:
+        return DEFAULT_HISTORY_DB
+    path = Path(configured).expanduser()
+    if path.is_absolute():
+        return path
+    return Path(__file__).resolve().parent / path
 
 
 def build_kiani_rate_post(rates: dict[str, Decimal]) -> str:
@@ -242,6 +260,7 @@ def main() -> int:
             "bank-comparisons",
             "alanchande-converter",
             "alanchande-snapshot",
+            "alanchande-daily-change",
             "kiani-rates",
             "kiani-try",
             "kiani-examples",
@@ -250,6 +269,17 @@ def main() -> int:
         ),
         default="all",
         help="Which split-channel post to build/send",
+    )
+    history_actions = parser.add_mutually_exclusive_group()
+    history_actions.add_argument(
+        "--record-history",
+        action="store_true",
+        help="Fetch current market data, store one local SQLite snapshot, then exit",
+    )
+    history_actions.add_argument(
+        "--history-status",
+        action="store_true",
+        help="Show how many market snapshots are stored for today, then exit",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print posts instead of sending to Telegram")
     args = parser.parse_args()
@@ -278,11 +308,32 @@ def main() -> int:
             eur_quotes_cache = fetch_eur_comparison()
         return eur_quotes_cache
 
+    def current_history_snapshot():
+        return build_snapshot(get_usd_quotes(), get_eur_quotes(), get_rates())
+
     def add_alanchande(text: str) -> None:
         jobs.append(("ALANCHANDE_TELEGRAM_BOT_TOKEN", "ALANCHANDE_CHANNEL_ID", text))
 
     def add_kiani(text: str) -> None:
         jobs.append(("KIANI_TELEGRAM_BOT_TOKEN", "KIANI_CHANNEL_ID", text))
+
+    history_db = _history_db_path()
+
+    if args.record_history:
+        snapshot = current_history_snapshot()
+        row_id = record_snapshot(history_db, snapshot)
+        print(
+            f"recorded history snapshot #{row_id} -> {history_db} "
+            f"({snapshot.local_date} {snapshot.local_time[:5]} Istanbul)"
+        )
+        print(history_status(history_db, snapshot.local_date))
+        return 0
+
+    if args.history_status:
+        local_date = datetime.now(ISTANBUL_TZ).strftime("%Y-%m-%d")
+        print(history_status(history_db, local_date))
+        print(f"database: {history_db}")
+        return 0
 
     if args.post in {"bank-comparison", "bank-comparisons", "all"}:
         add_alanchande(build_usd_comparison_post(get_usd_quotes()))
@@ -295,6 +346,11 @@ def main() -> int:
 
     if args.post in {"alanchande-snapshot", "demo-formats"}:
         add_alanchande(build_alanchande_snapshot_post(get_rates(), get_usd_quotes()))
+
+    if args.post == "alanchande-daily-change":
+        current = current_history_snapshot()
+        stored = load_day(history_db, current.local_date)
+        add_alanchande(build_alanchande_daily_change_post(stored, current))
 
     if args.post in {"kiani-rates", "all"}:
         add_kiani(build_kiani_rate_post(get_rates()))
