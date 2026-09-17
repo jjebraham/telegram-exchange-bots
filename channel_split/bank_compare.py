@@ -112,7 +112,7 @@ def fetch_usd_comparison(url: str = USD_COMPARISON_URL, timeout: int = 20) -> li
         headers={
             "Accept": "text/html,application/xhtml+xml",
             "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
-            "User-Agent": "AlanChande-MarketPublisher/1.0",
+            "User-Agent": "AlanChande-MarketPublisher/1.1",
         },
     )
     try:
@@ -140,19 +140,23 @@ def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
     lines = [
         "🏦 <b>دلار امروز کجا بهتره؟</b>",
         "",
-        "نرخ USD/TRY — خرید / فروش بانک",
+        "نرخ USD/TRY",
+        "خرید از شما | فروش به شما",
         "",
     ]
     for q in quotes:
-        lines.append(f"• {q.name}: <b>{_fmt(q.buy)}</b> / <b>{_fmt(q.sell)}</b>")
+        lines.append(
+            f"• {q.name}: <b>{_fmt(q.buy)}</b> | <b>{_fmt(q.sell)}</b>"
+        )
 
     lines.extend(
         [
             "",
-            f"🟢 کمترین نرخ فروش دلار: <b>{cheapest_to_buy.name}</b> — {_fmt(cheapest_to_buy.sell)}",
-            f"🔵 بالاترین نرخ خرید دلار: <b>{best_to_sell.name}</b> — {_fmt(best_to_sell.buy)}",
+            f"🟢 برای خرید دلار: <b>{cheapest_to_buy.name}</b> — {_fmt(cheapest_to_buy.sell)} لیر",
+            f"🔵 برای فروش دلار: <b>{best_to_sell.name}</b> — {_fmt(best_to_sell.buy)} لیر",
             "",
-            "ℹ️ نرخ‌ها اطلاع‌رسانی هستند و ممکن است نرخ نهایی معامله بانک متفاوت باشد.",
+            "ℹ️ ستون اول یعنی مجموعه دلار را از شما می‌خرد؛ ستون دوم یعنی دلار را به شما می‌فروشد.",
+            "نرخ‌ها اطلاع‌رسانی هستند و ممکن است نرخ نهایی معامله متفاوت باشد.",
             "منبع مقایسه: kur.doviz.com",
         ]
     )
