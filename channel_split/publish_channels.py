@@ -2,9 +2,9 @@
 """Publish AlanChande information posts and Kiani transaction posts.
 
 Each brand can use its own Telegram bot and its own destination channel. Channel
-IDs/usernames and bot tokens are always environment variables, so we can test
-against two throw-away channels first and later move to production without code
-changes.
+IDs/usernames and bot tokens are environment variables, so we can test against
+two throw-away channels first and later move to production without code changes.
+A local channel_split/.env file is loaded automatically when present.
 """
 
 from __future__ import annotations
@@ -13,15 +13,38 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from bank_compare import build_usd_comparison_post, fetch_usd_comparison
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
+ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+
+
+def _load_local_env() -> None:
+    """Load channel_split/.env without adding a third-party dependency."""
+    env_path = Path(__file__).with_name(".env")
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def _required_env(name: str) -> str:
@@ -44,7 +67,7 @@ def _positive_decimal(value: Any, key: str) -> Decimal:
 def fetch_kiani_rates(url: str = DEFAULT_RATES_URL, timeout: int = 20) -> dict[str, Decimal]:
     request = Request(
         url,
-        headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.0"},
+        headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.1"},
     )
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -74,18 +97,21 @@ def _fmt_cross(value: Decimal) -> str:
 
 
 def build_kiani_rate_post(rates: dict[str, Decimal]) -> str:
+    updated_at = datetime.now(ISTANBUL_TZ)
     return "\n".join(
         [
             "💱 <b>نرخ معامله صرافی کیانی</b>",
             "",
-            f"🇹🇷 فروش لیر به شما: <b>{_fmt_int(rates['buy_lira'])}</b>",
-            f"🇹🇷 خرید لیر از شما: <b>{_fmt_int(rates['sell_lira'])}</b>",
+            f"🇹🇷 فروش لیر به شما: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
+            f"🇹🇷 خرید لیر از شما: <b>{_fmt_int(rates['sell_lira'])}</b> تومان",
             "",
-            f"🪙 فروش تتر به شما: <b>{_fmt_int(rates['buy_usdt'])}</b>",
-            f"🪙 خرید تتر از شما: <b>{_fmt_int(rates['sell_usdt'])}</b>",
-            f"💲 لیر → تتر: {_fmt_cross(rates['lira_to_usdt'])}",
-            f"💲 تتر → لیر: {_fmt_cross(rates['usdt_to_lira'])}",
+            f"🪙 فروش تتر به شما: <b>{_fmt_int(rates['buy_usdt'])}</b> تومان",
+            f"🪙 خرید تتر از شما: <b>{_fmt_int(rates['sell_usdt'])}</b> تومان",
             "",
+            f"🔄 لیر → تتر: هر ۱ تتر = <b>{_fmt_cross(rates['lira_to_usdt'])}</b> لیر",
+            f"🔄 تتر → لیر: هر ۱ تتر = <b>{_fmt_cross(rates['usdt_to_lira'])}</b> لیر",
+            "",
+            f"🕒 بروزرسانی: {updated_at:%H:%M} به وقت استانبول",
             "🤖 ثبت سفارش: @Kianiexchangebot",
             "📊 نرخ‌های بازار و محتوای تحلیلی: @alanchande_com",
         ]
@@ -117,6 +143,8 @@ def telegram_send(token: str, chat_id: str, text: str, timeout: int = 20) -> dic
 
 
 def main() -> int:
+    _load_local_env()
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--post",
