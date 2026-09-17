@@ -236,7 +236,7 @@ def create_application(settings: Settings) -> Application:
 def main() -> None:
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s - %(asctime)s %(levelname)s %(name)s - %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
