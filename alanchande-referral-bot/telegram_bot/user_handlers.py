@@ -96,7 +96,15 @@ async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Cam
         )
         db.track_funnel_event(campaign.id, user.id, "rejoin", "")
     try:
-        await context.bot.send_message(referrer_id, text, parse_mode=ParseMode.HTML)
+        await context.bot.send_message(
+            referrer_id,
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📤 دعوت نفر بعدی", callback_data="menu:link"),
+                InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
+            ]]),
+        )
     except (Forbidden, BadRequest):
         pass
     except TelegramError:
