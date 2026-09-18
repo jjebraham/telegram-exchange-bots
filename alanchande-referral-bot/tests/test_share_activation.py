@@ -93,12 +93,27 @@ class ShareActivationTests(unittest.TestCase):
 
     def test_open_received_is_stored_on_referrer_and_self_open_is_ignored(self):
         db = RecorderDB()
-        record_referral_open_received(db, 1, 10, 20)
-        record_referral_open_received(db, 1, 10, 10)
+        self.assertTrue(record_referral_open_received(db, 1, 10, 20))
+        self.assertFalse(record_referral_open_received(db, 1, 10, 10))
         self.assertEqual(
             db.events,
             [(1, 10, "referral_open_received", "candidate:20")],
         )
+
+    def test_open_received_returns_true_once_for_same_candidate(self):
+        first = record_referral_open_received(self.db, 1, 10, 20)
+        second = record_referral_open_received(self.db, 1, 10, 20)
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        with self.db.connect() as conn:
+            count = conn.execute(
+                """SELECT COUNT(*) AS n FROM funnel_events
+                   WHERE campaign_id=1 AND user_id=10
+                     AND event_type='referral_open_received'
+                     AND source='candidate:20'"""
+            ).fetchone()["n"]
+        self.assertEqual(count, 1)
 
     def test_zero_open_nudge_excludes_real_or_historical_downstream_activity(self):
         cutoff = datetime(2026, 9, 17, 9, 0, tzinfo=timezone.utc)
