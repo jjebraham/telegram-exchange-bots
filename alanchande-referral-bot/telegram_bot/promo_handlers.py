@@ -127,7 +127,45 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
             campaign, referrer_id = owner
             db.track_funnel_event(campaign.id, user.id, "bot_start", "referral")
             db.track_funnel_event(campaign.id, user.id, "referral_open", "referral")
-            record_referral_open_received(db, campaign.id, referrer_id, user.id)
+            first_open = record_referral_open_received(
+                db, campaign.id, referrer_id, user.id
+            )
+            live = db.live_campaign()
+            if first_open and live and live.id == campaign.id:
+                allowed = db.notification_gate(
+                    campaign.id,
+                    int(referrer_id),
+                    settings.notification_max_per_window,
+                    settings.notification_window_seconds,
+                )
+                if allowed:
+                    try:
+                        await context.bot.send_message(
+                            int(referrer_id),
+                            "👀 <b>یک نفر لینک دعوتت رو باز کرد!</b>\n\n"
+                            "هنوز عضویت رو کامل نکرده؛ اگر وارد کانال بشه، "
+                            "به دعوت فعال تو اضافه می‌شه.\n\n"
+                            "📤 اگر دوست داری، همین الان لینک رو برای یک نفر دیگه هم بفرست.",
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton(
+                                    "📤 فرستادن لینک دعوت",
+                                    callback_data="menu:link",
+                                )
+                            ]]),
+                        )
+                        db.track_funnel_event(
+                            campaign.id,
+                            int(referrer_id),
+                            "referral_open_notice_sent",
+                            f"candidate:{int(user.id)}",
+                        )
+                    except (BadRequest, TelegramError):
+                        log.info(
+                            "Could not notify referrer about link open referrer=%s candidate=%s",
+                            referrer_id,
+                            user.id,
+                        )
         await legacy_cmd_start(update, context)
         return
 
