@@ -17,22 +17,40 @@ def record_referral_open_received(
     campaign_id: int,
     referrer_id: int,
     candidate_id: int,
-) -> None:
-    """Attribute a referral-link open to the owner of the personal link.
+) -> bool:
+    """Attribute the candidate's first observable open to the link owner.
 
-    The existing referral_open event is stored on the candidate. This companion
-    event is stored on the referrer so we can measure how many link holders
-    actually produced at least one open and avoid nudging users whose links were
-    already opened. Repeated opens are allowed; reporting de-duplicates them.
+    Returns True only for the first unique referrer/candidate open. That lets
+    the caller send one useful "someone opened your link" notification without
+    spamming the referrer when the same candidate re-opens the deep link.
     """
-    if int(referrer_id) == int(candidate_id):
-        return
+    referrer_id = int(referrer_id)
+    candidate_id = int(candidate_id)
+    if referrer_id == candidate_id:
+        return False
+
+    source = f"candidate:{candidate_id}"
+    # ReferralDB exposes connect(); the small fallback keeps lightweight test
+    # doubles compatible while production gets exact de-duplication.
+    if hasattr(db, "connect"):
+        with db.connect() as conn:
+            existing = conn.execute(
+                """SELECT 1 FROM funnel_events
+                   WHERE campaign_id=? AND user_id=?
+                     AND event_type='referral_open_received' AND source=?
+                   LIMIT 1""",
+                (campaign_id, referrer_id, source),
+            ).fetchone()
+        if existing:
+            return False
+
     db.track_funnel_event(
         campaign_id,
-        int(referrer_id),
+        referrer_id,
         "referral_open_received",
-        f"candidate:{int(candidate_id)}",
+        source,
     )
+    return True
 
 
 def zero_open_nudge_candidates(db, campaign_id: int, cutoff, limit: int = 100) -> list[dict]:
@@ -45,7 +63,7 @@ def zero_open_nudge_candidates(db, campaign_id: int, cutoff, limit: int = 100) -
     """
     with db.connect() as conn:
         rows = conn.execute(
-            """SELECT l.user_id,l.created_at
+            """SELECT l.user_id,l.invite_link,l.created_at
                FROM invite_links l
                WHERE l.campaign_id=? AND l.created_at<=?
                  AND EXISTS (
