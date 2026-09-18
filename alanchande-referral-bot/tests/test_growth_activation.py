@@ -19,6 +19,7 @@ class GrowthActivationTests(unittest.TestCase):
     def _campaign(self):
         cutoff = datetime(2026, 10, 9, 18, 0, tzinfo=timezone.utc)
         return SimpleNamespace(
+            id=1,
             name="پاییز ۱۴۰۵",
             prize_text="۲۱ میلیون تومان",
             invites_per_point=2,
