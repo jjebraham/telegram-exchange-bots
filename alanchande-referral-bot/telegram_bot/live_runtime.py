@@ -4,7 +4,7 @@ import asyncio
 import logging
 from html import escape
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application, ContextTypes
@@ -112,8 +112,13 @@ async def qualification_pass(application: Application) -> dict:
                     f"🎟 دعوت <b>{name}</b> تأیید شد!\n\n"
                     f"✅ دعوت‌های تأییدشده: <b>{counts['qualified']}</b>\n"
                     f"🎟 بلیت‌های تأییدشده قرعه‌کشی: <b>{counts['confirmed_points']}</b>\n"
-                    f"⭐ امتیاز موقت فعلی: <b>{counts['current_points']}</b>",
+                    f"⭐ امتیاز موقت فعلی: <b>{counts['current_points']}</b>\n\n"
+                    "🏆 این دعوت حالا واقعاً در قرعه‌کشی نهایی حساب می‌شود.",
                     parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("📤 دعوت نفر بعدی", callback_data="menu:link"),
+                        InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
+                    ]]),
                 )
             except (Forbidden, BadRequest):
                 pass
