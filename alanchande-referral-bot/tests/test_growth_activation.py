@@ -59,7 +59,7 @@ class GrowthActivationTests(unittest.TestCase):
         campaign = self._campaign()
 
         first = render_home(campaign, FakeDB(0), 10, "Ali")
-        self.assertIn("۰ از", first)
+        self.assertIn("0/2", first)
         self.assertIn("برای چند نفر بفرست", first)
         self.assertIn("دعوت فعال: <b>0</b>", first)
 
