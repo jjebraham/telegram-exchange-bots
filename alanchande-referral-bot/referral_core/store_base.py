@@ -339,13 +339,20 @@ class ReferralDBBase:
                        SELECT 1 FROM pending_referrals p
                        WHERE p.campaign_id=il.campaign_id AND p.referrer_id=il.user_id
                      )
+                     AND EXISTS (
+                       SELECT 1 FROM funnel_events first_nudge
+                       WHERE first_nudge.campaign_id=il.campaign_id
+                         AND first_nudge.user_id=il.user_id
+                         AND first_nudge.event_type='nudge_early_share_sent'
+                         AND first_nudge.created_at<=?
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM funnel_events f
                        WHERE f.campaign_id=il.campaign_id AND f.user_id=il.user_id
                          AND f.event_type='nudge_zero_referral_sent'
                      )
                    ORDER BY il.created_at ASC LIMIT ?""",
-                (campaign_id, cutoff, max(1, limit)),
+                (campaign_id, cutoff, cutoff, max(1, limit)),
             ).fetchall()
         return [dict(row) for row in rows]
 
