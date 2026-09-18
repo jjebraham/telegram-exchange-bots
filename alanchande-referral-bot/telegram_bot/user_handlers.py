@@ -15,7 +15,7 @@ from .config import Settings, extract_status_change, hours_label, is_configured_
 from .context import services
 from .ui import (
     back_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
-    render_prizes, render_referrals, render_rules, render_stats, render_top,
+    render_home, render_prizes, render_referrals, render_rules, render_stats, render_top,
     render_transparency,
 )
 
@@ -230,23 +230,40 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 عضویت در کانال", url=settings.channel_url)]]),
         )
         return
+    existing_link = db.get_invite_link(campaign.id, user.id)
     try:
         link = await get_or_create_link(context, campaign, user)
     except Exception:
         log.exception("Could not create referral deep link for %s", user.id)
         await update.message.reply_text("ساخت لینک اختصاصی با خطا روبه‌رو شد. لطفاً کمی بعد دوباره تلاش کن.")
         return
+
+    if existing_link:
+        await update.message.reply_text(
+            render_home(campaign, db, user.id, user.first_name),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard(settings),
+            disable_web_page_preview=True,
+        )
+        return
+
     db.track_funnel_event(campaign.id, user.id, "entered_contest", "organic")
     db.track_funnel_event(campaign.id, user.id, "link_created", "organic")
-    await update.message.reply_text(
-        menu_text(campaign, user.first_name), parse_mode=ParseMode.HTML,
-        reply_markup=main_keyboard(settings), disable_web_page_preview=True,
+    first_step = (
+        "👥 اولین دعوت فعال = نصف راه تا اولین امتیاز"
+        if campaign.invites_per_point == 2
+        else f"👥 برای اولین امتیاز به {campaign.invites_per_point} دعوت فعال نیاز داری"
     )
     await update.message.reply_text(
-        f"<b>🔗 لینک اختصاصی تو:</b>\n\n{link}\n\n"
-        "این لینک رو برای دوستات بفرست؛ ربات مرحله‌به‌مرحله راهنمایی‌شون می‌کنه.",
+        "🎉 <b>وارد مسابقه شدی و لینک اختصاصی‌ات آماده است.</b>\n\n"
+        f"<b>🔗 لینک تو:</b>\n{link}\n\n"
+        f"{first_step}\n"
+        f"🎯 الان <b>۰ از {campaign.invites_per_point}</b> تا اولین امتیاز موقت\n\n"
+        "📤 بهترین کار اینه که همین الان لینک رو برای ۲–۳ نفر بفرستی؛ "
+        "وقتی یکی از آن‌ها لینک را باز کند همینجا بهت خبر می‌دیم.",
         parse_mode=ParseMode.HTML,
-        reply_markup=link_keyboard(settings, link, campaign), disable_web_page_preview=True,
+        reply_markup=link_keyboard(settings, link, campaign),
+        disable_web_page_preview=True,
     )
 
 
@@ -261,8 +278,10 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(no_campaign_text())
         return
     await update.message.reply_text(
-        menu_text(campaign, user.first_name), parse_mode=ParseMode.HTML,
-        reply_markup=main_keyboard(settings), disable_web_page_preview=True,
+        render_home(campaign, db, user.id, user.first_name),
+        parse_mode=ParseMode.HTML,
+        reply_markup=main_keyboard(settings),
+        disable_web_page_preview=True,
     )
 
 
@@ -305,7 +324,7 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data or ""
     markup = back_keyboard()
     if data == "menu:main":
-        text, markup = menu_text(campaign, user.first_name), main_keyboard(settings)
+        text, markup = render_home(campaign, db, user.id, user.first_name), main_keyboard(settings)
     elif data == "menu:stats":
         text = render_stats(campaign, db, user.id)
     elif data == "menu:referrals":
@@ -328,9 +347,16 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             try:
                 link = await get_or_create_link(context, campaign, user)
+                counts = db.campaign_counts(campaign, user.id)
+                remainder = counts["active"] % campaign.invites_per_point
+                need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
                 text = (
                     f"<b>🔗 لینک اختصاصی تو</b>\n\n{link}\n\n"
-                    "این لینک رو برای دوستات بفرست. آن‌ها اول وارد ربات می‌شن و ربات مرحله‌به‌مرحله عضویت رو راهنمایی می‌کنه."
+                    f"👥 دعوت فعال: <b>{counts['active']}</b>\n"
+                    f"⭐ امتیاز موقت: <b>{counts['current_points']}</b>\n"
+                    f"🎯 تا امتیاز موقت بعدی: <b>{need}</b> دعوت فعال\n\n"
+                    "📤 همین الان برای چند نفر بفرست. دوستت باید اول این لینک را باز کند؛ "
+                    "بعد ربات مرحله‌به‌مرحله عضویت را راهنمایی می‌کند."
                 )
                 markup = link_keyboard(settings, link, campaign)
             except Exception:
