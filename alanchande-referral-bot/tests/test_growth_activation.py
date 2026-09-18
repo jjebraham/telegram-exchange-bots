@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from referral_core import ReferralDB
 from telegram_bot.config import Settings
 from telegram_bot.growth import qualification_cutoff_text
 from telegram_bot.promo_handlers import _entry_text
+from telegram_bot.reminders import _qualification_soon_candidates
 from telegram_bot.ui import final_join_cutoff_text, link_keyboard, render_home
 
 
@@ -76,6 +79,50 @@ class GrowthActivationTests(unittest.TestCase):
         self.assertIn("21:30", ui_text)
         self.assertIn("21:00", growth_text)
         self.assertIn("21:30", growth_text)
+
+    def test_qualification_soon_nudge_is_once_per_referral(self):
+        now = datetime(2026, 9, 18, 18, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = ReferralDB(os.path.join(tmp, "engagement.sqlite"))
+            db.init()
+            campaign = db.create_campaign(
+                "engage",
+                "Engagement",
+                now - timedelta(days=10),
+                now + timedelta(days=30),
+                "prizes",
+                invites_per_point=2,
+                min_stay_hours=168,
+                max_points=20,
+                num_winners=5,
+            )
+            db.activate_campaign(campaign.slug, now)
+            campaign = db.get_campaign(campaign.slug)
+            db.upsert_user(10, "referrer", "Referrer", now=now)
+
+            db.record_join(
+                campaign, 101, 10, "u101", "U101", now - timedelta(hours=167)
+            )
+            db.record_join(
+                campaign, 102, 10, "u102", "U102", now - timedelta(hours=100)
+            )
+
+            rows = _qualification_soon_candidates(
+                db, campaign, now, within_hours=24, limit=100
+            )
+            self.assertEqual([row["joined_user_id"] for row in rows], [101])
+
+            db.track_funnel_event(
+                campaign.id,
+                10,
+                "nudge_qualification_soon_sent",
+                "referral:101",
+                now,
+            )
+            rows = _qualification_soon_candidates(
+                db, campaign, now, within_hours=24, limit=100
+            )
+            self.assertEqual(rows, [])
 
     def test_early_share_nudge_defaults_to_two_hours(self):
         env = {
