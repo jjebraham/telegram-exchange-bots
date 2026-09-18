@@ -247,7 +247,7 @@ def _early_share_nudge_candidates(db: ReferralDB, campaign_id: int, cutoff, limi
     """Participants with a link but no pending/joined referral and no early share nudge yet."""
     with db.connect() as conn:
         rows = conn.execute(
-            """SELECT l.user_id,l.created_at
+            """SELECT l.user_id,l.invite_link,l.created_at
                FROM invite_links l
                WHERE l.campaign_id=? AND l.created_at<=?
                  AND EXISTS (
@@ -416,11 +416,7 @@ async def nudge_pass(application: Application) -> dict:
             continue
         nearest = min(int(row["remaining_seconds"]) for row in rows)
         count = len(rows)
-        subject = (
-            "یکی از دعوت‌هات"
-            if count == 1
-            else f"<b>{count}</b> تا از دعوت‌هات"
-        )
+        subject = "یکی از دعوت‌هات" if count == 1 else f"{count} تا از دعوت‌هات"
         try:
             await application.bot.send_message(
                 referrer_id,
