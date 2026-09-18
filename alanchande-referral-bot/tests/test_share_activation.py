@@ -62,6 +62,7 @@ class ShareActivationTests(unittest.TestCase):
                 CREATE TABLE invite_links (
                     campaign_id INTEGER,
                     user_id INTEGER,
+                    invite_link TEXT,
                     created_at TEXT
                 );
                 CREATE TABLE pending_referrals (
@@ -89,7 +90,10 @@ class ShareActivationTests(unittest.TestCase):
 
     def _link(self, user_id, when="2026-09-17T06:00:00+00:00"):
         with self.db.connect() as conn:
-            conn.execute("INSERT INTO invite_links VALUES(?,?,?)", (1, user_id, when))
+            conn.execute(
+                "INSERT INTO invite_links VALUES(?,?,?,?)",
+                (1, user_id, f"ref_1_{user_id}", when),
+            )
 
     def test_open_received_is_stored_on_referrer_and_self_open_is_ignored(self):
         db = RecorderDB()
