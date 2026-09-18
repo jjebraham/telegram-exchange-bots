@@ -128,6 +128,18 @@ class FunnelTests(unittest.TestCase):
         zero = self.db.zero_referral_nudge_candidates(
             self.campaign.id, self.now - timedelta(hours=12)
         )
+        self.assertEqual(zero, [])
+
+        self.db.track_funnel_event(
+            self.campaign.id,
+            20,
+            "nudge_early_share_sent",
+            "",
+            self.now - timedelta(hours=13),
+        )
+        zero = self.db.zero_referral_nudge_candidates(
+            self.campaign.id, self.now - timedelta(hours=12)
+        )
         self.assertEqual([row["user_id"] for row in zero], [20])
         self.db.track_funnel_event(
             self.campaign.id, 20, "nudge_zero_referral_sent", "", self.now
