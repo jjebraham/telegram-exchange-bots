@@ -111,6 +111,58 @@ def menu_text(campaign: Campaign, first_name: str) -> str:
     )
 
 
+def render_home(campaign: Campaign, db: ReferralDB, user_id: int, first_name: str) -> str:
+    """Compact action-first home card for an active participant."""
+    counts = db.campaign_counts(campaign, user_id)
+    pending_opens = db.pending_referral_count(campaign.id, user_id)
+    closest = db.closest_pending_seconds(campaign, user_id)
+
+    if campaign.max_points and counts["current_points"] >= campaign.max_points:
+        progress = "✅ سقف امتیاز موقت این مسابقه را گرفته‌ای."
+        next_action = "دعوت‌های فعالت را تا زمان تأیید حفظ کن."
+    else:
+        remainder = counts["active"] % campaign.invites_per_point
+        need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+        filled = int(round((remainder / campaign.invites_per_point) * 10))
+        bar = "█" * filled + "░" * (10 - filled)
+        progress = (
+            f"🎯 تا امتیاز موقت بعدی: <b>{bar}</b> "
+            f"{remainder}/{campaign.invites_per_point}"
+        )
+        if counts["active"] == 0:
+            next_action = (
+                f"اولین هدف: همین الان لینک را برای چند نفر بفرست؛ "
+                f"با <b>{campaign.invites_per_point}</b> دعوت فعال اولین امتیازت را می‌گیری."
+            )
+        elif need == 1:
+            next_action = "🔥 فقط <b>۱ دعوت فعال</b> دیگر تا امتیاز موقت بعدی."
+        else:
+            next_action = f"🔥 فقط <b>{need}</b> دعوت فعال دیگر تا امتیاز موقت بعدی."
+
+    open_line = (
+        f"👀 <b>{pending_opens}</b> نفر لینک را باز کرده‌اند و هنوز عضویت را کامل نکرده‌اند.\n"
+        if pending_opens else ""
+    )
+    closest_line = (
+        f"⏳ نزدیک‌ترین تأیید: <b>{remaining_label(closest)}</b> دیگر\n"
+        if closest is not None else ""
+    )
+
+    return (
+        f"سلام {escape(first_name or 'دوست عزیز')} 👋\n\n"
+        f"<b>🏆 وضعیت تو — {escape(campaign.name)}</b>\n\n"
+        f"👥 دعوت فعال: <b>{counts['active']}</b>\n"
+        f"⭐ امتیاز موقت: <b>{counts['current_points']}</b>\n"
+        f"🎟 بلیت تأییدشده: <b>{counts['confirmed_points']}</b>\n"
+        f"⏳ در انتظار تأیید: <b>{counts['pending']}</b>\n"
+        f"{open_line}{closest_line}\n"
+        f"{progress}\n"
+        f"{next_action}\n\n"
+        "👇 <b>کار بعدی:</b> لینک اختصاصی‌ات را برای دوستانت بفرست."
+        f"{_late_referral_warning(campaign)}"
+    )
+
+
 def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
     counts = db.campaign_counts(campaign, user_id)
     pending_opens = db.pending_referral_count(campaign.id, user_id)
