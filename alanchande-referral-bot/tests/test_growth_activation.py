@@ -9,7 +9,7 @@ from unittest.mock import patch
 from telegram_bot.config import Settings
 from telegram_bot.growth import qualification_cutoff_text
 from telegram_bot.promo_handlers import _entry_text
-from telegram_bot.ui import final_join_cutoff_text, link_keyboard
+from telegram_bot.ui import final_join_cutoff_text, link_keyboard, render_home
 
 
 class GrowthActivationTests(unittest.TestCase):
@@ -20,6 +20,8 @@ class GrowthActivationTests(unittest.TestCase):
             prize_text="۲۱ میلیون تومان",
             invites_per_point=2,
             num_winners=5,
+            max_points=20,
+            min_stay_hours=168,
             final_qualification_cutoff=cutoff,
         )
 
@@ -34,6 +36,36 @@ class GrowthActivationTests(unittest.TestCase):
         keyboard = link_keyboard(None, "https://t.me/testbot?start=ref_1_x", self._campaign())
         self.assertEqual(keyboard.inline_keyboard[0][0].text, "📤 ارسال لینک برای دوستان")
         self.assertTrue(keyboard.inline_keyboard[0][0].url.startswith("https://t.me/share/url?"))
+
+    def test_home_card_makes_first_and_next_referral_progress_visible(self):
+        class FakeDB:
+            def __init__(self, active):
+                self.active = active
+
+            def campaign_counts(self, campaign, user_id):
+                return {
+                    "active": self.active,
+                    "current_points": self.active // campaign.invites_per_point,
+                    "confirmed_points": 0,
+                    "pending": self.active,
+                }
+
+            def pending_referral_count(self, campaign_id, user_id):
+                return 0
+
+            def closest_pending_seconds(self, campaign, user_id):
+                return None
+
+        campaign = self._campaign()
+
+        first = render_home(campaign, FakeDB(0), 10, "Ali")
+        self.assertIn("۰ از", first)
+        self.assertIn("برای چند نفر بفرست", first)
+        self.assertIn("دعوت فعال: <b>0</b>", first)
+
+        halfway = render_home(campaign, FakeDB(1), 10, "Ali")
+        self.assertIn("1/2", halfway)
+        self.assertIn("فقط <b>۱ دعوت فعال</b>", halfway)
 
     def test_cutoff_is_rendered_in_both_timezones(self):
         campaign = self._campaign()
