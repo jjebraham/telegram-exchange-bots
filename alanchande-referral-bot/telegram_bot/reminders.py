@@ -11,8 +11,9 @@ from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application
 
 from referral_core import ReferralDB, points_from_invites
-from referral_core.models import utcnow
-from .config import Settings, hours_label, telegram_membership
+from referral_core.models import parse_datetime, utcnow
+from .config import Settings, hours_label, remaining_label, telegram_membership
+from .ui import link_keyboard
 from .user_handlers import post_init as user_post_init, post_stop as user_post_stop
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -274,12 +275,81 @@ def _early_share_nudge_candidates(db: ReferralDB, campaign_id: int, cutoff, limi
     return [dict(row) for row in rows]
 
 
+def _qualification_soon_candidates(
+    db: ReferralDB,
+    campaign,
+    now,
+    within_hours: int = 24,
+    limit: int = 100,
+) -> list[dict]:
+    """Active referrals that will qualify soon and have not produced a heads-up yet."""
+    if campaign.min_stay_hours <= 0:
+        return []
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT r.id,r.referrer_id,r.joined_user_id,r.joined_first_name,r.stay_since
+               FROM referrals r
+               WHERE r.campaign_id=? AND r.active=1
+                 AND NOT EXISTS (
+                   SELECT 1 FROM funnel_events f
+                   WHERE f.campaign_id=r.campaign_id
+                     AND f.user_id=r.referrer_id
+                     AND f.event_type='nudge_qualification_soon_sent'
+                     AND f.source=('referral:' || r.joined_user_id)
+                 )
+               ORDER BY r.stay_since ASC
+               LIMIT ?""",
+            (campaign.id, max(1, limit * 3)),
+        ).fetchall()
+
+    horizon = within_hours * 3600
+    result = []
+    for row in rows:
+        qualifies_at = parse_datetime(row["stay_since"]) + timedelta(
+            hours=campaign.min_stay_hours
+        )
+        remaining = int((qualifies_at - now).total_seconds())
+        if 0 < remaining <= horizon:
+            item = dict(row)
+            item["remaining_seconds"] = remaining
+            result.append(item)
+            if len(result) >= limit:
+                break
+    return result
+
+
+async def _bot_username(application: Application) -> str:
+    username = application.bot.username
+    if username:
+        return username
+    me = await application.bot.get_me()
+    if not me.username:
+        raise RuntimeError("bot username is unavailable")
+    return me.username
+
+
+def _deep_link(username: str, payload: str) -> str:
+    payload = str(payload or "").strip()
+    if payload.startswith("https://t.me/") or payload.startswith("http://t.me/"):
+        return payload
+    return f"https://t.me/{username}?start={payload}"
+
+
 async def nudge_pass(application: Application) -> dict:
     settings: Settings = application.bot_data["settings"]
     db: ReferralDB = application.bot_data["db"]
     campaign = db.live_campaign()
     if not campaign:
-        return {"campaign": None, "early_share": 0, "zero_referral": 0, "promo_abandon": 0, "summaries": 0}
+        return {
+            "campaign": None,
+            "early_share": 0,
+            "zero_referral": 0,
+            "qualification_soon": 0,
+            "promo_abandon": 0,
+            "summaries": 0,
+        }
+
+    username = await _bot_username(application)
 
     early_rows = _early_share_nudge_candidates(
         db,
@@ -293,14 +363,14 @@ async def nudge_pass(application: Application) -> dict:
         if not _notification_allowed(application, campaign.id, uid):
             continue
         try:
+            deep_link = _deep_link(username, row.get("invite_link", ""))
             await application.bot.send_message(
                 uid,
-                "📤 <b>لینک اختصاصی‌ات آماده است، ولی هنوز دعوتی از طرف تو شروع نشده.</b>\n\n"
-                "همین الان لینک رو برای ۲–۳ نفر بفرست؛ اولین کلیک دوستت یعنی حلقه دعوتت شروع شده. 🚀",
+                "📤 <b>لینک دعوتت هنوز برای کسی باز نشده.</b>\n\n"
+                f"🎯 برای اولین امتیاز موقت به <b>{campaign.invites_per_point}</b> دعوت فعال نیاز داری.\n"
+                "همین الان لینک رو برای ۲–۳ نفر بفرست؛ وقتی اولین نفر بازش کنه، همینجا بهت خبر می‌دیم. 🚀",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📤 دیدن و فرستادن لینک دعوت", callback_data="menu:link")]
-                ]),
+                reply_markup=link_keyboard(settings, deep_link, campaign),
             )
             early_sent += 1
             db.track_funnel_event(campaign.id, uid, "nudge_early_share_sent", "")
@@ -318,14 +388,15 @@ async def nudge_pass(application: Application) -> dict:
     for row in zero_rows:
         uid = int(row["user_id"])
         try:
+            deep_link = _deep_link(username, row.get("invite_link", ""))
             await application.bot.send_message(
                 uid,
                 "🔥 <b>هنوز اولین دعوتت ثبت نشده.</b>\n\n"
-                "لینک اختصاصی‌ات آماده است؛ برای چند نفر از دوستات بفرست تا اولین امتیازت رو شروع کنی. 👇",
+                f"🎯 با <b>{campaign.invites_per_point}</b> دعوت فعال اولین امتیاز موقتت ساخته می‌شه.\n"
+                "اگر هنوز می‌خوای شرکت کنی، این آخرین یادآوری خودکار ما برای شروع دعوتته؛ "
+                "لینکت رو برای چند نفر بفرست 👇",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📤 دیدن و فرستادن لینک دعوت", callback_data="menu:link")]
-                ]),
+                reply_markup=link_keyboard(settings, deep_link, campaign),
             )
             zero_sent += 1
             db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", "")
@@ -333,6 +404,46 @@ async def nudge_pass(application: Application) -> dict:
             db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", "unreachable")
         except TelegramError:
             log.exception("Zero-referral nudge failed user=%s", uid)
+
+    soon_rows = _qualification_soon_candidates(db, campaign, utcnow(), within_hours=24, limit=100)
+    by_referrer: dict[int, list[dict]] = {}
+    for row in soon_rows:
+        by_referrer.setdefault(int(row["referrer_id"]), []).append(row)
+
+    qualification_soon_sent = 0
+    for referrer_id, rows in by_referrer.items():
+        if not _notification_allowed(application, campaign.id, referrer_id):
+            continue
+        nearest = min(int(row["remaining_seconds"]) for row in rows)
+        count = len(rows)
+        subject = (
+            "یکی از دعوت‌هات"
+            if count == 1
+            else f"<b>{count}</b> تا از دعوت‌هات"
+        )
+        try:
+            await application.bot.send_message(
+                referrer_id,
+                f"⏳ <b>{subject} به تأیید نزدیک شده.</b>\n\n"
+                f"نزدیک‌ترین تأیید: <b>{remaining_label(nearest)}</b> دیگر\n"
+                "اگر تا آن زمان در کانال بماند، در بلیت‌های تأییدشده قرعه‌کشی حساب می‌شود.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📊 دیدن وضعیت من", callback_data="menu:stats")
+                ]]),
+            )
+            qualification_soon_sent += 1
+            for row in rows:
+                db.track_funnel_event(
+                    campaign.id,
+                    referrer_id,
+                    "nudge_qualification_soon_sent",
+                    f"referral:{int(row['joined_user_id'])}",
+                )
+        except (Forbidden, BadRequest):
+            pass
+        except TelegramError:
+            log.exception("Qualification-soon nudge failed referrer=%s", referrer_id)
 
     promo_rows = db.promo_abandon_nudge_candidates(
         campaign.id,
@@ -388,6 +499,7 @@ async def nudge_pass(application: Application) -> dict:
         "campaign": campaign.slug,
         "early_share": early_sent,
         "zero_referral": zero_sent,
+        "qualification_soon": qualification_soon_sent,
         "promo_abandon": promo_sent,
         "summaries": summaries,
     }
