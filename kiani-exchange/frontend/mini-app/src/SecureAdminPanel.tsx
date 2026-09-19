@@ -693,6 +693,11 @@ function LogBox({ title, items }: { title: string; items: any[] }) {
             {item.phone_number && <div>Phone: {item.phone_number}</div>}
             {item.national_id && <div>NID: {item.national_id}</div>}
             {item.details && <div className="break-all text-gray-300">{item.details}</div>}
+            {item.response_payload && (
+              <div className="mt-1 break-all rounded bg-gray-950 p-1.5 text-[11px] text-gray-400">
+                Trace: {String(item.response_payload)}
+              </div>
+            )}
             {item.error_message && <div className="text-red-300">{item.error_message}</div>}
           </div>
         ))}
