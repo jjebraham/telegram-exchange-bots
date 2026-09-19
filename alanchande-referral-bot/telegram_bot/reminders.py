@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import timedelta
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -275,6 +276,69 @@ def _early_share_nudge_candidates(db: ReferralDB, campaign_id: int, cutoff, limi
     return [dict(row) for row in rows]
 
 
+def _engagement_v2_candidates(
+    db: ReferralDB,
+    campaign_id: int,
+    cohort_cutoff: str,
+    limit: int = 100,
+) -> list[dict]:
+    """One-time reactivation cohort: existing link holders with zero downstream activity."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT l.user_id,l.invite_link,l.created_at
+               FROM invite_links l
+               WHERE l.campaign_id=? AND l.created_at<=?
+                 AND EXISTS (
+                   SELECT 1 FROM funnel_events e
+                   WHERE e.campaign_id=l.campaign_id
+                     AND e.user_id=l.user_id
+                     AND e.event_type='entered_contest'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM funnel_events e
+                   WHERE e.campaign_id=l.campaign_id
+                     AND e.user_id=l.user_id
+                     AND e.event_type='referral_open_received'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pending_referrals p
+                   WHERE p.campaign_id=l.campaign_id
+                     AND p.referrer_id=l.user_id
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM referrals r
+                   WHERE r.campaign_id=l.campaign_id
+                     AND r.referrer_id=l.user_id
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM funnel_events sent
+                   WHERE sent.campaign_id=l.campaign_id
+                     AND sent.user_id=l.user_id
+                     AND sent.event_type='nudge_engagement_v2_sent'
+                 )
+               ORDER BY l.created_at ASC
+               LIMIT ?""",
+            (campaign_id, cohort_cutoff, max(1, limit)),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _engagement_v2_keyboard(link: str, campaign) -> InlineKeyboardMarkup:
+    share_text = (
+        f"من تو مسابقه {campaign.name} «الان چنده؟» شرکت کردم 🎁\n"
+        f"{campaign.prize_text} جایزه و {campaign.num_winners} برنده داره.\n"
+        "اگه دوست داشتی تو هم از لینک من وارد شو 👇"
+    )
+    share_url = "https://t.me/share/url?" + urlencode({
+        "url": link,
+        "text": share_text,
+    })
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 ارسال برای ۲ نفر", url=share_url)],
+        [InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats")],
+    ])
+
+
 def _qualification_soon_candidates(
     db: ReferralDB,
     campaign,
@@ -345,6 +409,7 @@ async def nudge_pass(application: Application) -> dict:
             "early_share": 0,
             "zero_referral": 0,
             "qualification_soon": 0,
+            "engagement_v2": 0,
             "promo_abandon": 0,
             "summaries": 0,
         }
@@ -404,6 +469,52 @@ async def nudge_pass(application: Application) -> dict:
             db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", "unreachable")
         except TelegramError:
             log.exception("Zero-referral nudge failed user=%s", uid)
+
+    engagement_v2_sent = 0
+    # One-time reactivation experiment for the paeez1405 participants who
+    # already had links before the 2026-09-19 measurement snapshot but had
+    # produced no observable referral activity. Future participants are not
+    # enrolled in this cohort.
+    if campaign.slug == "paeez1405":
+        v2_rows = _engagement_v2_candidates(
+            db,
+            campaign.id,
+            "2026-09-19T16:18:00+00:00",
+            limit=100,
+        )
+        for row in v2_rows:
+            uid = int(row["user_id"])
+            if not _notification_allowed(application, campaign.id, uid):
+                continue
+            deep_link = _deep_link(username, row.get("invite_link", ""))
+            try:
+                await application.bot.send_message(
+                    uid,
+                    "🎯 <b>هنوز کسی لینک دعوتت رو باز نکرده.</b>\n\n"
+                    f"برای اولین امتیاز موقت فقط <b>{campaign.invites_per_point} دعوت فعال</b> لازم داری.\n\n"
+                    "لازم نیست لینک رو همه‌جا بفرستی؛ همین الان فقط برای ۲ نفر "
+                    "که فکر می‌کنی مسابقه براشون جذابه بفرست.\n\n"
+                    "👀 وقتی اولین نفر لینک رو باز کنه، همینجا بهت خبر می‌دیم.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=_engagement_v2_keyboard(deep_link, campaign),
+                    disable_web_page_preview=True,
+                )
+                engagement_v2_sent += 1
+                db.track_funnel_event(
+                    campaign.id,
+                    uid,
+                    "nudge_engagement_v2_sent",
+                    "cohort_20260919",
+                )
+            except (Forbidden, BadRequest):
+                db.track_funnel_event(
+                    campaign.id,
+                    uid,
+                    "nudge_engagement_v2_sent",
+                    "unreachable",
+                )
+            except TelegramError:
+                log.exception("Engagement-v2 nudge failed user=%s", uid)
 
     soon_rows = _qualification_soon_candidates(db, campaign, utcnow(), within_hours=24, limit=100)
     by_referrer: dict[int, list[dict]] = {}
@@ -496,6 +607,7 @@ async def nudge_pass(application: Application) -> dict:
         "early_share": early_sent,
         "zero_referral": zero_sent,
         "qualification_soon": qualification_soon_sent,
+        "engagement_v2": engagement_v2_sent,
         "promo_abandon": promo_sent,
         "summaries": summaries,
     }
