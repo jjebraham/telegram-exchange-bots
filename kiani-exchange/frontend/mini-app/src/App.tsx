@@ -41,55 +41,200 @@ type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'ad
 
 // ─── Helper Components ──────────────────────────────────────────────────────
 
-const RateBox = ({
-  label,
-  rate,
-  loading,
+const faNumber = (value: number, digits = 0) =>
+  Number(value || 0).toLocaleString('fa-IR', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+
+const directionForDelta = (delta: number) => {
+  if (Math.abs(delta) < 0.001) return 'flat';
+  return delta > 0 ? 'up' : 'down';
+};
+
+function MarketRateSlab({
+  title,
+  code,
+  buy,
+  sell,
+  delta,
+  changed,
+  buyKey,
+  sellKey,
 }: {
-  label: string;
-  rate: number | string;
-  loading: boolean;
-}) => {
-  // Check if this is a conversion rate (تبدیل لیر به تتر or تبدیل تتر به لیر)
-  const isConversionRate = label.includes('تبدیل لیر به تتر') || label.includes('تبدیل تتر به لیر');
-  
+  title: string;
+  code: string;
+  buy: number;
+  sell: number;
+  delta: number;
+  changed: Set<string>;
+  buyKey: string;
+  sellKey: string;
+}) {
+  const direction = directionForDelta(delta);
+  const spread = Math.max(0, buy - sell);
+  const trendLabel =
+    direction === 'flat' ? 'بدون تغییر' : faNumber(Math.abs(delta), 2) + '٪';
+
   return (
-    <div className="bg-white rounded-xl p-4 shadow-md mb-3">
-      <div className="flex justify-between items-center">
-        <span className="text-gray-700 font-semibold text-sm">{label}</span>
-        <span className="text-blue-600 font-bold text-lg">
-          {loading
-            ? '...'
-            : isConversionRate
-              ? `${rate.toLocaleString('fa-IR')} لیر`
-              : `${rate.toLocaleString('fa-IR')} تومان`}
-        </span>
+    <section className="kiani-rate-slab">
+      <div className="kiani-rate-head">
+        <div className="kiani-rate-name">
+          <b>{title}</b>
+          <span>{code}</span>
+        </div>
+        <div className={'kiani-trend ' + direction}>
+          <span>{direction === 'up' ? '▲' : direction === 'down' ? '▼' : '—'}</span>
+          <span>{trendLabel}</span>
+        </div>
+      </div>
+
+      <div className="kiani-rate-sides">
+        <div className="kiani-rate-side buy">
+          <div className="kiani-rate-label">شما می‌خرید</div>
+          <div className="kiani-rate-price">
+            <span className={changed.has(buyKey) ? 'kiani-rate-number kiani-rate-bump' : 'kiani-rate-number'}>
+              {faNumber(buy)}
+            </span>
+            <span className="kiani-rate-unit">تومان</span>
+          </div>
+        </div>
+
+        <div className="kiani-rate-divider" />
+
+        <div className="kiani-rate-side sell">
+          <div className="kiani-rate-label">شما می‌فروشید</div>
+          <div className="kiani-rate-price">
+            <span className={changed.has(sellKey) ? 'kiani-rate-number kiani-rate-bump' : 'kiani-rate-number'}>
+              {faNumber(sell)}
+            </span>
+            <span className="kiani-rate-unit">تومان</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="kiani-spread-row">
+        <span>اختلاف خرید و فروش</span>
+        <span><b>{faNumber(spread)}</b> تومان</span>
+      </div>
+    </section>
+  );
+}
+
+function RateDashboardSkeleton() {
+  return (
+    <>
+      {[0, 1].map((item) => (
+        <section className="kiani-rate-slab kiani-skeleton-slab" key={item}>
+          <div className="kiani-rate-head">
+            <div className="kiani-skeleton kiani-sk-title" />
+          </div>
+          <div className="kiani-rate-sides">
+            <div className="kiani-rate-side">
+              <div className="kiani-skeleton kiani-sk-label" />
+              <div className="kiani-skeleton kiani-sk-number" />
+            </div>
+            <div className="kiani-rate-divider" />
+            <div className="kiani-rate-side">
+              <div className="kiani-skeleton kiani-sk-label" />
+              <div className="kiani-skeleton kiani-sk-number" />
+            </div>
+          </div>
+          <div className="kiani-spread-row">
+            <div className="kiani-skeleton kiani-sk-spread" />
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
+function RateLoadingDialog({
+  error,
+  onRetry,
+}: {
+  error: boolean;
+  onRetry: () => void | Promise<void>;
+}) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (error) {
+      setElapsed(0);
+      return;
+    }
+    setElapsed(0);
+    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [error]);
+
+  let title = 'در حال اتصال به سرور';
+  let body = 'ارتباط با سرور صرافی در حال برقراری است.';
+  if (elapsed >= 3) {
+    title = 'دریافت نرخ لحظه‌ای بازار';
+    body = 'نرخ تتر و لیر از منابع بازار خوانده می‌شود.';
+  }
+  if (elapsed >= 7) {
+    title = 'چند لحظه دیگر';
+    body = 'اتصال برقرار است و داده‌ها در حال رسیدن‌اند.';
+  }
+  if (elapsed >= 13) {
+    title = 'نرخ‌ها در حال آماده‌سازی است';
+    body = 'شبکه کمی کند است، اما درخواست شما لغو نشده.';
+  }
+
+  return (
+    <div className="kiani-wait-scrim" role="dialog" aria-live="polite">
+      <div className="kiani-wait-card">
+        <div className="kiani-loader-ring">
+          <span>{faNumber(elapsed)}″</span>
+        </div>
+
+        {error ? (
+          <>
+            <h3>نرخ‌ها دریافت نشد</h3>
+            <p>ارتباط با سرور برقرار نشد. اینترنت خود را بررسی کنید و دوباره تلاش کنید.</p>
+            <button onClick={() => void onRetry()}>تلاش دوباره</button>
+          </>
+        ) : (
+          <>
+            <h3>{title}</h3>
+            <p>{body}</p>
+            {elapsed >= 6 && (
+              <div className="kiani-wait-hint">
+                صفحه را نبندید، نرخ‌ها به‌زودی نمایش داده می‌شوند
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
-};
+}
 
-const ExchangeButton = ({
+function ActionTile({
   label,
-  icon,
-  color,
+  symbol,
+  tone,
   onClick,
   type,
 }: {
   label: string;
-  icon: string;
-  color: string;
+  symbol: string;
+  tone: 'buy' | 'sell' | 'swap';
   onClick: (type: ExchangeType) => void;
   type: ExchangeType;
-}) => (
-  <button
-    onClick={() => onClick(type)}
-    className={`${color} text-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all flex flex-col items-center justify-center`}
-  >
-    <span className="text-3xl mb-2">{icon}</span>
-    <span className="font-bold text-lg">{label}</span>
-  </button>
-);
+}) {
+  return (
+    <button
+      className={'kiani-action-tile kiani-action-' + tone}
+      onClick={() => onClick(type)}
+    >
+      <span className="kiani-action-symbol">{symbol}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
 
 const InfoRow = ({ label, value }: { label: string; value: string }) => (
   <div className="flex justify-between items-center py-2 border-b border-gray-100">
@@ -214,17 +359,37 @@ function App() {
     foreign_payment: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [justRefreshed, setJustRefreshed] = useState(false);
+  const [rateError, setRateError] = useState(false);
+  const [rateUpdatedAt, setRateUpdatedAt] = useState<number | null>(null);
+  const [rateDeltas, setRateDeltas] = useState({ usdt: 0, lira: 0 });
+  const [changedRates, setChangedRates] = useState<Set<string>>(new Set());
   const [selectedExchange, setSelectedExchange] = useState<ExchangeType | null>(null);
 
-  // Check for existing session on mount
+  const currentRatesRef = useRef<Rates>(rates);
+  const hasLoadedRatesRef = useRef(false);
+  const rateRequestRef = useRef(false);
+  const changedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Check for an existing session and keep market rates fresh.
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
       fetchUserProfile(token);
     }
-    fetchRates();
-    const interval = setInterval(fetchRates, 600000); // refresh every 10 min
-    return () => clearInterval(interval);
+
+    void fetchRates(false);
+    const interval = window.setInterval(() => {
+      void fetchRates(false);
+    }, 60000);
+
+    return () => {
+      window.clearInterval(interval);
+      if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
+      if (refreshedTimerRef.current) clearTimeout(refreshedTimerRef.current);
+    };
   }, []);
 
   const fetchUserProfile = async (token: string) => {
@@ -243,19 +408,71 @@ function App() {
     }
   };
 
-  const fetchRates = async () => {
-    if (!rates.buy_lira) setLoading(true);
+  const fetchRates = async (manual = false) => {
+    if (rateRequestRef.current) return false;
+
+    rateRequestRef.current = true;
+    setRateError(false);
+    if (!hasLoadedRatesRef.current) setLoading(true);
+    if (manual) setRefreshing(true);
+
+    let succeeded = false;
+
     try {
       const response = await fetch(`${API_URL}/rates/current`);
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error('Rate request failed with HTTP ' + response.status);
+      }
 
+      const data = await response.json();
       const usdt_irr = data.rates.USDT_IRR;
       const usdt_try = data.rates.USDT_TRY;
-      setRates(deriveRates(usdt_irr, usdt_try));
+      const nextRates = deriveRates(usdt_irr, usdt_try);
+      const previousRates = currentRatesRef.current;
+
+      if (hasLoadedRatesRef.current) {
+        setRateDeltas({
+          usdt: previousRates.buy_usdt
+            ? ((nextRates.buy_usdt - previousRates.buy_usdt) / previousRates.buy_usdt) * 100
+            : 0,
+          lira: previousRates.buy_lira
+            ? ((nextRates.buy_lira - previousRates.buy_lira) / previousRates.buy_lira) * 100
+            : 0,
+        });
+
+        const changed = new Set<string>();
+        if (nextRates.buy_usdt !== previousRates.buy_usdt) changed.add('buy_usdt');
+        if (nextRates.sell_usdt !== previousRates.sell_usdt) changed.add('sell_usdt');
+        if (nextRates.buy_lira !== previousRates.buy_lira) changed.add('buy_lira');
+        if (nextRates.sell_lira !== previousRates.sell_lira) changed.add('sell_lira');
+        setChangedRates(changed);
+
+        if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
+        changedTimerRef.current = setTimeout(() => setChangedRates(new Set()), 1100);
+      }
+
+      currentRatesRef.current = nextRates;
+      setRates(nextRates);
+      setRateUpdatedAt(Date.now());
+      hasLoadedRatesRef.current = true;
+      succeeded = true;
+      return true;
     } catch (error) {
       console.error('Rate fetch error:', error);
+      setRateError(true);
+      return false;
     } finally {
+      rateRequestRef.current = false;
       setLoading(false);
+
+      if (manual) {
+        setRefreshing(false);
+        if (succeeded) {
+          setJustRefreshed(true);
+          if (refreshedTimerRef.current) clearTimeout(refreshedTimerRef.current);
+          refreshedTimerRef.current = setTimeout(() => setJustRefreshed(false), 1600);
+        }
+      }
     }
   };
 
@@ -279,40 +496,49 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 pb-20">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-blue-700 to-purple-700 text-white p-4 shadow-lg">
-        <div className="flex justify-between items-center">
-          <h1 className="text-xl font-bold">صرافی کیانی</h1>
-          {user ? (
-            <div className="flex items-center gap-3">
-              <span className="text-sm">{user.first_name}</span>
-              <button
-                onClick={handleLogout}
-                className="text-xs bg-white/20 px-3 py-1 rounded-full"
-              >
-                خروج
-              </button>
-            </div>
-          ) : (
+    <div className="kiani-app-shell">
+      <header className="kiani-topbar">
+        <div className="kiani-brand">
+          <b>صرافی کیانی</b>
+          <span>OTC</span>
+        </div>
+
+        <div className="kiani-header-actions">
+          {activeTab === 'dashboard' && (
             <button
-              onClick={() => setActiveTab('login')}
-              className="text-sm bg-white/20 px-4 py-1.5 rounded-full"
+              className={'kiani-refresh-button' + (refreshing ? ' is-busy' : '') + (justRefreshed ? ' is-done' : '')}
+              disabled={refreshing || loading}
+              onClick={() => void fetchRates(true)}
+              aria-busy={refreshing}
             >
-              ورود / ثبت نام
+              <span className="kiani-refresh-icon">{justRefreshed ? '✓' : '↻'}</span>
+              <span>{refreshing ? 'در حال بروزرسانی' : justRefreshed ? 'بروز شد' : 'بروزرسانی'}</span>
             </button>
           )}
+
+          <button
+            className="kiani-login-button"
+            onClick={() => {
+              if (user) handleLogout();
+              else setActiveTab('login');
+            }}
+          >
+            {user ? 'خروج' : 'ورود'}
+          </button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main>
+      <main className={activeTab === 'dashboard' ? 'kiani-main kiani-dashboard-main' : 'kiani-main kiani-legacy-main'}>
         {activeTab === 'dashboard' && (
           <DashboardPage
             rates={rates}
             loading={loading}
             onExchangeClick={handleExchangeClick}
-            onRefresh={fetchRates}
+            updatedAt={rateUpdatedAt}
+            deltas={rateDeltas}
+            changed={changedRates}
+            rateError={rateError}
+            onRefresh={() => fetchRates(true)}
           />
         )}
         {activeTab === 'exchange' && selectedExchange && (
@@ -340,38 +566,33 @@ function App() {
         {activeTab === 'history' && <HistoryPage />}
       </main>
 
-      {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white shadow-[0_-2px_10px_rgba(0,0,0,0.1)] border-t border-gray-200">
-        <div className="flex justify-around items-center py-2">
-          <NavButton
-            label="خانه"
-            icon="🏠"
-            active={activeTab === 'dashboard'}
-            onClick={() => setActiveTab('dashboard')}
-          />
-          <NavButton
-            label="تاریخچه"
-            icon="📋"
-            active={activeTab === 'history'}
-            onClick={() => {
-              if (!user) {
-                setActiveTab('login');
-              } else {
-                setActiveTab('history');
-              }
-            }}
-          />
-          <NavButton
-            label={user ? 'پروفایل' : 'ورود'}
-            icon={user ? '👤' : '🔑'}
-            active={activeTab === 'login' || activeTab === 'register'}
-            onClick={() => setActiveTab(user ? 'dashboard' : 'login')}
-          />
-        </div>
+      <nav className="kiani-bottom-nav" aria-label="ناوبری اصلی">
+        <NavButton
+          label="خانه"
+          icon="⌂"
+          active={activeTab === 'dashboard'}
+          onClick={() => setActiveTab('dashboard')}
+        />
+        <NavButton
+          label="تاریخچه"
+          icon="☰"
+          active={activeTab === 'history'}
+          onClick={() => {
+            if (!user) setActiveTab('login');
+            else setActiveTab('history');
+          }}
+        />
+        <NavButton
+          label={user ? 'پروفایل' : 'ورود'}
+          icon={user ? '◉' : '⚿'}
+          active={activeTab === 'login' || activeTab === 'register'}
+          onClick={() => setActiveTab(user ? 'dashboard' : 'login')}
+        />
       </nav>
     </div>
   );
 }
+
 
 // ─── Navigation Button ──────────────────────────────────────────────────────
 
@@ -389,15 +610,14 @@ function NavButton({
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center px-4 py-1 ${
-        active ? 'text-blue-600' : 'text-gray-500'
-      }`}
+      className={active ? 'kiani-nav-button is-active' : 'kiani-nav-button'}
     >
-      <span className="text-xl">{icon}</span>
-      <span className="text-xs mt-1 font-medium">{label}</span>
+      <span className="kiani-nav-icon">{icon}</span>
+      <span>{label}</span>
     </button>
   );
 }
+
 
 // ─── PART 1 & 2: Dashboard Page ─────────────────────────────────────────────
 
@@ -405,88 +625,131 @@ function DashboardPage({
   rates,
   loading,
   onExchangeClick,
+  updatedAt,
+  deltas,
+  changed,
+  rateError,
   onRefresh,
 }: {
   rates: Rates;
   loading: boolean;
   onExchangeClick: (type: ExchangeType) => void;
-  onRefresh: () => void;
+  updatedAt: number | null;
+  deltas: { usdt: number; lira: number };
+  changed: Set<string>;
+  rateError: boolean;
+  onRefresh: () => void | Promise<boolean>;
 }) {
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    const ticker = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(ticker);
+  }, []);
+
+  const ageSeconds = updatedAt ? Math.max(0, Math.floor((clock - updatedAt) / 1000)) : 0;
+  const stale = Boolean(updatedAt && ageSeconds > 120);
+  const autoLeft = Math.max(0, 60 - ageSeconds);
+
+  let agoText = 'هم‌اکنون';
+  if (ageSeconds >= 5 && ageSeconds < 60) agoText = faNumber(ageSeconds) + ' ثانیه پیش';
+  if (ageSeconds >= 60) agoText = faNumber(Math.floor(ageSeconds / 60)) + ' دقیقه پیش';
+
+  const actions: Array<{
+    label: string;
+    symbol: string;
+    tone: 'buy' | 'sell' | 'swap';
+    type: ExchangeType;
+  }> = [
+    { label: 'خرید تتر', symbol: '₮', tone: 'buy', type: 'buy_usdt' },
+    { label: 'فروش تتر', symbol: '₮', tone: 'sell', type: 'sell_usdt' },
+    { label: 'خرید لیر', symbol: '₺', tone: 'buy', type: 'buy_lira' },
+    { label: 'فروش لیر', symbol: '₺', tone: 'sell', type: 'sell_lira' },
+    { label: 'تبدیل تتر به لیر', symbol: '⇄', tone: 'swap', type: 'convert_usdt_to_lira' },
+    { label: 'تبدیل لیر به تتر', symbol: '⇄', tone: 'swap', type: 'convert_lira_to_usdt' },
+  ];
+
   return (
-    <div>
-      {/* Rates Section */}
-      <div className="p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-gray-800">نرخ لحظه‌ای</h2>
-          <button
-            onClick={onRefresh}
-            className="text-sm text-blue-600 bg-blue-50 px-3 py-1 rounded-full"
-          >
-            بروزرسانی
-          </button>
+    <div className="kiani-dashboard">
+      {updatedAt && !loading && (
+        <div className={stale ? 'kiani-freshness is-stale' : 'kiani-freshness'}>
+          <span className="kiani-fresh-dot" />
+          <span>{stale ? 'نرخ بیش از دو دقیقه قدیمی است' : 'آخرین نرخ ' + agoText}</span>
+          {!stale && <span>· بروزرسانی خودکار تا {faNumber(autoLeft)} ثانیه</span>}
         </div>
+      )}
 
-        <RateBox label="نرخ خرید لیر از ما" rate={rates.buy_lira} loading={loading} />
-        <RateBox label="نرخ فروش لیر به ما" rate={rates.sell_lira} loading={loading} />
-        <RateBox label="نرخ خرید تتر از ما" rate={rates.buy_usdt} loading={loading} />
-        <RateBox label="نرخ فروش تتر به ما" rate={rates.sell_usdt} loading={loading} />
-        <RateBox label="تبدیل تتر به لیر" rate={rates.usdt_to_lira} loading={loading} />
-        <RateBox label="تبدیل لیر به تتر" rate={rates.lira_to_usdt} loading={loading} />
-        <RateBox
-          label="نرخ دلار خرید از سایت‌های خارجی"
-          rate={rates.foreign_payment}
-          loading={loading}
-        />
+      {loading || (!updatedAt && rateError) ? (
+        <RateDashboardSkeleton />
+      ) : (
+        <>
+          <MarketRateSlab
+            title="تتر"
+            code="USDT"
+            buy={rates.buy_usdt}
+            sell={rates.sell_usdt}
+            delta={deltas.usdt}
+            changed={changed}
+            buyKey="buy_usdt"
+            sellKey="sell_usdt"
+          />
+          <MarketRateSlab
+            title="لیر"
+            code="TRY"
+            buy={rates.buy_lira}
+            sell={rates.sell_lira}
+            delta={deltas.lira}
+            changed={changed}
+            buyKey="buy_lira"
+            sellKey="sell_lira"
+          />
+
+          <section className="kiani-conversion-strip">
+            <div className="kiani-conversion-cell">
+              <div className="kiani-conversion-label">تبدیل تتر به لیر</div>
+              <div className="kiani-conversion-value">
+                {faNumber(rates.usdt_to_lira, 2)}
+                <small>لیر</small>
+              </div>
+            </div>
+            <div className="kiani-conversion-divider" />
+            <div className="kiani-conversion-cell">
+              <div className="kiani-conversion-label">تبدیل لیر به تتر</div>
+              <div className="kiani-conversion-value">
+                {faNumber(rates.lira_to_usdt, 2)}
+                <small>لیر</small>
+              </div>
+            </div>
+          </section>
+
+          <div className="kiani-external-rate">
+            <span>دلار خرید از سایت‌های خارجی</span>
+            <strong>{faNumber(rates.foreign_payment)} تومان</strong>
+          </div>
+        </>
+      )}
+
+      <h2 className="kiani-section-title">معامله</h2>
+      <div className="kiani-action-grid">
+        {actions.map((action) => (
+          <ActionTile
+            key={action.type}
+            label={action.label}
+            symbol={action.symbol}
+            tone={action.tone}
+            type={action.type}
+            onClick={onExchangeClick}
+          />
+        ))}
       </div>
 
-      {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-4 p-4">
-        <ExchangeButton
-          label="خرید لیر"
-          icon="💰"
-          color="bg-gradient-to-br from-green-500 to-emerald-600"
-          onClick={onExchangeClick}
-          type="buy_lira"
-        />
-        <ExchangeButton
-          label="فروش لیر"
-          icon="💸"
-          color="bg-gradient-to-br from-red-500 to-pink-600"
-          onClick={onExchangeClick}
-          type="sell_lira"
-        />
-        <ExchangeButton
-          label="خرید تتر"
-          icon="🪙"
-          color="bg-gradient-to-br from-blue-500 to-indigo-600"
-          onClick={onExchangeClick}
-          type="buy_usdt"
-        />
-        <ExchangeButton
-          label="فروش تتر"
-          icon="💵"
-          color="bg-gradient-to-br from-orange-500 to-amber-600"
-          onClick={onExchangeClick}
-          type="sell_usdt"
-        />
-        <ExchangeButton
-          label="تبدیل تتر به لیر"
-          icon="🔄"
-          color="bg-gradient-to-br from-purple-500 to-violet-600"
-          onClick={onExchangeClick}
-          type="convert_usdt_to_lira"
-        />
-        <ExchangeButton
-          label="تبدیل لیر به تتر"
-          icon="🔁"
-          color="bg-gradient-to-br from-teal-500 to-cyan-600"
-          onClick={onExchangeClick}
-          type="convert_lira_to_usdt"
-        />
-      </div>
+      {(loading || (!updatedAt && rateError)) && (
+        <RateLoadingDialog error={rateError} onRetry={onRefresh} />
+      )}
     </div>
   );
 }
+
 
 // ─── PART 3: Exchange Page ──────────────────────────────────────────────────
 
