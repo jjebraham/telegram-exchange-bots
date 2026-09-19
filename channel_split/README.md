@@ -27,22 +27,28 @@ a server-side secret/env file excluded from Git.
 
 ### AlanChande
 
-`bank-comparison`
+Available post names:
 
-Publishes USD/TRY buying/selling rates for:
+- `bank-comparison` — USD/TRY bank/Kapalıçarşı comparison.
+- `eur-bank-comparison` — EUR/TRY bank/Kapalıçarşı comparison.
+- `bank-comparisons` — sends both USD and EUR comparisons.
+- `alanchande-converter` — Toman → TRY practical examples.
+- `alanchande-snapshot` — compact market snapshot.
+- `alanchande-daily-change` — intraday USD/EUR movement from local SQLite history.
+- `alanchande-turkey-gold` — Turkish Kapalıçarşı gold products.
+- `alanchande-iran-gold` — Iranian coin/gold prices + coin bubbles, converted from rial to toman.
+- `alanchande-usdt-exchanges` — USDT sell prices across selected Iranian exchanges.
+- `alanchande-markets` — sends the Turkish-gold, Iran-gold and Iran-USDT boards together.
 
-- Kapalıçarşı
-- Garanti BBVA
-- İş Bankası
-- Kuveyt Türk
-- Ziraat Bankası
+The USD/EUR comparison source layer is isolated in `bank_compare.py`.
+Turkish gold is isolated in `gold_prices.py`. Iran gold/coin is isolated in
+`iran_gold.py`, and the Iranian-exchange USDT board is isolated in
+`iran_usdt.py`.
 
-For the MVP all rows are read from the same public `kur.doviz.com` comparison
-table to keep the values synchronized to one timestamp/source. The post clearly
-attributes that source.
-
-The source layer is deliberately isolated in `bank_compare.py`, so we can later
-replace rows with official providers.
+The USDT comparison intentionally fails closed when too few preferred exchanges
+survive freshness/outlier checks. It filters older source-date rows, rows more
+than 90 minutes behind the freshest same-day quote, and sell-price outliers more
+than 12% away from the median.
 
 ### Kiani Exchange
 
@@ -140,3 +146,39 @@ and ensure each production publisher bot is an admin of its matching channel.
 - add scheduled posting only after dry-run/test channels are clean;
 - replace aggregator bank rows with official adapters where stable APIs/endpoints
   and reuse terms permit it.
+
+
+## New market-board test commands
+
+From `channel_split/`:
+
+```bash
+# Run parser/unit tests first.
+python3 -m unittest discover -s ../tests -p 'test_channel_split_*.py'
+
+# Preview each new board without sending.
+python3 publish_channels.py --post alanchande-turkey-gold --dry-run
+python3 publish_channels.py --post alanchande-iran-gold --dry-run
+python3 publish_channels.py --post alanchande-usdt-exchanges --dry-run
+
+# Preview all three new boards.
+python3 publish_channels.py --post alanchande-markets --dry-run
+```
+
+If the dry-run output is correct:
+
+```bash
+python3 publish_channels.py --post alanchande-turkey-gold
+python3 publish_channels.py --post alanchande-iran-gold
+python3 publish_channels.py --post alanchande-usdt-exchanges
+```
+
+Or send all three:
+
+```bash
+python3 publish_channels.py --post alanchande-markets
+```
+
+The Iran-market MVP uses public TGJU pages for test-channel validation. Before
+production-scale redistribution, verify source reuse/licensing terms and monitor
+the parser for upstream HTML changes.
