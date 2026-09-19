@@ -86,18 +86,19 @@ def _ascii_digits(value: str) -> str:
     return value.translate(_DIGITS)
 
 
-def _parse_positive_number(value: str) -> Decimal:
+def _parse_number(value: str, *, allow_negative: bool = False) -> Decimal:
     cleaned = _ascii_digits(value)
     cleaned = cleaned.replace(",", "").replace("٬", "").replace(" ", "")
-    cleaned = re.sub(r"[^0-9.]", "", cleaned)
-    if not cleaned:
+    pattern = r"-?[0-9]+(?:\.[0-9]+)?" if allow_negative else r"[0-9]+(?:\.[0-9]+)?"
+    match = re.search(pattern, cleaned)
+    if not match:
         raise ValueError(f"No numeric value in {value!r}")
     try:
-        number = Decimal(cleaned)
+        number = Decimal(match.group(0))
     except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"Invalid numeric value: {value!r}") from exc
-    if not number.is_finite() or number <= 0:
-        raise ValueError(f"Invalid positive value: {value!r}")
+    if not number.is_finite() or (not allow_negative and number <= 0):
+        raise ValueError(f"Invalid numeric value: {value!r}")
     return number
 
 
@@ -111,7 +112,7 @@ def _first_row_values(rows: list[list[str]], labels: tuple[str, ...]) -> dict[st
             continue
         for cell in row[1:]:
             try:
-                found[label] = _parse_positive_number(cell)
+                found[label] = _parse_number(cell)
                 break
             except ValueError:
                 continue
@@ -125,7 +126,7 @@ def _extract_summary_value(text: str, labels: tuple[str, ...]) -> Decimal | None
         match = re.search(rf"{re.escape(label)}\s+([0-9][0-9,٬]*)", normalized)
         if match:
             try:
-                return _parse_positive_number(match.group(1))
+                return _parse_number(match.group(1))
             except ValueError:
                 pass
     return None
@@ -136,7 +137,18 @@ def parse_tgju_home(html: str) -> IranGoldMarket:
     parser.feed(html)
 
     coins = _first_row_values(parser.rows, COIN_LABELS)
-    bubbles = _first_row_values(parser.rows, BUBBLE_LABELS)
+
+    bubbles: dict[str, Decimal] = {}
+    for row in parser.rows:
+        if len(row) < 2:
+            continue
+        label = row[0].strip()
+        if label not in BUBBLE_LABELS or label in bubbles:
+            continue
+        try:
+            bubbles[label] = _parse_number(row[1], allow_negative=True)
+        except ValueError:
+            continue
 
     missing_coins = [name for name in COIN_LABELS if name not in coins]
     missing_bubbles = [name for name in BUBBLE_LABELS if name not in bubbles]
@@ -145,9 +157,23 @@ def parse_tgju_home(html: str) -> IranGoldMarket:
     if missing_bubbles:
         raise ValueError("TGJU source is missing bubble rows: " + ", ".join(missing_bubbles))
 
+    gold_rows = _first_row_values(
+        parser.rows,
+        ("طلای 18 عیار", "طلای ۱۸ عیار", "طلا 18", "طلا ۱۸"),
+    )
+    mesghal_rows = _first_row_values(
+        parser.rows,
+        ("مثقال طلا", "مثقال طلای 18", "مثقال طلای ۱۸"),
+    )
+
     text = " ".join(parser.text_parts)
-    gold18 = _extract_summary_value(text, ("طلا ۱۸", "طلا 18", "طلای 18 عیار", "طلای ۱۸ عیار"))
-    mesghal = _extract_summary_value(text, ("مثقال طلا", "مثقال طلای 18", "مثقال طلای ۱۸"))
+    gold18 = next(iter(gold_rows.values()), None)
+    if gold18 is None:
+        gold18 = _extract_summary_value(text, ("طلا ۱۸", "طلا 18", "طلای 18 عیار", "طلای ۱۸ عیار"))
+
+    mesghal = next(iter(mesghal_rows.values()), None)
+    if mesghal is None:
+        mesghal = _extract_summary_value(text, ("مثقال طلا", "مثقال طلای 18", "مثقال طلای ۱۸"))
 
     return IranGoldMarket(
         coin_prices_rial=coins,
@@ -191,6 +217,11 @@ def _bubble_pct(bubble_rial: Decimal, price_rial: Decimal) -> str:
     return f"{pct.quantize(Decimal('0.01')):.2f}".rstrip("0").rstrip(".")
 
 
+def _fmt_signed_toman(rial: Decimal) -> str:
+    value = int(_toman(rial).quantize(Decimal("1")))
+    return f"{value:,}"
+
+
 def build_iran_gold_post(market: IranGoldMarket) -> str:
     now = datetime.now(TEHRAN_TZ).strftime("%H:%M")
     prices = market.coin_prices_rial
@@ -228,7 +259,7 @@ def build_iran_gold_post(market: IranGoldMarket) -> str:
     for emoji, label, bubble_key, coin_key in bubble_to_coin:
         lines.append(
             f"{emoji} <b>{label}</b>　"
-            f"<code>{_fmt_toman(bubbles[bubble_key])}</code> تومان　"
+            f"<code>{_fmt_signed_toman(bubbles[bubble_key])}</code> تومان　"
             f"<code>{_bubble_pct(bubbles[bubble_key], prices[coin_key])}%</code>"
         )
 
