@@ -52,18 +52,77 @@ hardenTelegramBrowserFallback()
 
 const telegramWebApp = (window as any)?.Telegram?.WebApp
 
-const applyCustomerScheme = (scheme: 'light' | 'dark') => {
+type CustomerThemePreference = 'system' | 'light' | 'dark'
+type CustomerScheme = 'light' | 'dark'
+
+const THEME_PREFERENCE_KEY = 'kiani_theme_preference'
+
+const getThemePreference = (): CustomerThemePreference => {
+  const stored = localStorage.getItem(THEME_PREFERENCE_KEY)
+  return stored === 'light' || stored === 'dark' ? stored : 'system'
+}
+
+const getSystemScheme = (): CustomerScheme => {
+  // Preserve the previous Telegram-first behavior when the Mini App is actually
+  // running inside Telegram. In a normal browser, respect OS/browser theme.
+  if (telegramWebApp?.initData) {
+    return telegramWebApp.colorScheme === 'dark' ? 'dark' : 'light'
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light'
+}
+
+const applyCustomerScheme = (
+  scheme: CustomerScheme,
+  preference: CustomerThemePreference = getThemePreference(),
+) => {
   if (isAdminHost) return
 
   const background = scheme === 'dark' ? '#0F171C' : '#F4F6F7'
 
   rootElement.dataset.scheme = scheme
+  rootElement.dataset.themePreference = preference
   document.documentElement.style.backgroundColor = background
   document.body.style.backgroundColor = background
 
   telegramWebApp?.setHeaderColor?.(background)
   telegramWebApp?.setBackgroundColor?.(background)
+
+  window.dispatchEvent(
+    new CustomEvent('kiani-theme-applied', {
+      detail: { scheme, preference },
+    }),
+  )
 }
+
+const applyCustomerTheme = () => {
+  const preference = getThemePreference()
+  const scheme = preference === 'system' ? getSystemScheme() : preference
+  applyCustomerScheme(scheme, preference)
+}
+
+const setCustomerThemePreference = (preference: CustomerThemePreference) => {
+  if (preference === 'system') {
+    localStorage.removeItem(THEME_PREFERENCE_KEY)
+  } else {
+    localStorage.setItem(THEME_PREFERENCE_KEY, preference)
+  }
+
+  applyCustomerTheme()
+}
+
+window.addEventListener('kiani-theme-preference-change', (event: Event) => {
+  if (isAdminHost) return
+
+  const detail = (event as CustomEvent<{ preference?: CustomerThemePreference }>).detail
+  const preference = detail?.preference
+
+  if (preference === 'system' || preference === 'light' || preference === 'dark') {
+    setCustomerThemePreference(preference)
+  }
+})
 
 const syncCustomerViewport = () => {
   if (isAdminHost) return
@@ -88,28 +147,23 @@ const initializeCustomerChrome = () => {
   rootElement.setAttribute('dir', 'rtl')
   rootElement.setAttribute('lang', 'fa')
 
-  if (telegramWebApp) {
-    telegramWebApp.ready?.()
-    telegramWebApp.expand?.()
+  telegramWebApp?.ready?.()
+  telegramWebApp?.expand?.()
 
-    const syncTelegramScheme = () => {
-      applyCustomerScheme(
-        telegramWebApp.colorScheme === 'dark' ? 'dark' : 'light',
-      )
+  applyCustomerTheme()
+
+  // System changes only update the UI while the user has not manually chosen
+  // light or dark. A manual choice stays persisted across visits.
+  const syncSystemTheme = () => {
+    if (getThemePreference() === 'system') {
+      applyCustomerTheme()
     }
-
-    syncTelegramScheme()
-    telegramWebApp.onEvent?.('themeChanged', syncTelegramScheme)
-    return
   }
+
+  telegramWebApp?.onEvent?.('themeChanged', syncSystemTheme)
 
   const media = window.matchMedia('(prefers-color-scheme: dark)')
-  const syncBrowserScheme = () => {
-    applyCustomerScheme(media.matches ? 'dark' : 'light')
-  }
-
-  syncBrowserScheme()
-  media.addEventListener?.('change', syncBrowserScheme)
+  media.addEventListener?.('change', syncSystemTheme)
 }
 
 initializeCustomerChrome()
