@@ -34,12 +34,15 @@ class BankComparisonTests(unittest.TestCase):
         self.assertEqual(quotes[0].buy, Decimal("48.6900"))
         self.assertEqual(quotes[0].sell, Decimal("48.7000"))
 
-    def test_post_identifies_best_buy_and_sell_sides(self):
+    def test_post_is_compact_comparison_only(self):
         quotes = parse_comparison_html(SAMPLE)
         post = build_usd_comparison_post(quotes)
-        self.assertIn("کمترین نرخ فروش دلار: <b>Kapalıçarşı</b> — 48.7", post)
-        self.assertIn("بالاترین نرخ خرید دلار: <b>Kapalıçarşı</b> — 48.69", post)
-        self.assertIn("منبع مقایسه: kur.doviz.com", post)
+        self.assertIn("دلار امروز کجا بهتره؟", post)
+        self.assertIn("خرید از شما | فروش به شما", post)
+        self.assertIn("• Kapalıçarşı: <b>48.69</b> | <b>48.7</b>", post)
+        self.assertNotIn("کمترین نرخ فروش", post)
+        self.assertNotIn("بالاترین نرخ خرید", post)
+        self.assertNotIn("منبع مقایسه", post)
 
     def test_missing_bank_fails_closed(self):
         broken = SAMPLE.replace(
