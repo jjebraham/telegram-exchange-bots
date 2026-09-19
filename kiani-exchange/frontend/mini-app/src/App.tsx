@@ -154,7 +154,7 @@ function RateLoadingDialog({
   onRetry,
 }: {
   error: boolean;
-  onRetry: () => void | Promise<void>;
+  onRetry: () => unknown;
 }) {
   const [elapsed, setElapsed] = useState(0);
 
