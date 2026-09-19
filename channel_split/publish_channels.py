@@ -29,6 +29,9 @@ from bank_compare import (
     fetch_eur_comparison,
     fetch_usd_comparison,
 )
+from gold_prices import build_turkish_gold_post, fetch_turkish_gold_quotes
+from iran_gold import build_iran_gold_post, fetch_iran_gold_market
+from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from market_history import (
     DEFAULT_HISTORY_DB,
     build_alanchande_daily_change_post,
@@ -281,6 +284,10 @@ def main() -> int:
             "alanchande-converter",
             "alanchande-snapshot",
             "alanchande-daily-change",
+            "alanchande-turkey-gold",
+            "alanchande-iran-gold",
+            "alanchande-usdt-exchanges",
+            "alanchande-markets",
             "kiani-rates",
             "kiani-try",
             "kiani-examples",
@@ -309,6 +316,9 @@ def main() -> int:
     rates_cache: dict[str, Decimal] | None = None
     usd_quotes_cache: list[Any] | None = None
     eur_quotes_cache: list[Any] | None = None
+    turkey_gold_cache: list[Any] | None = None
+    iran_gold_cache: Any | None = None
+    iran_usdt_cache: list[Any] | None = None
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -327,6 +337,24 @@ def main() -> int:
         if eur_quotes_cache is None:
             eur_quotes_cache = fetch_eur_comparison()
         return eur_quotes_cache
+
+    def get_turkey_gold() -> list[Any]:
+        nonlocal turkey_gold_cache
+        if turkey_gold_cache is None:
+            turkey_gold_cache = fetch_turkish_gold_quotes()
+        return turkey_gold_cache
+
+    def get_iran_gold() -> Any:
+        nonlocal iran_gold_cache
+        if iran_gold_cache is None:
+            iran_gold_cache = fetch_iran_gold_market()
+        return iran_gold_cache
+
+    def get_iran_usdt() -> list[Any]:
+        nonlocal iran_usdt_cache
+        if iran_usdt_cache is None:
+            iran_usdt_cache = fetch_usdt_exchange_quotes()
+        return iran_usdt_cache
 
     def current_history_snapshot():
         # AlanChande history intentionally depends only on neutral market feeds.
@@ -372,6 +400,15 @@ def main() -> int:
         current = current_history_snapshot()
         stored = load_day(history_db, current.local_date)
         add_alanchande(build_alanchande_daily_change_post(stored, current))
+
+    if args.post in {"alanchande-turkey-gold", "alanchande-markets"}:
+        add_alanchande(build_turkish_gold_post(get_turkey_gold()))
+
+    if args.post in {"alanchande-iran-gold", "alanchande-markets"}:
+        add_alanchande(build_iran_gold_post(get_iran_gold()))
+
+    if args.post in {"alanchande-usdt-exchanges", "alanchande-markets"}:
+        add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
 
     if args.post in {"kiani-rates", "all"}:
         add_kiani(build_kiani_rate_post(get_rates()))
