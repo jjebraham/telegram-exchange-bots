@@ -115,6 +115,7 @@ export default function SecureAdminPanel() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
   const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null)
   const [newPassword, setNewPassword] = useState('')
+  const [resetPasswordError, setResetPasswordError] = useState('')
   const [statusRef, setStatusRef] = useState('')
   const [statusValue, setStatusValue] = useState('Under Review')
   const [receiptPhotoUrl, setReceiptPhotoUrl] = useState('')
@@ -137,6 +138,7 @@ export default function SecureAdminPanel() {
     setSelectedUser(null)
     setResetPasswordUser(null)
     setNewPassword('')
+    setResetPasswordError('')
   }
 
   useEffect(() => {
@@ -279,9 +281,14 @@ export default function SecureAdminPanel() {
 
   const resetUserPassword = async (userId: number) => {
     if (!newPassword) {
-      setMessage('رمز جدید را در کادر پایین جدول وارد کنید.')
+      setResetPasswordError('رمز جدید را وارد کنید.')
       return
     }
+    if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setResetPasswordError('رمز باید حداقل ۸ کاراکتر و شامل حروف انگلیسی و عدد باشد.')
+      return
+    }
+    setResetPasswordError('')
     try {
       await adminJson(`/admin/users/${userId}/reset-password`, {
         method: 'POST',
@@ -290,10 +297,11 @@ export default function SecureAdminPanel() {
       })
       setNewPassword('')
       setResetPasswordUser(null)
+      setResetPasswordError('')
       setMessage('رمز کاربر تغییر کرد.')
     } catch (error) {
       console.error(error)
-      setMessage('تغییر رمز انجام نشد. رمز باید حداقل ۸ کاراکتر و شامل حروف و عدد باشد.')
+      setResetPasswordError('تغییر رمز انجام نشد. لطفاً دوباره تلاش کنید.')
     }
   }
 
@@ -503,7 +511,7 @@ export default function SecureAdminPanel() {
                       <td>{user.verification_level}</td>
                       <td className="space-x-1 space-x-reverse whitespace-nowrap">
                         <button onClick={() => void viewUser(user.id)} className="rounded bg-blue-900 px-2 py-1 text-blue-200">View</button>
-                        {roleCanWrite(role) && <button onClick={() => { setResetPasswordUser(user); setNewPassword('') }} className="rounded bg-orange-900 px-2 py-1 text-orange-200">Reset pass</button>}
+                        {roleCanWrite(role) && <button onClick={() => { setResetPasswordUser(user); setNewPassword(''); setResetPasswordError('') }} className="rounded bg-orange-900 px-2 py-1 text-orange-200">Reset pass</button>}
                         {role === 'admin' && <button onClick={() => void deleteUser(user)} className="rounded bg-red-950 px-2 py-1 text-red-300">Delete</button>}
                       </td>
                     </tr>
@@ -634,6 +642,12 @@ export default function SecureAdminPanel() {
               className="w-full rounded-lg border border-gray-700 bg-gray-950 p-3"
               autoFocus
             />
+
+            {resetPasswordError && (
+              <div className="mt-3 rounded-lg bg-red-950/60 p-3 text-sm text-red-300">
+                {resetPasswordError}
+              </div>
+            )}
 
             <div className="mt-4 flex gap-2">
               <button
