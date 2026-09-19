@@ -414,7 +414,7 @@ function App() {
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-700 to-purple-700 text-white p-4 shadow-lg">
         <div className="flex justify-between items-center">
-          <h1 className="text-xl font-bold">صرافی کیانی</h1>
+          <div className="ke-main-brand"><h1 className="text-xl font-bold">صرافی کیانی</h1><span>OTC</span></div>
           {user ? (
             <div className="flex items-center gap-3">
               <span className="text-sm">{user.first_name}</span>
@@ -494,7 +494,7 @@ function App() {
           />
           <NavButton
             label={user ? 'پروفایل' : 'ورود'}
-            icon={user ? '👤' : '🔑'}
+            icon={user ? '◎' : '⚿'}
             active={activeTab === 'login' || activeTab === 'register'}
             onClick={() => setActiveTab(user ? 'dashboard' : 'login')}
           />
@@ -530,7 +530,86 @@ function NavButton({
   );
 }
 
-// ─── PART 1 & 2: Dashboard Page ─────────────────────────────────────────────
+// ─── PART 1 & 2: Market Dashboard ───────────────────────────────────────────
+
+type MarketRateSlabProps = {
+  title: string;
+  code: string;
+  buy: number;
+  sell: number;
+  delta: number;
+  changedBuy: boolean;
+  changedSell: boolean;
+};
+
+function MarketRateSlab({
+  title,
+  code,
+  buy,
+  sell,
+  delta,
+  changedBuy,
+  changedSell,
+}: MarketRateSlabProps) {
+  const direction =
+    Math.abs(delta) < 0.001 ? 'flat' : delta > 0 ? 'up' : 'down';
+
+  return (
+    <section className="ke-market-slab">
+      <div className="ke-market-slab-head">
+        <div className="ke-market-name">
+          <strong>{title}</strong>
+          <span>{code}</span>
+        </div>
+
+        <div className={`ke-market-trend ${direction}`}>
+          <span aria-hidden="true">
+            {direction === 'up' ? '▲' : direction === 'down' ? '▼' : '—'}
+          </span>
+          <span>
+            {direction === 'flat'
+              ? 'بدون تغییر'
+              : `${Math.abs(delta).toLocaleString('fa-IR', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}٪`}
+          </span>
+        </div>
+      </div>
+
+      <div className="ke-market-sides">
+        <div className="ke-market-side buy">
+          <div className="ke-market-side-label">شما می‌خرید</div>
+          <div className="ke-market-price">
+            <span className={`ke-market-number ${changedBuy ? 'is-changed' : ''}`}>
+              {safeLocale(buy)}
+            </span>
+            <span className="ke-market-unit">تومان</span>
+          </div>
+        </div>
+
+        <div className="ke-market-divider" />
+
+        <div className="ke-market-side sell">
+          <div className="ke-market-side-label">شما می‌فروشید</div>
+          <div className="ke-market-price">
+            <span className={`ke-market-number ${changedSell ? 'is-changed' : ''}`}>
+              {safeLocale(sell)}
+            </span>
+            <span className="ke-market-unit">تومان</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="ke-market-spread">
+        <span>اختلاف خرید و فروش</span>
+        <span>
+          <strong>{safeLocale(Math.abs(buy - sell))}</strong> تومان
+        </span>
+      </div>
+    </section>
+  );
+}
 
 function DashboardPage({
   rates,
@@ -541,79 +620,296 @@ function DashboardPage({
   rates: Rates;
   loading: boolean;
   onExchangeClick: (type: ExchangeType) => void;
-  onRefresh: () => void;
+  onRefresh: () => Promise<void>;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(0);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [refreshDone, setRefreshDone] = useState(false);
+  const [deltas, setDeltas] = useState({ usdt: 0, try: 0 });
+  const [changed, setChanged] = useState<Set<string>>(new Set());
+  const loadStartedAt = useRef(Date.now());
+  const previousRates = useRef<Rates | null>(null);
+  const changeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const doneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+
+    return () => {
+      window.clearInterval(timer);
+      if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
+      if (doneTimerRef.current) clearTimeout(doneTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      loading ||
+      !rates.buy_lira ||
+      !rates.sell_lira ||
+      !rates.buy_usdt ||
+      !rates.sell_usdt
+    ) {
+      return;
+    }
+
+    const before = previousRates.current;
+    const moved = new Set<string>();
+
+    if (before) {
+      const usdtDelta = before.buy_usdt
+        ? ((rates.buy_usdt - before.buy_usdt) / before.buy_usdt) * 100
+        : 0;
+      const tryDelta = before.buy_lira
+        ? ((rates.buy_lira - before.buy_lira) / before.buy_lira) * 100
+        : 0;
+
+      setDeltas({ usdt: usdtDelta, try: tryDelta });
+
+      if (rates.buy_usdt !== before.buy_usdt) moved.add('usdt-buy');
+      if (rates.sell_usdt !== before.sell_usdt) moved.add('usdt-sell');
+      if (rates.buy_lira !== before.buy_lira) moved.add('try-buy');
+      if (rates.sell_lira !== before.sell_lira) moved.add('try-sell');
+    }
+
+    previousRates.current = { ...rates };
+    setChanged(moved);
+    setLastUpdatedAt(Date.now());
+
+    if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
+    changeTimerRef.current = setTimeout(() => setChanged(new Set()), 1100);
+  }, [
+    loading,
+    rates.buy_lira,
+    rates.sell_lira,
+    rates.buy_usdt,
+    rates.sell_usdt,
+    rates.usdt_to_lira,
+    rates.lira_to_usdt,
+    rates.foreign_payment,
+  ]);
+
+  const refreshRates = async () => {
+    if (manualRefreshing || loading) return;
+
+    setManualRefreshing(true);
+    setRefreshDone(false);
+
+    try {
+      await onRefresh();
+      setLastUpdatedAt(Date.now());
+      setRefreshDone(true);
+
+      if (doneTimerRef.current) clearTimeout(doneTimerRef.current);
+      doneTimerRef.current = setTimeout(() => setRefreshDone(false), 1800);
+    } finally {
+      setManualRefreshing(false);
+    }
+  };
+
+  const ageSeconds = lastUpdatedAt
+    ? Math.max(0, Math.floor((now - lastUpdatedAt) / 1000))
+    : 0;
+  const isStale = lastUpdatedAt > 0 && ageSeconds > 120;
+  const ageText =
+    ageSeconds < 5
+      ? 'هم‌اکنون'
+      : ageSeconds < 60
+        ? `${ageSeconds.toLocaleString('fa-IR')} ثانیه پیش`
+        : `${Math.floor(ageSeconds / 60).toLocaleString('fa-IR')} دقیقه پیش`;
+
+  // Production currently refreshes every ten minutes. Keep that cadence;
+  // the ring simply makes the existing schedule visible.
+  const autoRefreshSeconds = 600;
+  const autoLeft = Math.max(0, autoRefreshSeconds - ageSeconds);
+  const autoProgress = Math.min(1, ageSeconds / autoRefreshSeconds);
+
+  const loadingElapsed = Math.max(
+    0,
+    Math.floor((now - loadStartedAt.current) / 1000),
+  );
+  const loadProgress = Math.min(0.94, 1 - Math.exp(-loadingElapsed / 5));
+  const waitStage =
+    loadingElapsed >= 13
+      ? {
+          title: 'نرخ‌ها در حال آماده‌سازی است',
+          body: 'شبکه کمی کند است، اما درخواست شما هنوز فعال است.',
+        }
+      : loadingElapsed >= 7
+        ? {
+            title: 'چند لحظه دیگر',
+            body: 'اتصال برقرار است و داده‌ها در حال رسیدن‌اند.',
+          }
+        : loadingElapsed >= 3
+          ? {
+              title: 'دریافت نرخ لحظه‌ای بازار',
+              body: 'نرخ تتر و لیر از منابع بازار خوانده می‌شود.',
+            }
+          : {
+              title: 'در حال اتصال به سرور',
+              body: 'ارتباط با سرور صرافی در حال برقراری است.',
+            };
+
   return (
-    <div>
-      {/* Rates Section */}
-      <div className="p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-gray-800">نرخ لحظه‌ای</h2>
-          <button
-            onClick={onRefresh}
-            className="text-sm text-blue-600 bg-blue-50 px-3 py-1 rounded-full"
-          >
-            بروزرسانی
-          </button>
+    <div className="ke-market-home">
+      <div className="ke-market-toolbar">
+        <div>
+          <div className="ke-market-title-row">
+            <h2>بازار</h2>
+            <span className="ke-market-live-badge">OTC</span>
+          </div>
+
+          <div className={`ke-market-freshness ${isStale ? 'is-stale' : ''}`}>
+            <span className="ke-fresh-dot" />
+            <span>
+              {isStale
+                ? 'نرخ بیش از دو دقیقه قدیمی است'
+                : `آخرین نرخ ${ageText}`}
+            </span>
+            {!isStale && lastUpdatedAt > 0 && (
+              <span>
+                · بروزرسانی خودکار تا {autoLeft.toLocaleString('fa-IR')} ثانیه
+              </span>
+            )}
+          </div>
         </div>
 
-        <RateBox label="نرخ خرید لیر از ما" rate={rates.buy_lira} loading={loading} />
-        <RateBox label="نرخ فروش لیر به ما" rate={rates.sell_lira} loading={loading} />
-        <RateBox label="نرخ خرید تتر از ما" rate={rates.buy_usdt} loading={loading} />
-        <RateBox label="نرخ فروش تتر به ما" rate={rates.sell_usdt} loading={loading} />
-        <RateBox label="تبدیل تتر به لیر" rate={rates.usdt_to_lira} loading={loading} />
-        <RateBox label="تبدیل لیر به تتر" rate={rates.lira_to_usdt} loading={loading} />
-        <RateBox
-          label="نرخ دلار خرید از سایت‌های خارجی"
-          rate={rates.foreign_payment}
-          loading={loading}
-        />
+        <button
+          type="button"
+          className={`ke-market-refresh ${manualRefreshing ? 'is-loading' : ''} ${refreshDone ? 'is-done' : ''}`}
+          onClick={() => void refreshRates()}
+          disabled={manualRefreshing || loading}
+          aria-busy={manualRefreshing}
+        >
+          <span
+            className="ke-refresh-ring"
+            style={{
+              background: `conic-gradient(var(--ke-brass) ${autoProgress * 360}deg, var(--ke-line-soft) 0deg)`,
+            }}
+            aria-hidden="true"
+          >
+            <span>{refreshDone ? '✓' : '↻'}</span>
+          </span>
+          <span>
+            {manualRefreshing
+              ? 'در حال بروزرسانی'
+              : refreshDone
+                ? 'بروز شد'
+                : 'بروزرسانی'}
+          </span>
+        </button>
       </div>
 
-      {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-4 p-4">
-        <ExchangeButton
-          label="خرید لیر"
-          icon="💰"
-          color="bg-gradient-to-br from-green-500 to-emerald-600"
-          onClick={onExchangeClick}
-          type="buy_lira"
-        />
-        <ExchangeButton
-          label="فروش لیر"
-          icon="💸"
-          color="bg-gradient-to-br from-red-500 to-pink-600"
-          onClick={onExchangeClick}
-          type="sell_lira"
-        />
-        <ExchangeButton
-          label="خرید تتر"
-          icon="🪙"
-          color="bg-gradient-to-br from-blue-500 to-indigo-600"
-          onClick={onExchangeClick}
-          type="buy_usdt"
-        />
-        <ExchangeButton
-          label="فروش تتر"
-          icon="💵"
-          color="bg-gradient-to-br from-orange-500 to-amber-600"
-          onClick={onExchangeClick}
-          type="sell_usdt"
-        />
-        <ExchangeButton
-          label="تبدیل تتر به لیر"
-          icon="🔄"
-          color="bg-gradient-to-br from-purple-500 to-violet-600"
-          onClick={onExchangeClick}
-          type="convert_usdt_to_lira"
-        />
-        <ExchangeButton
-          label="تبدیل لیر به تتر"
-          icon="🔁"
-          color="bg-gradient-to-br from-teal-500 to-cyan-600"
-          onClick={onExchangeClick}
-          type="convert_lira_to_usdt"
-        />
+      {loading && !rates.buy_lira ? (
+        <>
+          <div className="ke-market-skeletons" aria-hidden="true">
+            <div className="ke-market-skeleton" />
+            <div className="ke-market-skeleton" />
+            <div className="ke-market-skeleton strip" />
+          </div>
+
+          <div
+            className="ke-rate-wait-scrim"
+            role="dialog"
+            aria-live="polite"
+            aria-label="در حال دریافت نرخ‌ها"
+          >
+            <div className="ke-rate-wait">
+              <div
+                className="ke-rate-progress"
+                style={{
+                  background: `conic-gradient(var(--ke-brass) ${loadProgress * 360}deg, var(--ke-line-soft) 0deg)`,
+                }}
+              >
+                <div className="ke-rate-progress-inner">
+                  {loadingElapsed.toLocaleString('fa-IR')}″
+                </div>
+              </div>
+
+              <h3>{waitStage.title}</h3>
+              <p>{waitStage.body}</p>
+
+              {loadingElapsed >= 6 && (
+                <div className="ke-rate-hold">
+                  صفحه را نبندید، نرخ‌ها به‌زودی نمایش داده می‌شوند
+                </div>
+              )}
+
+              {loadingElapsed >= 25 && (
+                <button
+                  type="button"
+                  className="ke-rate-retry"
+                  onClick={() => void refreshRates()}
+                >
+                  تلاش دوباره
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <MarketRateSlab
+            title="تتر"
+            code="USDT"
+            buy={rates.buy_usdt}
+            sell={rates.sell_usdt}
+            delta={deltas.usdt}
+            changedBuy={changed.has('usdt-buy')}
+            changedSell={changed.has('usdt-sell')}
+          />
+
+          <MarketRateSlab
+            title="لیر"
+            code="TRY"
+            buy={rates.buy_lira}
+            sell={rates.sell_lira}
+            delta={deltas.try}
+            changedBuy={changed.has('try-buy')}
+            changedSell={changed.has('try-sell')}
+          />
+
+          <section className="ke-market-conversions">
+            <div className="ke-market-conversion-cell">
+              <span>تبدیل تتر به لیر</span>
+              <strong>{safeLocale(rates.usdt_to_lira)} لیر</strong>
+            </div>
+            <div className="ke-market-conversion-divider" />
+            <div className="ke-market-conversion-cell">
+              <span>تبدیل لیر به تتر</span>
+              <strong>{safeLocale(rates.lira_to_usdt)} لیر</strong>
+            </div>
+          </section>
+
+          <div className="ke-market-reference">
+            <span>دلار خرید از سایت‌های خارجی</span>
+            <strong>{safeLocale(rates.foreign_payment)} تومان</strong>
+          </div>
+        </>
+      )}
+
+      <h2 className="ke-trade-heading">معامله</h2>
+
+      <div className="ke-trade-tiles">
+        {[
+          { label: 'خرید تتر', icon: '₮', kind: 'buy', type: 'buy_usdt' as ExchangeType },
+          { label: 'فروش تتر', icon: '₮', kind: 'sell', type: 'sell_usdt' as ExchangeType },
+          { label: 'خرید لیر', icon: '₺', kind: 'buy', type: 'buy_lira' as ExchangeType },
+          { label: 'فروش لیر', icon: '₺', kind: 'sell', type: 'sell_lira' as ExchangeType },
+          { label: 'تبدیل تتر به لیر', icon: '⇄', kind: 'swap', type: 'convert_usdt_to_lira' as ExchangeType },
+          { label: 'تبدیل لیر به تتر', icon: '⇄', kind: 'swap', type: 'convert_lira_to_usdt' as ExchangeType },
+        ].map((action) => (
+          <button
+            key={action.type}
+            type="button"
+            className={`ke-trade-tile ${action.kind}`}
+            onClick={() => onExchangeClick(action.type)}
+          >
+            <span className="ke-trade-icon">{action.icon}</span>
+            <span>{action.label}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
