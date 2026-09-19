@@ -470,6 +470,18 @@ async def check_register_conflicts(req: RegisterCheckRequest):
     phone = _normalize_iran_phone(req.phone_number)
     national_id = _digits_only(req.national_id)
     conflict = _check_conflicts(phone, national_id)
+
+    if conflict:
+        _log_user_activity(
+            "register_precheck_conflict",
+            "miniapp",
+            {
+                "reason": conflict,
+                "national_id": _mask_national_id(national_id),
+            },
+            phone_number=_mask_phone(phone),
+        )
+
     return {
         "exists_phone": conflict == "already_registered_phone",
         "exists_national_id": conflict == "already_registered_national_id",
