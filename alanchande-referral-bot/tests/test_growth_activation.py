@@ -11,7 +11,7 @@ from referral_core import ReferralDB
 from telegram_bot.config import Settings
 from telegram_bot.growth import qualification_cutoff_text
 from telegram_bot.promo_handlers import _entry_text
-from telegram_bot.reminders import _qualification_soon_candidates
+from telegram_bot.reminders import _engagement_v2_candidates, _qualification_soon_candidates
 from telegram_bot.ui import final_join_cutoff_text, link_keyboard, render_home
 
 
@@ -80,6 +80,67 @@ class GrowthActivationTests(unittest.TestCase):
         self.assertIn("21:30", ui_text)
         self.assertIn("21:00", growth_text)
         self.assertIn("21:30", growth_text)
+
+    def test_engagement_v2_targets_only_existing_zero_open_users_once(self):
+        now = datetime(2026, 9, 19, 16, 18, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = ReferralDB(os.path.join(tmp, "engagement-v2.sqlite"))
+            db.init()
+            campaign = db.create_campaign(
+                "paeez1405",
+                "پاییز ۱۴۰۵",
+                now - timedelta(days=5),
+                now + timedelta(days=25),
+                "۲۱ میلیون تومان",
+                invites_per_point=2,
+                min_stay_hours=168,
+                max_points=20,
+                num_winners=5,
+            )
+            db.activate_campaign(campaign.slug, now)
+            campaign = db.get_campaign(campaign.slug)
+
+            for uid in (10, 20, 30, 40):
+                db.upsert_user(uid, f"u{uid}", f"U{uid}", now=now - timedelta(days=1))
+                db.save_invite_link(
+                    campaign.id,
+                    uid,
+                    f"ref_{campaign.id}_{uid}",
+                    now - timedelta(hours=2),
+                )
+                db.track_funnel_event(
+                    campaign.id,
+                    uid,
+                    "entered_contest",
+                    "mainchannel_b",
+                    now - timedelta(hours=2),
+                )
+
+            db.track_funnel_event(
+                campaign.id,
+                20,
+                "referral_open_received",
+                "candidate:200",
+                now - timedelta(hours=1),
+            )
+            db.upsert_user(301, "u301", "U301", now=now)
+            db.create_pending_referral(
+                campaign, 301, 30, "u301", "U301", now=now - timedelta(minutes=30)
+            )
+            db.track_funnel_event(
+                campaign.id,
+                40,
+                "nudge_engagement_v2_sent",
+                "cohort_20260919",
+                now,
+            )
+
+            rows = _engagement_v2_candidates(
+                db,
+                campaign.id,
+                "2026-09-19T16:18:00+00:00",
+            )
+            self.assertEqual([row["user_id"] for row in rows], [10])
 
     def test_qualification_soon_nudge_is_once_per_referral(self):
         now = datetime(2026, 9, 18, 18, 0, tzinfo=timezone.utc)
