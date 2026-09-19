@@ -101,7 +101,14 @@ def _normalize_name(value: str) -> str:
 
 
 def _validate_password(password: str) -> None:
-    if len(password or "") < 8 or not PASSWORD_LETTER_RE.search(password) or not PASSWORD_DIGIT_RE.search(password):
+    value = password or ""
+    has_persian_chars = bool(re.search(r"[\u0600-\u06FF]", value))
+    if (
+        len(value) < 8
+        or not PASSWORD_LETTER_RE.search(value)
+        or not PASSWORD_DIGIT_RE.search(value)
+        or has_persian_chars
+    ):
         raise HTTPException(status_code=400, detail="weak_password")
 
 
@@ -283,6 +290,15 @@ async def _ehraz_post(
 ) -> dict:
     token = get_ehraz_token()
     if not token:
+        _write_ehraz_log(
+            phone_number,
+            national_id,
+            url,
+            payload,
+            {"configuration_error": "missing_credential", "route": "none", "attempt": 0},
+            False,
+            "ehraz_not_configured",
+        )
         raise HTTPException(status_code=503, detail="ehraz_not_configured")
 
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
@@ -461,6 +477,18 @@ async def check_register_conflicts(req: RegisterCheckRequest):
     phone = _normalize_iran_phone(req.phone_number)
     national_id = _digits_only(req.national_id)
     conflict = _check_conflicts(phone, national_id)
+
+    if conflict:
+        _log_user_activity(
+            "register_precheck_conflict",
+            "miniapp",
+            {
+                "reason": conflict,
+                "national_id": _mask_national_id(national_id),
+            },
+            phone_number=_mask_phone(phone),
+        )
+
     return {
         "exists_phone": conflict == "already_registered_phone",
         "exists_national_id": conflict == "already_registered_national_id",

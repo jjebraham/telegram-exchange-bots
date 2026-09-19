@@ -166,3 +166,75 @@
 [data-ke][data-scheme="dark"] nav.fixed.bottom-0 {
   box-shadow: 0 1px 0 var(--ke-line) !important;
 }
+
+
+/* Customer light / dark toggle.
+   The first visit follows Telegram/OS. After the user toggles it, the explicit
+   light/dark choice is persisted by main.tsx. */
+[data-ke] .ke-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-ke] .ke-theme-toggle {
+  min-height: 36px !important;
+  width: 48px;
+  padding: 0 !important;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ke-ink);
+  cursor: pointer;
+}
+
+[data-ke] .ke-theme-toggle-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  padding: 2px;
+  display: block;
+  border: 1px solid var(--ke-line);
+  border-radius: 999px;
+  background: var(--ke-surface-2);
+  transition: background-color var(--ke-slow), border-color var(--ke-slow);
+}
+
+[data-ke] .ke-theme-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 2px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ke-surface);
+  color: #A46C00;
+  box-shadow: var(--ke-sh);
+  font-size: 11px;
+  line-height: 1;
+  transition: transform var(--ke-slow), background-color var(--ke-slow), color var(--ke-slow);
+}
+
+[data-ke][data-scheme="dark"] .ke-theme-toggle-track {
+  background: color-mix(in srgb, var(--ke-accent-soft) 72%, var(--ke-surface-2));
+  border-color: color-mix(in srgb, var(--ke-accent) 30%, var(--ke-line));
+}
+
+[data-ke][data-scheme="dark"] .ke-theme-toggle-thumb {
+  transform: translateX(-18px);
+  background: var(--ke-ink);
+  color: var(--ke-bg);
+}
+
+@media (max-width: 380px) {
+  [data-ke] .ke-header-actions {
+    gap: 5px;
+  }
+
+  [data-ke] .ke-theme-toggle {
+    width: 44px;
+  }
+}

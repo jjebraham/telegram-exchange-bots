@@ -297,7 +297,8 @@ async def admin_activity_logs(identity: AdminIdentity = Depends(READ_ROLES)):
 async def admin_kyc_logs(identity: AdminIdentity = Depends(WRITE_ROLES)):
     with get_db() as conn:
         ehraz_rows = conn.execute(
-            """SELECT id, phone_number, national_id, endpoint, success, error_message, created_at
+            """SELECT id, phone_number, national_id, endpoint, success, error_message,
+                      response_payload, created_at
                FROM ehraz_logs ORDER BY id DESC LIMIT 500"""
         ).fetchall()
         sms_rows = conn.execute(
