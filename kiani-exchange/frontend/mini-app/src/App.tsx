@@ -326,6 +326,38 @@ function App() {
   });
   const [loading, setLoading] = useState(true);
   const [selectedExchange, setSelectedExchange] = useState<ExchangeType | null>(null);
+  const [customerScheme, setCustomerScheme] = useState<'light' | 'dark'>(() => {
+    if (typeof document === 'undefined') return 'light';
+    return document.getElementById('root')?.dataset.scheme === 'dark' ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    const syncTheme = (event: Event) => {
+      const detail = (event as CustomEvent<{ scheme?: 'light' | 'dark' }>).detail;
+      if (detail?.scheme === 'light' || detail?.scheme === 'dark') {
+        setCustomerScheme(detail.scheme);
+        return;
+      }
+
+      setCustomerScheme(
+        document.getElementById('root')?.dataset.scheme === 'dark' ? 'dark' : 'light'
+      );
+    };
+
+    syncTheme(new Event('initial-theme-sync'));
+    window.addEventListener('kiani-theme-applied', syncTheme);
+    return () => window.removeEventListener('kiani-theme-applied', syncTheme);
+  }, []);
+
+  const toggleCustomerTheme = () => {
+    const preference = customerScheme === 'dark' ? 'light' : 'dark';
+
+    window.dispatchEvent(
+      new CustomEvent('kiani-theme-preference-change', {
+        detail: { preference },
+      })
+    );
+  };
 
   // Check for existing session on mount
   useEffect(() => {
@@ -415,6 +447,20 @@ function App() {
       <header className="bg-gradient-to-r from-blue-700 to-purple-700 text-white p-4 shadow-lg">
         <div className="flex justify-between items-center">
           <div className="ke-main-brand"><h1 className="text-xl font-bold">صرافی کیانی</h1><span>OTC</span></div>
+          <div className="ke-header-actions">
+            <button
+              type="button"
+              className="ke-theme-toggle"
+              onClick={toggleCustomerTheme}
+              aria-label={customerScheme === 'dark' ? 'فعال کردن حالت روشن' : 'فعال کردن حالت تاریک'}
+              title={customerScheme === 'dark' ? 'حالت روشن' : 'حالت تاریک'}
+            >
+              <span className="ke-theme-toggle-track" aria-hidden="true">
+                <span className="ke-theme-toggle-thumb">
+                  {customerScheme === 'dark' ? '☾' : '☀'}
+                </span>
+              </span>
+            </button>
           {user ? (
             <div className="flex items-center gap-3">
               <span className="text-sm">{user.first_name}</span>
@@ -433,6 +479,7 @@ function App() {
               ورود / ثبت نام
             </button>
           )}
+          </div>
         </div>
       </header>
 
