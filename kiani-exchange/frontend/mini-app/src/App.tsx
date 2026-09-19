@@ -1757,9 +1757,16 @@ function RegistrationPage({
         return;
       }
 
-      if (checkData.exists_phone || checkData.exists_national_id) {
+      if (checkData.exists_phone) {
         failVerification(
-          'این اطلاعات قبلاً در سیستم ثبت شده‌اند. اگر حساب دارید، از صفحه ورود استفاده کنید.'
+          'این شماره موبایل قبلاً در سیستم ثبت شده است. اگر حساب دارید، از صفحه ورود یا بازیابی رمز استفاده کنید.'
+        );
+        return;
+      }
+
+      if (checkData.exists_national_id) {
+        failVerification(
+          'این کد ملی قبلاً در سیستم ثبت شده است. اگر حساب قبلی متعلق به شماست، از صفحه ورود یا بازیابی رمز استفاده کنید.'
         );
         return;
       }
@@ -1913,12 +1920,16 @@ function RegistrationPage({
         return;
       }
 
-      if (
-        errorData?.detail === 'already_registered_phone' ||
-        errorData?.detail === 'already_registered_national_id'
-      ) {
+      if (errorData?.detail === 'already_registered_phone') {
         failVerification(
-          'این اطلاعات قبلاً در سیستم ثبت شده‌اند. لطفاً وارد حساب کاربری خود شوید.'
+          'این شماره موبایل قبلاً در سیستم ثبت شده است. لطفاً وارد حساب کاربری خود شوید یا رمز را بازیابی کنید.'
+        );
+        return;
+      }
+
+      if (errorData?.detail === 'already_registered_national_id') {
+        failVerification(
+          'این کد ملی قبلاً در سیستم ثبت شده است. لطفاً از حساب قبلی خود استفاده کنید.'
         );
         return;
       }
