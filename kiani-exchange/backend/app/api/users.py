@@ -283,6 +283,15 @@ async def _ehraz_post(
 ) -> dict:
     token = get_ehraz_token()
     if not token:
+        _write_ehraz_log(
+            phone_number,
+            national_id,
+            url,
+            payload,
+            {"configuration_error": "missing_credential", "route": "none", "attempt": 0},
+            False,
+            "ehraz_not_configured",
+        )
         raise HTTPException(status_code=503, detail="ehraz_not_configured")
 
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
