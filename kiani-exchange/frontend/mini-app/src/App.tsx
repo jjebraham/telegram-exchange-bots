@@ -1562,10 +1562,18 @@ function RegistrationPage({
 
   const isValidPhone = (phone: string) => isValidIranPhone(phone);
 
+  const containsPersianPasswordChars = (password: string) =>
+    /[\u0600-\u06FF]/.test(password);
+
   const isValidPassword = (password: string) => {
     const hasLetter = /[a-zA-Z]/.test(password);
     const hasNumber = /\d/.test(password);
-    return hasLetter && hasNumber && password.length >= 8;
+    return (
+      hasLetter &&
+      hasNumber &&
+      password.length >= 8 &&
+      !containsPersianPasswordChars(password)
+    );
   };
 
   const validateForm = () => {
@@ -1594,8 +1602,10 @@ function RegistrationPage({
     if (!isValidPhone(formData.phoneNumber)) {
       newErrors.phoneNumber = 'لطفا شماره موبایل ایران به نام خودتان مطابق مثال وارد کنید 09121111111';
     }
-    if (!isValidPassword(formData.password)) {
-      newErrors.password = 'رمز عبور باید حداقل 8 کاراکتر و شامل حروف و اعداد باشد';
+    if (containsPersianPasswordChars(formData.password)) {
+      newErrors.password = 'رمز عبور با حروف فارسی وارد شده است. زبان کیبورد را روی EN بگذارید';
+    } else if (!isValidPassword(formData.password)) {
+      newErrors.password = 'رمز عبور باید حداقل 8 کاراکتر و شامل حروف انگلیسی و اعداد باشد';
     }
     if (formData.password !== formData.confirmPassword) {
       newErrors.confirmPassword = 'رمز عبور و تکرار آن یکسان نیستند';
@@ -1670,8 +1680,10 @@ function RegistrationPage({
         nextErrors.dateOfBirth = 'برای ثبت نام باید حداقل 18 سال داشته باشید';
       }
     }
-    if (field === 'password' && strValue && !isValidPassword(strValue)) {
-      nextErrors.password = 'رمز عبور باید حداقل 8 کاراکتر و شامل حروف و اعداد باشد';
+    if (field === 'password' && strValue && containsPersianPasswordChars(strValue)) {
+      nextErrors.password = 'رمز عبور با حروف فارسی وارد شده است. زبان کیبورد را روی EN بگذارید';
+    } else if (field === 'password' && strValue && !isValidPassword(strValue)) {
+      nextErrors.password = 'رمز عبور باید حداقل 8 کاراکتر و شامل حروف انگلیسی و اعداد باشد';
     }
     if (field === 'confirmPassword' && strValue && strValue !== formData.password) {
       nextErrors.confirmPassword = 'رمز عبور و تکرار آن یکسان نیستند';
@@ -1766,7 +1778,7 @@ function RegistrationPage({
 
       if (checkData.exists_national_id) {
         failVerification(
-          'این کد ملی قبلاً در سیستم ثبت شده است. اگر حساب قبلی متعلق به شماست، از صفحه ورود یا بازیابی رمز استفاده کنید.'
+          'این کد ملی قبلاً با شماره موبایل دیگری در سیستم ثبت شده است. لطفاً از حساب قبلی خود وارد شوید یا در صورت نیاز با پشتیبانی تماس بگیرید.'
         );
         return;
       }
@@ -1929,7 +1941,7 @@ function RegistrationPage({
 
       if (errorData?.detail === 'already_registered_national_id') {
         failVerification(
-          'این کد ملی قبلاً در سیستم ثبت شده است. لطفاً از حساب قبلی خود استفاده کنید.'
+          'این کد ملی قبلاً با یک حساب کاربری دیگر ثبت شده است. لطفاً از حساب قبلی خود استفاده کنید یا با پشتیبانی تماس بگیرید.'
         );
         return;
       }
@@ -2217,11 +2229,27 @@ function RegistrationPage({
             <FormField
               label="رمز عبور"
               error={errors.password}
-              placeholder="حداقل 8 کاراکتر با حروف و اعداد"
+              placeholder="حداقل 8 کاراکتر با حروف انگلیسی و اعداد"
               value={formData.password}
               onChange={(v) => updateField('password', v)}
+              onBlur={(v) => validateSingleField('password', v)}
               type="password"
+              inputMode="text"
+              dir="ltr"
             />
+
+            <div
+              className={
+                containsPersianPasswordChars(formData.password)
+                  ? 'rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-6 text-red-700'
+                  : 'rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-800'
+              }
+              role={containsPersianPasswordChars(formData.password) ? 'alert' : 'note'}
+            >
+              {containsPersianPasswordChars(formData.password)
+                ? '⚠️ رمز را با حروف فارسی تایپ کرده‌اید. زبان کیبورد را روی EN بگذارید و رمز را دوباره وارد کنید.'
+                : '⌨️ توجه: برای جلوگیری از اشتباه هنگام ورود، قبل از تایپ رمز زبان کیبورد را روی EN بگذارید. رمز باید با حروف انگلیسی و اعداد باشد.'}
+            </div>
 
             {/* Confirm Password */}
             <FormField
@@ -2230,7 +2258,10 @@ function RegistrationPage({
               placeholder="رمز عبور را دوباره وارد کنید"
               value={formData.confirmPassword}
               onChange={(v) => updateField('confirmPassword', v)}
+              onBlur={(v) => validateSingleField('confirmPassword', v)}
               type="password"
+              inputMode="text"
+              dir="ltr"
             />
 
             {/* Terms and Conditions */}
