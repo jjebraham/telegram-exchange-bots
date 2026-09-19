@@ -10,6 +10,7 @@ import time
 import aiohttp
 import io
 from datetime import datetime
+from pathlib import Path
 import traceback
 
 from aiogram import Bot, Dispatcher, types, F
@@ -117,6 +118,24 @@ class AdminLogMiddleware:
 ###############################################################################
 def get_db_connection():
     conn = sqlite3.connect("users.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# Password recovery from Telegram must operate on the same user database that
+# miniapp.kiani.exchange uses. The bot's historical relative users.db can live
+# in a different working directory, which causes "already registered" in the
+# Mini App while /resetpassword says the phone does not exist.
+DEFAULT_MINIAPP_DB_PATH = (
+    Path(__file__).resolve().parent / "kiani-exchange" / "backend" / "users.db"
+)
+MINIAPP_DB_PATH = Path(
+    os.getenv("KIANI_MINIAPP_DB_PATH", str(DEFAULT_MINIAPP_DB_PATH))
+).expanduser().resolve()
+
+
+def get_miniapp_db_connection():
+    conn = sqlite3.connect(str(MINIAPP_DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -684,7 +703,7 @@ async def reset_password_contact(message: types.Message, state: FSMContext):
     if digits.startswith('0'):
         candidates.add('+98' + digits[1:])
 
-    with get_db_connection() as conn:
+    with get_miniapp_db_connection() as conn:
         c = conn.cursor()
         placeholders = ','.join(['?'] * len(candidates))
         row = c.execute(
@@ -736,7 +755,7 @@ async def reset_password_pass2(message: types.Message, state: FSMContext):
         return
 
     hashed = pwd_context.hash(pass1)
-    with get_db_connection() as conn:
+    with get_miniapp_db_connection() as conn:
         c = conn.cursor()
         try:
             c.execute("UPDATE users SET password_hash=? WHERE id=?", (hashed, data['reset_user_id']))
