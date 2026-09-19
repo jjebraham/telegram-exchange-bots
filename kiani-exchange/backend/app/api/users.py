@@ -101,7 +101,14 @@ def _normalize_name(value: str) -> str:
 
 
 def _validate_password(password: str) -> None:
-    if len(password or "") < 8 or not PASSWORD_LETTER_RE.search(password) or not PASSWORD_DIGIT_RE.search(password):
+    value = password or ""
+    has_persian_chars = bool(re.search(r"[\u0600-\u06FF]", value))
+    if (
+        len(value) < 8
+        or not PASSWORD_LETTER_RE.search(value)
+        or not PASSWORD_DIGIT_RE.search(value)
+        or has_persian_chars
+    ):
         raise HTTPException(status_code=400, detail="weak_password")
 
 
