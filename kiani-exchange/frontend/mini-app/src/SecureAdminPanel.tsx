@@ -113,6 +113,7 @@ export default function SecureAdminPanel() {
   const [rates, setRates] = useState<Record<string, number>>(RATE_DEFAULTS)
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null)
   const [newPassword, setNewPassword] = useState('')
   const [statusRef, setStatusRef] = useState('')
   const [statusValue, setStatusValue] = useState('Under Review')
@@ -134,6 +135,8 @@ export default function SecureAdminPanel() {
     setUsers([])
     setTransactions([])
     setSelectedUser(null)
+    setResetPasswordUser(null)
+    setNewPassword('')
   }
 
   useEffect(() => {
@@ -149,30 +152,72 @@ export default function SecureAdminPanel() {
     if (!getAdminToken()) return
     setLoading(true)
     setMessage('')
-    try {
-      const tasks: Promise<any>[] = [
-        adminJson('/admin/users'),
-        adminJson('/admin/transactions'),
-        adminJson('/admin/reports'),
-        adminJson('/admin/logs'),
-        adminJson('/admin/faqs'),
-        adminJson('/admin/rates'),
-      ]
-      if (roleCanWrite(getAdminRole())) tasks.push(adminJson('/admin/kyc-logs'))
-      const data = await Promise.all(tasks)
-      setUsers(data[0]?.users || [])
-      setTransactions(data[1]?.transactions || [])
-      setReport(data[2]?.report || {})
-      setLogs(data[3]?.logs || [])
-      setFaqs(data[4]?.faqs || [])
-      setRates({ ...RATE_DEFAULTS, ...(data[5]?.settings || {}) })
-      if (data[6]) setKycLogs(data[6])
-    } catch (error) {
-      console.error(error)
-      if (getAdminToken()) setMessage('بخشی از اطلاعات پنل دریافت نشد. دوباره تلاش کنید.')
-    } finally {
-      setLoading(false)
+
+    const jobs: Array<{
+      key: 'users' | 'transactions' | 'report' | 'logs' | 'faqs' | 'rates' | 'kyc'
+      label: string
+      request: Promise<any>
+    }> = [
+      { key: 'users', label: 'Users', request: adminJson('/admin/users') },
+      { key: 'transactions', label: 'Transactions', request: adminJson('/admin/transactions') },
+      { key: 'report', label: 'Dashboard', request: adminJson('/admin/reports') },
+      { key: 'logs', label: 'Audit Logs', request: adminJson('/admin/logs') },
+      { key: 'faqs', label: 'Messages / FAQ', request: adminJson('/admin/faqs') },
+      { key: 'rates', label: 'Rates', request: adminJson('/admin/rates') },
+    ]
+
+    if (roleCanWrite(getAdminRole())) {
+      jobs.push({ key: 'kyc', label: 'KYC Logs', request: adminJson('/admin/kyc-logs') })
     }
+
+    const results = await Promise.allSettled(jobs.map(job => job.request))
+    const failed: string[] = []
+
+    results.forEach((result, index) => {
+      const job = jobs[index]
+
+      if (result.status === 'rejected') {
+        console.error(`Admin panel load failed: ${job.label}`, result.reason)
+        failed.push(job.label)
+        return
+      }
+
+      const data = result.value || {}
+
+      switch (job.key) {
+        case 'users':
+          setUsers(data.users || [])
+          break
+        case 'transactions':
+          setTransactions(data.transactions || [])
+          break
+        case 'report':
+          setReport(data.report || {})
+          break
+        case 'logs':
+          setLogs(data.logs || [])
+          break
+        case 'faqs':
+          setFaqs(data.faqs || [])
+          break
+        case 'rates':
+          setRates({ ...RATE_DEFAULTS, ...(data.settings || {}) })
+          break
+        case 'kyc':
+          setKycLogs({
+            ehraz_logs: data.ehraz_logs || [],
+            sms_logs: data.sms_logs || [],
+            kyc_verification_logs: data.kyc_verification_logs || [],
+          })
+          break
+      }
+    })
+
+    if (failed.length > 0 && getAdminToken()) {
+      setMessage(`بعضی بخش‌های پنل بارگذاری نشد: ${failed.join('، ')}. سایر بخش‌ها همچنان قابل استفاده هستند.`)
+    }
+
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -186,6 +231,7 @@ export default function SecureAdminPanel() {
       const data = await adminLogin(username, password)
       setRole(data.role)
       setAdminUser(data.username)
+      setUsername('')
       setPassword('')
       setAuthenticated(true)
     } catch (error) {
@@ -243,6 +289,7 @@ export default function SecureAdminPanel() {
         body: JSON.stringify({ new_password: newPassword }),
       })
       setNewPassword('')
+      setResetPasswordUser(null)
       setMessage('رمز کاربر تغییر کرد.')
     } catch (error) {
       console.error(error)
@@ -430,6 +477,11 @@ export default function SecureAdminPanel() {
         {activeTab === 'users' && (
           <section className="space-y-4">
             <input
+              type="search"
+              name="kiani-admin-user-search"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder="جستجو نام، تلفن یا ID"
@@ -451,7 +503,7 @@ export default function SecureAdminPanel() {
                       <td>{user.verification_level}</td>
                       <td className="space-x-1 space-x-reverse whitespace-nowrap">
                         <button onClick={() => void viewUser(user.id)} className="rounded bg-blue-900 px-2 py-1 text-blue-200">View</button>
-                        {roleCanWrite(role) && <button onClick={() => void resetUserPassword(user.id)} className="rounded bg-orange-900 px-2 py-1 text-orange-200">Reset pass</button>}
+                        {roleCanWrite(role) && <button onClick={() => { setResetPasswordUser(user); setNewPassword('') }} className="rounded bg-orange-900 px-2 py-1 text-orange-200">Reset pass</button>}
                         {role === 'admin' && <button onClick={() => void deleteUser(user)} className="rounded bg-red-950 px-2 py-1 text-red-300">Delete</button>}
                       </td>
                     </tr>
@@ -459,15 +511,9 @@ export default function SecureAdminPanel() {
                 </tbody>
               </table>
             </div>
-            {roleCanWrite(role) && (
-              <input
-                type="password"
-                value={newPassword}
-                onChange={event => setNewPassword(event.target.value)}
-                placeholder="رمز جدید برای Reset pass"
-                className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-3"
-              />
-            )}
+            <p className="text-xs text-gray-500">
+              برای تغییر رمز هر کاربر، دکمه Reset pass همان ردیف را بزنید.
+            </p>
           </section>
         )}
 
@@ -543,6 +589,74 @@ export default function SecureAdminPanel() {
         {activeTab === 'logs' && <LogBox title="Admin audit trail" items={logs} />}
       </div>
 
+      {resetPasswordUser && (
+        <div
+          className="fixed inset-0 z-[115] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => {
+            setResetPasswordUser(null)
+            setNewPassword('')
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-5"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="font-bold">Reset password</h2>
+                <p className="mt-1 text-xs text-gray-400">
+                  #{resetPasswordUser.id} · {resetPasswordUser.first_name} {resetPasswordUser.last_name}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setResetPasswordUser(null)
+                  setNewPassword('')
+                }}
+                className="text-gray-400"
+              >
+                ×
+              </button>
+            </div>
+
+            <input
+              type="password"
+              name="kiani-new-user-password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={event => setNewPassword(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && newPassword) {
+                  void resetUserPassword(resetPasswordUser.id)
+                }
+              }}
+              placeholder="رمز جدید"
+              className="w-full rounded-lg border border-gray-700 bg-gray-950 p-3"
+              autoFocus
+            />
+
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => void resetUserPassword(resetPasswordUser.id)}
+                disabled={!newPassword}
+                className="rounded-lg bg-orange-700 px-4 py-2 font-bold text-white disabled:opacity-50"
+              >
+                ذخیره رمز جدید
+              </button>
+              <button
+                onClick={() => {
+                  setResetPasswordUser(null)
+                  setNewPassword('')
+                }}
+                className="rounded-lg bg-gray-800 px-4 py-2 text-gray-300"
+              >
+                انصراف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedUser && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4" onClick={() => setSelectedUser(null)}>
           <div className="w-full max-w-lg rounded-xl bg-gray-900 p-5" onClick={event => event.stopPropagation()}>
@@ -579,6 +693,11 @@ function LogBox({ title, items }: { title: string; items: any[] }) {
             {item.phone_number && <div>Phone: {item.phone_number}</div>}
             {item.national_id && <div>NID: {item.national_id}</div>}
             {item.details && <div className="break-all text-gray-300">{item.details}</div>}
+            {item.response_payload && (
+              <div className="mt-1 break-all rounded bg-gray-950 p-1.5 text-[11px] text-gray-400">
+                Trace: {String(item.response_payload)}
+              </div>
+            )}
             {item.error_message && <div className="text-red-300">{item.error_message}</div>}
           </div>
         ))}
