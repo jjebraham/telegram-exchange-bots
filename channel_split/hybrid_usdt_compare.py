@@ -284,17 +284,17 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     lines = [
         "💎 <b>قیمت تتر در صرافی‌های ایران</b>",
         "",
-        "🔴 SELL = فروش به شما　•　🟢 BUY = خرید از شما",
+        "🔴 SELL = فروش　•　🟢 BUY = خرید",
         "",
         "<pre>" + "\n".join(table_lines) + "</pre>",
         "",
-        f"🛒 کمترین قیمت خرید: <b>{_display_exchange(lowest_buy.exchange)}</b>　"
+        f"🛒 کمترین قیمت خرید: <b>{lowest_buy.exchange}</b> "
         f"<code>{_fmt_toman(lowest_buy.buy_toman)}</code> تومان",
     ]
 
     if highest_sell is not None:
         lines.append(
-            f"💰 بیشترین قیمت فروش: <b>{_display_exchange(highest_sell.exchange)}</b>　"
+            f"💰 بیشترین قیمت فروش: <b>{highest_sell.exchange}</b>　"
             f"<code>{_fmt_toman(highest_sell.sell_toman)}</code> تومان"
         )
 
