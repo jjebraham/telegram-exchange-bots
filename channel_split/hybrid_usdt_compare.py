@@ -39,6 +39,16 @@ TARGET_EXCHANGES = (
     "اکسیر",
 )
 
+DISPLAY_EXCHANGE_NAMES = {
+    "والکس": "Wallex",
+    "نوبیتکس": "Nobitex",
+    "رمزینکس": "Ramzinex",
+    "بیت پین": "Bitpin",
+    "آبان تتر": "AbanTether",
+    "تبدیل": "Tabdeal",
+    "اکسیر": "Exir",
+}
+
 
 @dataclass(frozen=True)
 class HybridUsdtQuote:
@@ -221,6 +231,21 @@ def _fmt_pct(value: Decimal | None) -> str:
     return f" {arrow} <code>{abs(rounded):.2f}%</code>"
 
 
+def _fmt_table_pct(value: Decimal | None) -> str:
+    if value is None:
+        return "—"
+    rounded = value.quantize(Decimal("0.01"))
+    if rounded > 0:
+        return f"+{rounded:.2f}%"
+    if rounded < 0:
+        return f"-{abs(rounded):.2f}%"
+    return "0.00%"
+
+
+def _display_exchange(exchange: str) -> str:
+    return DISPLAY_EXCHANGE_NAMES.get(exchange, exchange)
+
+
 def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     if not quotes:
         raise ValueError("No hybrid USDT quotes")
@@ -245,55 +270,41 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
         else None
     )
 
+    table_lines = [
+        f"{'EXCHANGE':<10} {'SELL':>7} {'BUY':>7} {'Δ24H':>6}",
+    ]
+    for quote in quotes:
+        table_lines.append(
+            f"{_display_exchange(quote.exchange):<10} "
+            f"{_fmt_toman(quote.buy_toman):>7} "
+            f"{_fmt_toman(quote.sell_toman):>7} "
+            f"{_fmt_table_pct(quote.change_pct):>6}"
+        )
+
     lines = [
         "💎 <b>قیمت تتر در صرافی‌های ایران</b>",
         "",
+        "🔴 SELL = فروش به شما　•　🟢 BUY = خرید از شما",
+        "",
+        "<pre>" + "\n".join(table_lines) + "</pre>",
+        "",
+        f"🛒 کمترین قیمت خرید: <b>{_display_exchange(lowest_buy.exchange)}</b>　"
+        f"<code>{_fmt_toman(lowest_buy.buy_toman)}</code> تومان",
     ]
 
-    for quote in quotes:
-        lines.extend(
-            [
-                f"<b>{quote.exchange}</b>",
-                f"🔴 فروش　<code>{_fmt_toman(quote.buy_toman)}</code>",
-                f"🟢 خرید　<code>{_fmt_toman(quote.sell_toman)}</code>",
-                _fmt_pct(quote.change_pct).strip(),
-                "",
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            f"🟢 میانگین خرید　<code>{_fmt_toman(buy_average)}</code> تومان",
-        ]
-    )
-    if sell_average is not None:
-        lines.append(
-            f"🔴 میانگین فروش　<code>{_fmt_toman(sell_average)}</code> تومان"
-        )
-
-    lines.extend(
-        [
-            "",
-            f"🏆 پایین‌ترین قیمت برای خرید: <b>{lowest_buy.exchange}</b>　"
-            f"<code>{_fmt_toman(lowest_buy.buy_toman)}</code> تومان",
-        ]
-    )
     if highest_sell is not None:
         lines.append(
-            f"🏆 بالاترین قیمت برای فروش: <b>{highest_sell.exchange}</b>　"
+            f"💰 بیشترین قیمت فروش: <b>{_display_exchange(highest_sell.exchange)}</b>　"
             f"<code>{_fmt_toman(highest_sell.sell_toman)}</code> تومان"
         )
 
     lines.extend(
         [
             "",
-            f"✅ صرافی‌های فعال: <b>{len(quotes)}/{len(TARGET_EXCHANGES)}</b>",
-            f"🌐 مستقیم: <b>{direct_count}</b> | 🧩 پشتیبان: <b>{fallback_count}</b>",
-            f"🕒 بروزرسانی: <code>{datetime.now(TEHRAN_TZ).strftime('%H:%M')}</code> تهران",
-            "",
+            f"✅ <b>{len(quotes)}/{len(TARGET_EXCHANGES)}</b>　"
+            f"🌐 مستقیم <b>{direct_count}</b>　🧩 پشتیبان <b>{fallback_count}</b>",
+            f"🕒 <code>{datetime.now(TEHRAN_TZ).strftime('%H:%M')}</code> تهران",
             "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
-
         ]
     )
     return "\n".join(lines)
