@@ -158,9 +158,6 @@ def _build_comparison_post(quotes: list[BankQuote], *, title: str, pair: str) ->
     if not quotes:
         raise ValueError("No bank quotes supplied")
 
-    cheapest_buy = min(quotes, key=lambda q: q.sell)
-    highest_sell = max(quotes, key=lambda q: q.buy)
-
     table_lines = [
         f"{'MARKET':<8} {'SELL':>8} {'BUY':>8}",
     ]
@@ -178,11 +175,6 @@ def _build_comparison_post(quotes: list[BankQuote], *, title: str, pair: str) ->
         "🔴 SELL = فروش　•　🟢 BUY = خرید",
         "",
         "<pre>" + "\n".join(table_lines) + "</pre>",
-        "",
-        f"🛒 کمترین قیمت خرید: <b>{cheapest_buy.name}</b>　"
-        f"<code>{_fmt(cheapest_buy.sell)}</code>",
-        f"💰 بیشترین قیمت فروش: <b>{highest_sell.name}</b>　"
-        f"<code>{_fmt(highest_sell.buy)}</code>",
         "",
         f"🕒 <code>{datetime.now(ISTANBUL_TZ).strftime('%H:%M')}</code> استانبول",
         "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
