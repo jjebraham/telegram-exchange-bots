@@ -37,12 +37,22 @@ class BankComparisonTests(unittest.TestCase):
     def test_post_is_compact_comparison_only(self):
         quotes = parse_comparison_html(SAMPLE)
         post = build_usd_comparison_post(quotes)
-        self.assertIn("دلار امروز کجا بهتره؟", post)
-        self.assertIn("خرید از شما | فروش به شما", post)
-        self.assertIn("• Kapalıçarşı: <b>48.69</b> | <b>48.7</b>", post)
-        self.assertNotIn("کمترین نرخ فروش", post)
-        self.assertNotIn("بالاترین نرخ خرید", post)
-        self.assertNotIn("منبع مقایسه", post)
+        self.assertIn("مقایسه نرخ دلار در ترکیه", post)
+        self.assertIn("USD/TRY", post)
+        self.assertIn("🔴 SELL = فروش　•　🟢 BUY = خرید", post)
+        self.assertIn("<pre>", post)
+        self.assertIn("MARKET", post)
+        self.assertIn("KAPALI", post)
+        self.assertIn("GARANTI", post)
+        self.assertIn("ISBANK", post)
+        self.assertIn("KUVEYT", post)
+        self.assertIn("ZIRAAT", post)
+        self.assertIn("48.7000", post)
+        self.assertIn("48.6900", post)
+        self.assertIn("کمترین قیمت خرید", post)
+        self.assertIn("بیشترین قیمت فروش", post)
+        self.assertIn("استانبول", post)
+        self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
 
     def test_missing_bank_fails_closed(self):
         broken = SAMPLE.replace(
