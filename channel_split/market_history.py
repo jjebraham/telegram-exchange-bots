@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -64,6 +64,25 @@ def build_snapshot(
         usd_sell=Decimal(str(usd.sell)),
         eur_buy=Decimal(str(eur.buy)),
         eur_sell=Decimal(str(eur.sell)),
+    )
+
+
+def _create_bank_fx_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bank_fx_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recorded_at_utc TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            market TEXT NOT NULL,
+            buy TEXT NOT NULL,
+            sell TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bank_fx_pair_time "
+        "ON bank_fx_snapshots(pair, recorded_at_utc, id)"
     )
 
 
@@ -120,6 +139,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path)
     _migrate_old_kiani_schema(connection)
     _create_table(connection)
+    _create_bank_fx_table(connection)
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_market_snapshots_local_date ON market_snapshots(local_date, id)"
     )
@@ -146,6 +166,91 @@ def record_snapshot(db_path: Path, snapshot: MarketSnapshot) -> int:
             ),
         )
         return int(cursor.lastrowid)
+
+
+def record_bank_fx_quotes(
+    db_path: Path,
+    pair: str,
+    quotes: list[Any],
+    *,
+    now: datetime | None = None,
+) -> str:
+    if not quotes:
+        raise ValueError("No bank FX quotes supplied")
+    local_now = now.astimezone(ISTANBUL_TZ) if now else datetime.now(ISTANBUL_TZ)
+    recorded_at_utc = local_now.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+    with _connect(db_path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO bank_fx_snapshots (
+                recorded_at_utc, pair, market, buy, sell
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    recorded_at_utc,
+                    pair,
+                    str(q.name),
+                    str(q.buy),
+                    str(q.sell),
+                )
+                for q in quotes
+            ],
+        )
+    return recorded_at_utc
+
+
+def load_bank_fx_near_24h(
+    db_path: Path,
+    pair: str,
+    *,
+    now: datetime | None = None,
+    min_age_hours: int = 18,
+    max_age_hours: int = 30,
+) -> dict[str, tuple[Decimal, Decimal]]:
+    if not db_path.exists():
+        return {}
+
+    local_now = now.astimezone(ISTANBUL_TZ) if now else datetime.now(ISTANBUL_TZ)
+    now_utc = local_now.astimezone(timezone.utc)
+
+    with _connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT recorded_at_utc, market, buy, sell
+            FROM bank_fx_snapshots
+            WHERE pair = ?
+            ORDER BY recorded_at_utc DESC, id ASC
+            """,
+            (pair,),
+        ).fetchall()
+
+    batches: dict[str, dict[str, tuple[Decimal, Decimal]]] = {}
+    for recorded_at_utc, market, buy, sell in rows:
+        timestamp = str(recorded_at_utc)
+        batches.setdefault(timestamp, {})[str(market)] = (
+            Decimal(str(buy)),
+            Decimal(str(sell)),
+        )
+
+    eligible: list[tuple[float, str]] = []
+    for timestamp in batches:
+        try:
+            recorded = datetime.fromisoformat(timestamp)
+        except ValueError:
+            continue
+        if recorded.tzinfo is None:
+            recorded = recorded.replace(tzinfo=timezone.utc)
+        age_hours = (now_utc - recorded.astimezone(timezone.utc)).total_seconds() / 3600
+        if min_age_hours <= age_hours <= max_age_hours:
+            eligible.append((abs(age_hours - 24), timestamp))
+
+    if not eligible:
+        return {}
+
+    _, selected = min(eligible, key=lambda item: item[0])
+    return batches[selected]
 
 
 def _row_to_snapshot(row: tuple[Any, ...]) -> MarketSnapshot:
