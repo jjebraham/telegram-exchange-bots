@@ -27,7 +27,7 @@ from ramzarz_usdt import RamzarzUsdtQuote, fetch_ramzarz_usdt_quotes
 
 logger = logging.getLogger(__name__)
 
-ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 TARGET_EXCHANGES = (
     "والکس",
@@ -198,7 +198,6 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     if not quotes:
         raise ValueError("No hybrid USDT quotes")
 
-    number_emojis = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣")
     direct_count = sum(1 for q in quotes if q.source == "direct")
     fallback_count = len(quotes) - direct_count
 
@@ -214,16 +213,17 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     lines = [
         "💎 <b>قیمت تتر در صرافی‌های ایران</b>",
         "",
-        "🏦 <b>صرافی</b>　🟢 <b>خرید شما</b> / 🔴 <b>فروش شما</b>",
-        "",
     ]
 
-    for idx, quote in enumerate(quotes):
-        lines.append(
-            f"{number_emojis[idx]} <b>{quote.exchange}</b>　"
-            f"<code>{_fmt_toman(quote.buy_toman)}</code> / "
-            f"<code>{_fmt_toman(quote.sell_toman)}</code>"
-            f"{_fmt_pct(quote.change_pct)}"
+    for quote in quotes:
+        lines.extend(
+            [
+                f"<b>{quote.exchange}</b>",
+                f"🔴 فروش　<code>{_fmt_toman(quote.buy_toman)}</code>",
+                f"🟢 خرید　<code>{_fmt_toman(quote.sell_toman)}</code>",
+                _fmt_pct(quote.change_pct).strip(),
+                "",
+            ]
         )
 
     lines.extend(
@@ -242,7 +242,10 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
             "",
             f"✅ صرافی‌های فعال: <b>{len(quotes)}/{len(TARGET_EXCHANGES)}</b>",
             f"🌐 مستقیم: <b>{direct_count}</b> | 🧩 پشتیبان: <b>{fallback_count}</b>",
-            f"🕒 بروزرسانی: <code>{datetime.now(ISTANBUL_TZ).strftime('%H:%M')}</code> استانبول",
+            f"🕒 بروزرسانی: <code>{datetime.now(TEHRAN_TZ).strftime('%H:%M')}</code> تهران",
+            "",
+            "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
+
         ]
     )
     return "\n".join(lines)
