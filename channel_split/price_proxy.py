@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """Shared outbound HTTP helper using the same proxy pool as Kiani rates.
 
-Configuration intentionally matches kiani-exchange/backend/app/price_cache.py:
-PRICE_PROXY_HOSTS, PRICE_PROXY_USERNAME, PRICE_PROXY_PASSWORD,
-PRICE_PROXY_MAX_RETRIES, RATE_HTTP_TIMEOUT_SECONDS.
+Configuration and network behavior intentionally match
+kiani-exchange/backend/app/price_cache.py:
 
-Unlike the backend module, values are read at request time because
-publish_channels.py loads channel_split/.env after importing modules.
+PRICE_PROXY_HOSTS
+PRICE_PROXY_USERNAME
+PRICE_PROXY_PASSWORD
+PRICE_PROXY_MAX_RETRIES
+RATE_HTTP_TIMEOUT_SECONDS
+
+Values are read at request time because publish_channels.py loads
+channel_split/.env after importing modules.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import os
 import random
 import re
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
-from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,7 @@ def _split_items(raw: str) -> list[str]:
 
 
 def _proxy_url(host: str, username: str = "", password: str = "") -> str:
+    """Build the authenticated proxy URL exactly like the Kiani backend."""
     host = host.strip()
     if host.startswith("http://") or host.startswith("https://"):
         parsed = urlsplit(host)
@@ -100,7 +104,7 @@ def _max_retries() -> int:
         return 2
 
 
-def _fetch_once(
+async def _fetch_once_aiohttp(
     url: str,
     *,
     headers: dict[str, str] | None = None,
@@ -109,17 +113,32 @@ def _fetch_once(
     timeout: float,
     proxy_url: str | None = None,
 ):
-    request = Request(url, data=data, headers=headers or {}, method=method)
+    """Use aiohttp exactly like kiani-exchange/backend/app/price_cache.py."""
+    try:
+        import aiohttp
+    except ImportError as exc:
+        raise RuntimeError(
+            "aiohttp_not_installed: run this publisher with a Python environment "
+            "that has aiohttp installed"
+        ) from exc
 
-    if not proxy_url:
-        return urlopen(request, timeout=timeout)
+    request_method = method or ("POST" if data is not None else "GET")
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
 
-    handler = ProxyHandler({"http": proxy_url, "https": proxy_url})
-    opener = build_opener(handler)
-    return opener.open(request, timeout=timeout)
+    async with aiohttp.ClientSession() as session:
+        async with session.request(
+            request_method,
+            url,
+            headers=headers,
+            data=data,
+            proxy=proxy_url,
+            timeout=client_timeout,
+        ) as response:
+            response.raise_for_status()
+            return await response.json(content_type=None)
 
 
-def fetch_json_with_price_proxy(
+async def _fetch_json_with_price_proxy_async(
     url: str,
     *,
     headers: dict[str, str] | None = None,
@@ -127,13 +146,6 @@ def fetch_json_with_price_proxy(
     method: str | None = None,
     timeout: float | None = None,
 ):
-    """Fetch JSON direct or through the configured Kiani price proxy pool.
-
-    Behavior mirrors the live Kiani backend:
-    - no PRICE_PROXY_HOSTS -> one direct request;
-    - configured proxy pool -> shuffle and retry proxies;
-    - proxy credentials stay separate from host list and are redacted in errors.
-    """
     timeout_value = timeout if timeout is not None else _timeout_seconds()
     hosts = _split_items(os.getenv("PRICE_PROXY_HOSTS", ""))
     username = os.getenv("PRICE_PROXY_USERNAME", "")
@@ -141,18 +153,17 @@ def fetch_json_with_price_proxy(
 
     if not hosts:
         try:
-            with _fetch_once(
+            return await _fetch_once_aiohttp(
                 url,
                 headers=headers,
                 data=data,
                 method=method,
                 timeout=timeout_value,
-            ) as response:
-                return json.load(response)
-        except HTTPError as exc:
-            raise RuntimeError(f"direct_http_{exc.code}") from exc
-        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"direct_fetch_failed:{_safe_error(exc)}") from exc
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"direct_fetch_failed:{_safe_error(exc)}"
+            ) from exc
 
     shuffled = hosts.copy()
     random.shuffle(shuffled)
@@ -163,15 +174,14 @@ def fetch_json_with_price_proxy(
         proxy_url = None
         try:
             proxy_url = _proxy_url(host, username, password)
-            with _fetch_once(
+            return await _fetch_once_aiohttp(
                 url,
                 headers=headers,
                 data=data,
                 method=method,
                 timeout=timeout_value,
                 proxy_url=proxy_url,
-            ) as response:
-                return json.load(response)
+            )
         except Exception as exc:
             last_error = exc
             logger.warning(
@@ -184,4 +194,32 @@ def fetch_json_with_price_proxy(
     raise RuntimeError(
         "all_price_proxy_attempts_failed:"
         + (type(last_error).__name__ if last_error else "unknown")
+    )
+
+
+def fetch_json_with_price_proxy(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+    method: str | None = None,
+    timeout: float | None = None,
+):
+    """Synchronous wrapper for the CLI around the Kiani aiohttp proxy flow."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _fetch_json_with_price_proxy_async(
+                url,
+                headers=headers,
+                data=data,
+                method=method,
+                timeout=timeout,
+            )
+        )
+
+    raise RuntimeError(
+        "fetch_json_with_price_proxy cannot be called from an active asyncio loop; "
+        "use _fetch_json_with_price_proxy_async instead"
     )
