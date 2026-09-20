@@ -32,6 +32,7 @@ from bank_compare import (
 from gold_prices import build_turkish_gold_post, fetch_turkish_gold_quotes
 from iran_gold import build_iran_gold_post, fetch_iran_gold_market
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
+from nobitex_usdt import build_nobitex_usdt_post, fetch_nobitex_usdt
 from market_history import (
     DEFAULT_HISTORY_DB,
     build_alanchande_daily_change_post,
@@ -287,6 +288,7 @@ def main() -> int:
             "alanchande-turkey-gold",
             "alanchande-iran-gold",
             "alanchande-usdt-exchanges",
+            "alanchande-usdt-nobitex",
             "alanchande-markets",
             "kiani-rates",
             "kiani-try",
@@ -319,6 +321,7 @@ def main() -> int:
     turkey_gold_cache: list[Any] | None = None
     iran_gold_cache: Any | None = None
     iran_usdt_cache: list[Any] | None = None
+    nobitex_usdt_cache: Any | None = None
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -355,6 +358,12 @@ def main() -> int:
         if iran_usdt_cache is None:
             iran_usdt_cache = fetch_usdt_exchange_quotes()
         return iran_usdt_cache
+
+    def get_nobitex_usdt() -> Any:
+        nonlocal nobitex_usdt_cache
+        if nobitex_usdt_cache is None:
+            nobitex_usdt_cache = fetch_nobitex_usdt()
+        return nobitex_usdt_cache
 
     def current_history_snapshot():
         # AlanChande history intentionally depends only on neutral market feeds.
@@ -409,6 +418,9 @@ def main() -> int:
 
     if args.post in {"alanchande-usdt-exchanges", "alanchande-markets"}:
         add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
+
+    if args.post == "alanchande-usdt-nobitex":
+        add_alanchande(build_nobitex_usdt_post(get_nobitex_usdt()))
 
     if args.post in {"kiani-rates", "all"}:
         add_kiani(build_kiani_rate_post(get_rates()))
