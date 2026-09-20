@@ -3,12 +3,11 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+
+from price_proxy import fetch_json_with_price_proxy
 
 NOBITEX_STATS_URL = "https://apiv2.nobitex.ir/market/stats"
 
@@ -83,24 +82,16 @@ def parse_nobitex_usdt_stats(payload: dict) -> NobitexUsdtQuote:
     )
 
 
-def fetch_nobitex_usdt(timeout: int = 20) -> NobitexUsdtQuote:
+def fetch_nobitex_usdt(timeout: float | None = None) -> NobitexUsdtQuote:
     query = urlencode({"srcCurrency": "usdt", "dstCurrency": "rls"})
-    request = Request(
+    payload = fetch_json_with_price_proxy(
         f"{NOBITEX_STATS_URL}?{query}",
         headers={
             "Accept": "application/json",
             "User-Agent": "AlanChande-DirectMarket/1.0",
         },
+        timeout=timeout,
     )
-
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
-        raise RuntimeError(f"Nobitex returned HTTP {exc.code}") from exc
-    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Could not load Nobitex market stats: {exc}") from exc
-
     return parse_nobitex_usdt_stats(payload)
 
 
