@@ -10,7 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-NOBITEX_STATS_URL = "https://api.nobitex.ir/market/stats"
+NOBITEX_STATS_URL = "https://apiv2.nobitex.ir/market/stats"
 
 
 @dataclass(frozen=True)
