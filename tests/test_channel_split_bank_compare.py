@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
-from bank_compare import build_usd_comparison_post, parse_comparison_html  # noqa: E402
+from bank_compare import BankQuote, build_usd_comparison_post, parse_comparison_html  # noqa: E402
 
 
 SAMPLE = """
@@ -42,6 +42,7 @@ class BankComparisonTests(unittest.TestCase):
         self.assertIn("🔴 SELL = فروش　•　🟢 BUY = خرید", post)
         self.assertIn("<pre>", post)
         self.assertIn("MARKET", post)
+        self.assertIn("Δ24H", post)
         self.assertIn("KAPALI", post)
         self.assertIn("GARANTI", post)
         self.assertIn("ISBANK", post)
@@ -49,10 +50,23 @@ class BankComparisonTests(unittest.TestCase):
         self.assertIn("ZIRAAT", post)
         self.assertIn("48.7000", post)
         self.assertIn("48.6900", post)
+        self.assertIn("—", post)
         self.assertNotIn("کمترین قیمت خرید", post)
         self.assertNotIn("بیشترین قیمت فروش", post)
         self.assertIn("استانبول", post)
         self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
+
+    def test_24h_change_uses_midpoint(self):
+        current = [
+            BankQuote("Kapalıçarşı", Decimal("49.0000"), Decimal("49.2000")),
+        ]
+        previous = {
+            "Kapalıçarşı": (Decimal("48.0000"), Decimal("48.2000")),
+        }
+
+        post = build_usd_comparison_post(current, previous)
+        # Previous midpoint 48.1 -> current midpoint 49.1 = +2.079...%
+        self.assertIn("+2.08%", post)
 
     def test_missing_bank_fails_closed(self):
         broken = SAMPLE.replace(
