@@ -223,3 +223,74 @@ def fetch_json_with_price_proxy(
         "fetch_json_with_price_proxy cannot be called from an active asyncio loop; "
         "use _fetch_json_with_price_proxy_async instead"
     )
+
+
+async def _fetch_json_direct_then_price_proxy_async(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+    method: str | None = None,
+    timeout: float | None = None,
+):
+    """Try direct first, then fall back to the configured Kiani proxy pool.
+
+    This mirrors the live Kiani backend's BTCTurk pattern.
+    """
+    timeout_value = timeout if timeout is not None else _timeout_seconds()
+
+    try:
+        return await _fetch_once_aiohttp(
+            url,
+            headers=headers,
+            data=data,
+            method=method,
+            timeout=timeout_value,
+        )
+    except Exception as direct_exc:
+        logger.warning(
+            "Direct price fetch failed, trying proxy pool: %s",
+            _safe_error(direct_exc),
+        )
+
+    hosts = _split_items(os.getenv("PRICE_PROXY_HOSTS", ""))
+    if not hosts:
+        raise RuntimeError(
+            "direct_fetch_failed_and_no_proxy_pool"
+        ) from direct_exc
+
+    return await _fetch_json_with_price_proxy_async(
+        url,
+        headers=headers,
+        data=data,
+        method=method,
+        timeout=timeout_value,
+    )
+
+
+def fetch_json_direct_then_price_proxy(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+    method: str | None = None,
+    timeout: float | None = None,
+):
+    """Synchronous CLI wrapper: direct first, then PRICE_PROXY_* fallback."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _fetch_json_direct_then_price_proxy_async(
+                url,
+                headers=headers,
+                data=data,
+                method=method,
+                timeout=timeout,
+            )
+        )
+
+    raise RuntimeError(
+        "fetch_json_direct_then_price_proxy cannot be called from an active asyncio loop; "
+        "use _fetch_json_direct_then_price_proxy_async instead"
+    )
