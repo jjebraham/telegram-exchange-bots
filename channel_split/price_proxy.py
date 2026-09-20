@@ -239,6 +239,7 @@ async def _fetch_json_direct_then_price_proxy_async(
     """
     timeout_value = timeout if timeout is not None else _timeout_seconds()
 
+    direct_error: Exception | None = None
     try:
         return await _fetch_once_aiohttp(
             url,
@@ -247,17 +248,18 @@ async def _fetch_json_direct_then_price_proxy_async(
             method=method,
             timeout=timeout_value,
         )
-    except Exception as direct_exc:
+    except Exception as exc:
+        direct_error = exc
         logger.warning(
             "Direct price fetch failed, trying proxy pool: %s",
-            _safe_error(direct_exc),
+            _safe_error(exc),
         )
 
     hosts = _split_items(os.getenv("PRICE_PROXY_HOSTS", ""))
     if not hosts:
         raise RuntimeError(
             "direct_fetch_failed_and_no_proxy_pool"
-        ) from direct_exc
+        ) from direct_error
 
     return await _fetch_json_with_price_proxy_async(
         url,
