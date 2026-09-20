@@ -276,6 +276,50 @@ def _early_share_nudge_candidates(db: ReferralDB, campaign_id: int, cutoff, limi
     return [dict(row) for row in rows]
 
 
+def _participant_first_touch_source(db: ReferralDB, campaign_id: int, user_id: int) -> str:
+    """Return the participant's earliest tracked bot-start source."""
+    with db.connect() as conn:
+        row = conn.execute(
+            """SELECT source FROM funnel_events
+               WHERE campaign_id=? AND user_id=? AND event_type='bot_start'
+               ORDER BY created_at ASC, rowid ASC
+               LIMIT 1""",
+            (campaign_id, user_id),
+        ).fetchone()
+    return str(row["source"] or "organic") if row else "legacy/untracked"
+
+
+def _early_share_nudge_text(campaign, source: str) -> str:
+    if source == "referral":
+        return (
+            "🔁 <b>تو هم می‌تونی زنجیره دعوت رو ادامه بدی.</b>\\n\\n"
+            "خودت با لینک یکی از دوستات وارد شدی و حالا لینک اختصاصی خودت آماده است.\\n"
+            f"🎯 برای اولین امتیاز موقت به <b>{campaign.invites_per_point}</b> دعوت فعال نیاز داری.\\n"
+            "همین الان فقط برای ۲ نفر از دوستات بفرستش؛ وقتی اولین نفر لینک رو باز کنه، همینجا بهت خبر می‌دیم. 🚀"
+        )
+    return (
+        "📤 <b>لینک دعوتت هنوز برای کسی باز نشده.</b>\\n\\n"
+        f"🎯 برای اولین امتیاز موقت به <b>{campaign.invites_per_point}</b> دعوت فعال نیاز داری.\\n"
+        "همین الان لینک رو برای ۲–۳ نفر بفرست؛ وقتی اولین نفر بازش کنه، همینجا بهت خبر می‌دیم. 🚀"
+    )
+
+
+def _zero_referral_nudge_text(campaign, source: str) -> str:
+    if source == "referral":
+        return (
+            "👋 <b>تو با دعوت یک دوست وارد مسابقه شدی؛ حالا نوبت لینک خودته.</b>\\n\\n"
+            "هنوز کسی لینک اختصاصی خودت رو باز نکرده.\\n"
+            f"🎯 با <b>{campaign.invites_per_point}</b> دعوت فعال اولین امتیاز موقتت ساخته می‌شه.\\n"
+            "این آخرین یادآوری خودکار ما برای شروع دعوتته؛ لینک رو برای ۲ نفر که فکر می‌کنی مسابقه براشون جذابه بفرست 👇"
+        )
+    return (
+        "🔥 <b>هنوز اولین دعوتت ثبت نشده.</b>\\n\\n"
+        f"🎯 با <b>{campaign.invites_per_point}</b> دعوت فعال اولین امتیاز موقتت ساخته می‌شه.\\n"
+        "اگر هنوز می‌خوای شرکت کنی، این آخرین یادآوری خودکار ما برای شروع دعوتته؛ "
+        "لینکت رو برای چند نفر بفرست 👇"
+    )
+
+
 def _engagement_v2_candidates(
     db: ReferralDB,
     campaign_id: int,
@@ -427,18 +471,17 @@ async def nudge_pass(application: Application) -> dict:
         uid = int(row["user_id"])
         if not _notification_allowed(application, campaign.id, uid):
             continue
+        source = _participant_first_touch_source(db, campaign.id, uid)
         try:
             deep_link = _deep_link(username, row.get("invite_link", ""))
             await application.bot.send_message(
                 uid,
-                "📤 <b>لینک دعوتت هنوز برای کسی باز نشده.</b>\n\n"
-                f"🎯 برای اولین امتیاز موقت به <b>{campaign.invites_per_point}</b> دعوت فعال نیاز داری.\n"
-                "همین الان لینک رو برای ۲–۳ نفر بفرست؛ وقتی اولین نفر بازش کنه، همینجا بهت خبر می‌دیم. 🚀",
+                _early_share_nudge_text(campaign, source),
                 parse_mode=ParseMode.HTML,
                 reply_markup=link_keyboard(settings, deep_link, campaign),
             )
             early_sent += 1
-            db.track_funnel_event(campaign.id, uid, "nudge_early_share_sent", "")
+            db.track_funnel_event(campaign.id, uid, "nudge_early_share_sent", source)
         except (Forbidden, BadRequest):
             db.track_funnel_event(campaign.id, uid, "nudge_early_share_sent", "unreachable")
         except TelegramError:
@@ -452,19 +495,17 @@ async def nudge_pass(application: Application) -> dict:
     zero_sent = 0
     for row in zero_rows:
         uid = int(row["user_id"])
+        source = _participant_first_touch_source(db, campaign.id, uid)
         try:
             deep_link = _deep_link(username, row.get("invite_link", ""))
             await application.bot.send_message(
                 uid,
-                "🔥 <b>هنوز اولین دعوتت ثبت نشده.</b>\n\n"
-                f"🎯 با <b>{campaign.invites_per_point}</b> دعوت فعال اولین امتیاز موقتت ساخته می‌شه.\n"
-                "اگر هنوز می‌خوای شرکت کنی، این آخرین یادآوری خودکار ما برای شروع دعوتته؛ "
-                "لینکت رو برای چند نفر بفرست 👇",
+                _zero_referral_nudge_text(campaign, source),
                 parse_mode=ParseMode.HTML,
                 reply_markup=link_keyboard(settings, deep_link, campaign),
             )
             zero_sent += 1
-            db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", "")
+            db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", source)
         except (Forbidden, BadRequest):
             db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", "unreachable")
         except TelegramError:
