@@ -214,14 +214,14 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     lines = [
         "💎 <b>قیمت تتر در صرافی‌های ایران</b>",
         "",
-        "🏦 <b>صرافی</b>　🛒 <b>خرید شما</b>　💵 <b>فروش شما</b>",
+        "🏦 <b>صرافی</b>　🟢 <b>خرید شما</b> / 🔴 <b>فروش شما</b>",
         "",
     ]
 
     for idx, quote in enumerate(quotes):
         lines.append(
             f"{number_emojis[idx]} <b>{quote.exchange}</b>　"
-            f"<code>{_fmt_toman(quote.buy_toman)}</code>　"
+            f"<code>{_fmt_toman(quote.buy_toman)}</code> / "
             f"<code>{_fmt_toman(quote.sell_toman)}</code>"
             f"{_fmt_pct(quote.change_pct)}"
         )
@@ -229,19 +229,19 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     lines.extend(
         [
             "",
-            f"➗ میانگین خرید　<code>{_fmt_toman(buy_average)}</code> تومان",
+            f"🟢 میانگین خرید　<code>{_fmt_toman(buy_average)}</code> تومان",
         ]
     )
     if sell_average is not None:
         lines.append(
-            f"➗ میانگین فروش　<code>{_fmt_toman(sell_average)}</code> تومان"
+            f"🔴 میانگین فروش　<code>{_fmt_toman(sell_average)}</code> تومان"
         )
 
     lines.extend(
         [
             "",
-            f"📡 صرافی‌های فعال: <b>{len(quotes)}/{len(TARGET_EXCHANGES)}</b>",
-            f"🔗 مستقیم: <b>{direct_count}</b> | پشتیبان: <b>{fallback_count}</b>",
+            f"✅ صرافی‌های فعال: <b>{len(quotes)}/{len(TARGET_EXCHANGES)}</b>",
+            f"🌐 مستقیم: <b>{direct_count}</b> | 🧩 پشتیبان: <b>{fallback_count}</b>",
             f"🕒 بروزرسانی: <code>{datetime.now(ISTANBUL_TZ).strftime('%H:%M')}</code> استانبول",
         ]
     )
