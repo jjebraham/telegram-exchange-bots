@@ -74,6 +74,13 @@ def _safe_ramzarz() -> list[RamzarzUsdtQuote]:
         return []
 
 
+def _valid_customer_pair(
+    buy_toman: Decimal,
+    sell_toman: Decimal | None,
+) -> bool:
+    return sell_toman is None or sell_toman < buy_toman
+
+
 def merge_hybrid_usdt_quotes(
     direct_quotes: list[DirectUsdtQuote],
     tgju_quotes: list[UsdtExchangeQuote],
@@ -107,16 +114,36 @@ def merge_hybrid_usdt_quotes(
             continue
 
         if tgju is not None:
+            buy_toman = tgju.sell_toman
             sell_toman = tgju.buy_toman
             source = "tgju"
-            if sell_toman is None and ramzarz is not None:
-                sell_toman = ramzarz.sell_toman
-                source = "tgju+ramzarz"
+
+            # Some aggregator rows can briefly expose a crossed customer pair
+            # (customer sell >= customer buy). Prefer Ramzarz's complete
+            # two-sided quote when it is available and internally valid.
+            if not _valid_customer_pair(buy_toman, sell_toman):
+                if (
+                    ramzarz is not None
+                    and _valid_customer_pair(
+                        ramzarz.buy_toman,
+                        ramzarz.sell_toman,
+                    )
+                ):
+                    buy_toman = ramzarz.buy_toman
+                    sell_toman = ramzarz.sell_toman
+                    source = "ramzarz"
+                else:
+                    sell_toman = None
+                    source = "tgju"
+            elif sell_toman is None and ramzarz is not None:
+                if _valid_customer_pair(buy_toman, ramzarz.sell_toman):
+                    sell_toman = ramzarz.sell_toman
+                    source = "tgju+ramzarz"
 
             merged.append(
                 HybridUsdtQuote(
                     exchange=exchange,
-                    buy_toman=tgju.sell_toman,
+                    buy_toman=buy_toman,
                     sell_toman=sell_toman,
                     change_pct=tgju.change_pct,
                     source=source,
@@ -203,6 +230,14 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
 
     buy_average = sum((q.buy_toman for q in quotes), Decimal("0")) / Decimal(len(quotes))
     sell_values = [q.sell_toman for q in quotes if q.sell_toman is not None]
+
+    lowest_buy = min(quotes, key=lambda q: q.buy_toman)
+    valid_sell_quotes = [q for q in quotes if q.sell_toman is not None]
+    highest_sell = (
+        max(valid_sell_quotes, key=lambda q: q.sell_toman or Decimal("0"))
+        if valid_sell_quotes
+        else None
+    )
     sell_average = (
         sum((value for value in sell_values if value is not None), Decimal("0"))
         / Decimal(len(sell_values))
@@ -235,6 +270,19 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     if sell_average is not None:
         lines.append(
             f"🔴 میانگین فروش　<code>{_fmt_toman(sell_average)}</code> تومان"
+        )
+
+    lines.extend(
+        [
+            "",
+            f"🏆 پایین‌ترین قیمت برای خرید: <b>{lowest_buy.exchange}</b>　"
+            f"<code>{_fmt_toman(lowest_buy.buy_toman)}</code> تومان",
+        ]
+    )
+    if highest_sell is not None:
+        lines.append(
+            f"🏆 بالاترین قیمت برای فروش: <b>{highest_sell.exchange}</b>　"
+            f"<code>{_fmt_toman(highest_sell.sell_toman)}</code> تومان"
         )
 
     lines.extend(
