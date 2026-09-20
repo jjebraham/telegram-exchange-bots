@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
-from gold_prices import parse_buy_sell  # noqa: E402
+from gold_prices import GoldQuote, build_turkish_gold_post, parse_buy_sell  # noqa: E402
 from iran_gold import build_iran_gold_post, parse_tgju_home  # noqa: E402
 from iran_usdt import (  # noqa: E402
     build_usdt_exchange_post,
@@ -26,6 +26,28 @@ class MarketPostTests(unittest.TestCase):
         buy, sell = parse_buy_sell(html)
         self.assertEqual(buy, Decimal("6805.42"))
         self.assertEqual(sell, Decimal("6811.71"))
+
+    def test_turkish_gold_post_is_compact_table(self):
+        quotes = [
+            GoldQuote("gram", "گرم طلا", "https://example.test/gram", Decimal("6826.39"), Decimal("6834.09")),
+            GoldQuote("quarter", "ربع سکه", "https://example.test/quarter", Decimal("10922.22"), Decimal("11173.73")),
+            GoldQuote("half", "نیم سکه", "https://example.test/half", Decimal("21776.17"), Decimal("22347.46")),
+            GoldQuote("republic", "طلای جمهوری", "https://example.test/republic", Decimal("45246"), Decimal("45930")),
+        ]
+
+        post = build_turkish_gold_post(quotes)
+        self.assertIn("<pre>", post)
+        self.assertIn("GOLD", post)
+        self.assertIn("SELL", post)
+        self.assertIn("BUY", post)
+        self.assertIn("Gram", post)
+        self.assertIn("Quarter", post)
+        self.assertIn("Republic", post)
+        self.assertIn("6,834.09", post)
+        self.assertIn("6,826.39", post)
+        self.assertIn("💵 واحد: لیر ترکیه", post)
+        self.assertIn("استانبول", post)
+        self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
 
     def test_iran_gold_parses_rial_rows_and_builds_toman_post(self):
         html = """
