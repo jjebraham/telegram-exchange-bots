@@ -175,6 +175,14 @@ def _fmt_change_pct(
     return f"{rounded:.2f}%"
 
 
+def _pair_display(pair: str) -> tuple[str, str]:
+    if pair == "USD/TRY":
+        return "🇺🇸USD/🇹🇷TL", "🇺🇸"
+    if pair == "EUR/TRY":
+        return "🇪🇺EUR/🇹🇷TL", "🇪🇺"
+    return pair.replace("TRY", "TL"), ""
+
+
 def _build_comparison_post(
     quotes: list[BankQuote],
     *,
@@ -186,12 +194,13 @@ def _build_comparison_post(
         raise ValueError("No bank quotes supplied")
 
     previous = previous or {}
+    pair_label, row_flag = _pair_display(pair)
     table_lines = [
         f"{'MARKET':<8} {'SELL':>8} {'BUY':>8} {'Δ24H':>7}",
     ]
     for q in quotes:
         table_lines.append(
-            f"{DISPLAY_NAMES.get(q.name, q.name):<8} "
+            f"{row_flag}{DISPLAY_NAMES.get(q.name, q.name):<8} "
             f"{_fmt_table(q.sell):>8} "
             f"{_fmt_table(q.buy):>8} "
             f"{_fmt_change_pct(q, previous.get(q.name)):>7}"
@@ -200,11 +209,11 @@ def _build_comparison_post(
     lines = [
         f"🏦 <b>{title}</b>",
         "",
-        f"💱 <b>{pair}</b>",
-        "🔴 SELL = فروش　•　🟢 BUY = خرید",
+        f"<b>{pair_label}</b>",
         "",
         "<pre>" + "\n".join(table_lines) + "</pre>",
         "",
+        "💵 واحد: لیر ترکیه 🇹🇷",
         f"🕒 <code>{datetime.now(ISTANBUL_TZ).strftime('%H:%M')}</code> استانبول",
         "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
     ]
