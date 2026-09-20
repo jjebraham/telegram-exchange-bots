@@ -35,12 +35,16 @@ class MarketPulseTests(unittest.TestCase):
         )
 
         self.assertIn("نبض بازار ارز ترکیه", post)
-        self.assertIn("USD/TRY", post)
-        self.assertIn("EUR/TRY", post)
+        self.assertIn("🇺🇸USD/🇹🇷TL", post)
+        self.assertIn("🇪🇺EUR/🇹🇷TL", post)
+        self.assertIn("🇺🇸USD/TL", post)
+        self.assertIn("🇪🇺EUR/TL", post)
         self.assertIn("48.7000", post)
         self.assertIn("57.2000", post)
         self.assertIn("+1.25%", post)
         self.assertIn("+1.06%", post)
+        self.assertIn("🏛 نرخ میانی دلار و یورو  Kapalıçarşı", post)
+        self.assertIn("💵 واحد: لیر ترکیه 🇹🇷", post)
         self.assertIn("استانبول", post)
 
     def test_pulse_uses_dash_without_previous_snapshot(self):
