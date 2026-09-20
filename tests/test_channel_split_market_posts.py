@@ -40,6 +40,7 @@ class MarketPostTests(unittest.TestCase):
         self.assertIn("🌕GOLD", post)
         self.assertIn("SELL", post)
         self.assertIn("BUY", post)
+        self.assertIn("Δ24H", post)
         self.assertIn("🌕GRAM", post)
         self.assertIn("🌕CEYREK", post)
         self.assertIn("🌕YARIM", post)
@@ -47,9 +48,28 @@ class MarketPostTests(unittest.TestCase):
         self.assertNotIn("Republic", post)
         self.assertIn("6,834.09", post)
         self.assertIn("6,826.39", post)
+        self.assertIn("—", post)
         self.assertIn("💵 واحد: لیر ترکیه 🇹🇷", post)
         self.assertIn("استانبول", post)
         self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
+
+    def test_turkish_gold_24h_change_uses_midpoint(self):
+        quotes = [
+            GoldQuote(
+                "gram",
+                "گرم طلا",
+                "https://example.test/gram",
+                Decimal("7000"),
+                Decimal("7020"),
+            ),
+        ]
+        previous = {
+            "gram": (Decimal("6800"), Decimal("6820")),
+        }
+
+        post = build_turkish_gold_post(quotes, previous)
+        # Previous midpoint 6810 -> current midpoint 7010 = +2.936...%
+        self.assertIn("+2.94%", post)
 
     def test_iran_gold_parses_rial_rows_and_builds_toman_post(self):
         html = """
