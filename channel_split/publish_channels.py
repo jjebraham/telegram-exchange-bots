@@ -37,6 +37,7 @@ from wallex_usdt import build_wallex_usdt_post, fetch_wallex_usdt
 from tabdeal_usdt import build_tabdeal_usdt_post, fetch_tabdeal_usdt
 from exir_usdt import build_exir_usdt_post, fetch_exir_usdt
 from bitpin_usdt import build_bitpin_usdt_post, fetch_bitpin_usdt
+from ramzinex_usdt import build_ramzinex_usdt_post, fetch_ramzinex_usdt
 from market_history import (
     DEFAULT_HISTORY_DB,
     build_alanchande_daily_change_post,
@@ -297,6 +298,7 @@ def main() -> int:
             "alanchande-usdt-tabdeal",
             "alanchande-usdt-exir",
             "alanchande-usdt-bitpin",
+            "alanchande-usdt-ramzinex",
             "alanchande-markets",
             "kiani-rates",
             "kiani-try",
@@ -334,6 +336,7 @@ def main() -> int:
     tabdeal_usdt_cache: Any | None = None
     exir_usdt_cache: Any | None = None
     bitpin_usdt_cache: Any | None = None
+    ramzinex_usdt_cache: Any | None = None
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -400,6 +403,12 @@ def main() -> int:
         if bitpin_usdt_cache is None:
             bitpin_usdt_cache = fetch_bitpin_usdt()
         return bitpin_usdt_cache
+
+    def get_ramzinex_usdt() -> Any:
+        nonlocal ramzinex_usdt_cache
+        if ramzinex_usdt_cache is None:
+            ramzinex_usdt_cache = fetch_ramzinex_usdt()
+        return ramzinex_usdt_cache
 
     def current_history_snapshot():
         # AlanChande history intentionally depends only on neutral market feeds.
@@ -469,6 +478,9 @@ def main() -> int:
 
     if args.post == "alanchande-usdt-bitpin":
         add_alanchande(build_bitpin_usdt_post(get_bitpin_usdt()))
+
+    if args.post == "alanchande-usdt-ramzinex":
+        add_alanchande(build_ramzinex_usdt_post(get_ramzinex_usdt()))
 
     if args.post in {"kiani-rates", "all"}:
         add_kiani(build_kiani_rate_post(get_rates()))
