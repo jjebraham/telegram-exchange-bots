@@ -150,7 +150,7 @@ def build_turkish_gold_post(quotes: list[GoldQuote]) -> str:
         )
 
     lines = [
-        "🥇 <b>قیمت طلای ترکیه | Kapalıçarşı</b>",
+        "🥇 <b>قیمت طلای ترکیه  | Kapalıçarşı</b>",
         "",
         "🔴 SELL = فروش　•　🟢 BUY = خرید",
         "",
