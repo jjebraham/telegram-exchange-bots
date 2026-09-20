@@ -227,43 +227,46 @@ def build_iran_gold_post(market: IranGoldMarket) -> str:
     prices = market.coin_prices_rial
     bubbles = market.bubble_values_rial
 
-    rows = (
-        ("IMAMI", "سکه امامی", "حباب سکه امامی"),
-        ("BAHAR", "سکه بهار آزادی", "حباب سکه بهار آزادی"),
-        ("HALF", "نیم سکه", "حباب نیم سکه"),
-        ("QUARTER", "ربع سکه", "حباب ربع سکه"),
-        ("GERAMI", "سکه گرمی", "حباب سکه گرمی"),
-    )
-
-    table_lines = [
-        f"{'MARKET':<8} {'PRICE':>11} {'BUBBLE':>10} {'%':>6}",
-    ]
-    for label, coin_key, bubble_key in rows:
-        table_lines.append(
-            f"{label:<8} "
-            f"{_fmt_toman(prices[coin_key]):>11} "
-            f"{_fmt_signed_toman(bubbles[bubble_key]):>10} "
-            f"{_bubble_pct(bubbles[bubble_key], prices[coin_key]):>5}%"
-        )
-
-    if market.gold18_rial is not None:
-        table_lines.append(
-            f"{'GOLD18':<8} {_fmt_toman(market.gold18_rial):>11} {'—':>10} {'—':>6}"
-        )
-    if market.mesghal_rial is not None:
-        table_lines.append(
-            f"{'MESGHAL':<8} {_fmt_toman(market.mesghal_rial):>11} {'—':>10} {'—':>6}"
-        )
-
     lines = [
         "🪙 <b>طلا و سکه ایران</b>",
         "",
-        "💰 قیمت و حباب بازار <i>(تومان)</i>",
+        "💰 <b>قیمت بازار</b> <i>(تومان)</i>",
         "",
-        "<pre>" + "\n".join(table_lines) + "</pre>",
-        "",
-        "ℹ️ BUBBLE = حباب سکه",
-        f"🕒 <code>{now}</code> تهران",
-        "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
+        f"🌕 <b>سکه امامی</b>　<code>{_fmt_toman(prices['سکه امامی'])}</code>",
+        f"🌕 <b>سکه بهار آزادی</b>　<code>{_fmt_toman(prices['سکه بهار آزادی'])}</code>",
+        f"🟡 <b>نیم سکه</b>　<code>{_fmt_toman(prices['نیم سکه'])}</code>",
+        f"🟡 <b>ربع سکه</b>　<code>{_fmt_toman(prices['ربع سکه'])}</code>",
+        f"🪙 <b>سکه گرمی</b>　<code>{_fmt_toman(prices['سکه گرمی'])}</code>",
     ]
+
+    if market.gold18_rial is not None or market.mesghal_rial is not None:
+        lines.extend(["", "✨ <b>طلا</b>"])
+        if market.gold18_rial is not None:
+            lines.append(
+                f"✨ <b>طلای ۱۸ عیار</b>　<code>{_fmt_toman(market.gold18_rial)}</code>"
+            )
+        if market.mesghal_rial is not None:
+            lines.append(
+                f"⚖️ <b>مثقال طلا</b>　<code>{_fmt_toman(market.mesghal_rial)}</code>"
+            )
+
+    lines.extend(
+        [
+            "",
+            "🎈 <b>حباب سکه</b>",
+            f"🌕 امامی　<code>{_fmt_signed_toman(bubbles['حباب سکه امامی'])}</code>　"
+            f"<code>{_bubble_pct(bubbles['حباب سکه امامی'], prices['سکه امامی'])}%</code>",
+            f"🌕 بهار آزادی　<code>{_fmt_signed_toman(bubbles['حباب سکه بهار آزادی'])}</code>　"
+            f"<code>{_bubble_pct(bubbles['حباب سکه بهار آزادی'], prices['سکه بهار آزادی'])}%</code>",
+            f"🟡 نیم سکه　<code>{_fmt_signed_toman(bubbles['حباب نیم سکه'])}</code>　"
+            f"<code>{_bubble_pct(bubbles['حباب نیم سکه'], prices['نیم سکه'])}%</code>",
+            f"🟡 ربع سکه　<code>{_fmt_signed_toman(bubbles['حباب ربع سکه'])}</code>　"
+            f"<code>{_bubble_pct(bubbles['حباب ربع سکه'], prices['ربع سکه'])}%</code>",
+            f"🪙 سکه گرمی　<code>{_fmt_signed_toman(bubbles['حباب سکه گرمی'])}</code>　"
+            f"<code>{_bubble_pct(bubbles['حباب سکه گرمی'], prices['سکه گرمی'])}%</code>",
+            "",
+            f"🕒 <code>{now}</code> تهران",
+            "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
+        ]
+    )
     return "\n".join(lines)
