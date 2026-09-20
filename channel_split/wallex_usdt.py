@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+from price_proxy import fetch_json_with_price_proxy
 
 WALLEX_MARKETS_URL = "https://api.wallex.ir/hector/web/v1/markets"
 
@@ -75,23 +74,15 @@ def parse_wallex_usdt_market(payload: dict) -> WallexUsdtQuote:
     return quote
 
 
-def fetch_wallex_usdt(timeout: int = 20) -> WallexUsdtQuote:
-    request = Request(
+def fetch_wallex_usdt(timeout: float | None = None) -> WallexUsdtQuote:
+    payload = fetch_json_with_price_proxy(
         WALLEX_MARKETS_URL,
         headers={
             "Accept": "application/json",
             "User-Agent": "AlanChande-DirectMarket/1.0",
         },
+        timeout=timeout,
     )
-
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
-        raise RuntimeError(f"Wallex returned HTTP {exc.code}") from exc
-    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Could not load Wallex markets: {exc}") from exc
-
     return parse_wallex_usdt_market(payload)
 
 
