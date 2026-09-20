@@ -25,10 +25,10 @@ class GoldQuote:
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 
 DISPLAY_GOLD_NAMES = {
-    "gram": "Gram",
-    "quarter": "Quarter",
-    "half": "Half",
-    "republic": "Republic",
+    "gram": "GRAM",
+    "quarter": "CEYREK",
+    "half": "YARIM",
+    "tam": "TAM",
 }
 
 GOLD_ASSETS = (
@@ -48,9 +48,9 @@ GOLD_ASSETS = (
         "https://altin.doviz.com/yarim-altin",
     ),
     (
-        "republic",
-        "طلای جمهوری",
-        "https://altin.doviz.com/cumhuriyet-altini",
+        "tam",
+        "تمام سکه",
+        "https://altin.doviz.com/tam-altin",
     ),
 )
 
