@@ -14,6 +14,7 @@ from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from typing import Mapping
 from zoneinfo import ZoneInfo
 
 TGJU_HOME_URL = "https://www.tgju.org/home"
@@ -222,32 +223,53 @@ def _fmt_signed_toman(rial: Decimal) -> str:
     return f"{value:,}"
 
 
-def build_iran_gold_post(market: IranGoldMarket) -> str:
+def _fmt_change_pct(current_rial: Decimal, previous_rial: Decimal | None) -> str:
+    if previous_rial is None or previous_rial == 0:
+        return "—"
+    change = ((current_rial - previous_rial) / previous_rial) * Decimal("100")
+    rounded = change.quantize(Decimal("0.01"))
+    if rounded > 0:
+        return f"+{rounded:.2f}%"
+    return f"{rounded:.2f}%"
+
+
+def build_iran_gold_post(
+    market: IranGoldMarket,
+    previous: Mapping[str, Decimal] | None = None,
+) -> str:
     now = datetime.now(TEHRAN_TZ).strftime("%H:%M")
     prices = market.coin_prices_rial
     bubbles = market.bubble_values_rial
+    previous = previous or {}
 
     lines = [
         "🪙 <b>طلا و سکه ایران</b>",
         "",
-        "💰 <b>قیمت بازار</b> <i>(تومان)</i>",
+        "💰 <b>قیمت بازار</b> <i>(تومان)</i>　|　<b>Δ24H</b>",
         "",
-        f"🌕 <b>سکه امامی</b>　<code>{_fmt_toman(prices['سکه امامی'])}</code>",
-        f"🌕 <b>سکه بهار آزادی</b>　<code>{_fmt_toman(prices['سکه بهار آزادی'])}</code>",
-        f"🟡 <b>نیم سکه</b>　<code>{_fmt_toman(prices['نیم سکه'])}</code>",
-        f"🟡 <b>ربع سکه</b>　<code>{_fmt_toman(prices['ربع سکه'])}</code>",
-        f"🪙 <b>سکه گرمی</b>　<code>{_fmt_toman(prices['سکه گرمی'])}</code>",
+        f"🌕 <b>سکه امامی</b>　<code>{_fmt_toman(prices['سکه امامی'])}</code>　"
+        f"<code>{_fmt_change_pct(prices['سکه امامی'], previous.get('سکه امامی'))}</code>",
+        f"🌕 <b>سکه بهار آزادی</b>　<code>{_fmt_toman(prices['سکه بهار آزادی'])}</code>　"
+        f"<code>{_fmt_change_pct(prices['سکه بهار آزادی'], previous.get('سکه بهار آزادی'))}</code>",
+        f"🟡 <b>نیم سکه</b>　<code>{_fmt_toman(prices['نیم سکه'])}</code>　"
+        f"<code>{_fmt_change_pct(prices['نیم سکه'], previous.get('نیم سکه'))}</code>",
+        f"🟡 <b>ربع سکه</b>　<code>{_fmt_toman(prices['ربع سکه'])}</code>　"
+        f"<code>{_fmt_change_pct(prices['ربع سکه'], previous.get('ربع سکه'))}</code>",
+        f"🪙 <b>سکه گرمی</b>　<code>{_fmt_toman(prices['سکه گرمی'])}</code>　"
+        f"<code>{_fmt_change_pct(prices['سکه گرمی'], previous.get('سکه گرمی'))}</code>",
     ]
 
     if market.gold18_rial is not None or market.mesghal_rial is not None:
         lines.extend(["", "✨ <b>طلا</b>"])
         if market.gold18_rial is not None:
             lines.append(
-                f"✨ <b>طلای ۱۸ عیار</b>　<code>{_fmt_toman(market.gold18_rial)}</code>"
+                f"✨ <b>طلای ۱۸ عیار</b>　<code>{_fmt_toman(market.gold18_rial)}</code>　"
+                f"<code>{_fmt_change_pct(market.gold18_rial, previous.get('طلای ۱۸ عیار'))}</code>"
             )
         if market.mesghal_rial is not None:
             lines.append(
-                f"⚖️ <b>مثقال طلا</b>　<code>{_fmt_toman(market.mesghal_rial)}</code>"
+                f"⚖️ <b>مثقال طلا</b>　<code>{_fmt_toman(market.mesghal_rial)}</code>　"
+                f"<code>{_fmt_change_pct(market.mesghal_rial, previous.get('مثقال طلا'))}</code>"
             )
 
     lines.extend(
