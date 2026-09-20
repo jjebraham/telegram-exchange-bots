@@ -32,6 +32,7 @@ from bank_compare import (
 from gold_prices import build_turkish_gold_post, fetch_turkish_gold_quotes
 from gold_history import load_turkey_gold_near_24h, record_turkey_gold_quotes
 from iran_gold import build_iran_gold_post, fetch_iran_gold_market
+from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from nobitex_usdt import build_nobitex_usdt_post, fetch_nobitex_usdt
 from wallex_usdt import build_wallex_usdt_post, fetch_wallex_usdt
@@ -513,7 +514,12 @@ def main() -> int:
         )
 
     if args.post in {"alanchande-iran-gold", "alanchande-markets"}:
-        add_alanchande(build_iran_gold_post(get_iran_gold()))
+        add_alanchande(
+            build_iran_gold_post(
+                get_iran_gold(),
+                load_iran_gold_near_24h(history_db),
+            )
+        )
 
     if args.post in {"alanchande-usdt-exchanges", "alanchande-markets"}:
         add_alanchande(build_primary_usdt_post())
@@ -591,6 +597,10 @@ def main() -> int:
     if args.post in {"alanchande-turkey-gold", "alanchande-markets"}:
         timestamp = record_turkey_gold_quotes(history_db, get_turkey_gold())
         print(f"recorded Turkey gold snapshot -> {timestamp}")
+
+    if args.post in {"alanchande-iran-gold", "alanchande-markets"}:
+        timestamp = record_iran_gold_market(history_db, get_iran_gold())
+        print(f"recorded Iran gold snapshot -> {timestamp}")
 
     return 0
 
