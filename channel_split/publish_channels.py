@@ -336,6 +336,7 @@ def main() -> int:
             "alanchande-usdt-tgju",
             "alanchande-usdt-seven",
             "alanchande-markets",
+            "alanchande-daily",
             "kiani-rates",
             "kiani-try",
             "kiani-examples",
@@ -579,6 +580,53 @@ def main() -> int:
         if not market_posts:
             raise RuntimeError("All AlanChande market posts failed")
 
+    if args.post == "alanchande-daily":
+        daily_posts, daily_failures = build_resilient_market_bundle(
+            [
+                (
+                    "bank-usd",
+                    lambda: build_usd_comparison_post(
+                        get_usd_quotes(),
+                        load_bank_fx_near_24h(history_db, "USD/TRY"),
+                    ),
+                ),
+                (
+                    "fx-pulse",
+                    lambda: build_turkey_fx_pulse_post(
+                        get_usd_quotes(),
+                        get_eur_quotes(),
+                        load_bank_fx_near_24h(history_db, "USD/TRY"),
+                        load_bank_fx_near_24h(history_db, "EUR/TRY"),
+                    ),
+                ),
+                (
+                    "turkey-gold",
+                    lambda: build_turkish_gold_post(
+                        get_turkey_gold(),
+                        load_turkey_gold_near_24h(history_db),
+                    ),
+                ),
+                (
+                    "iran-gold",
+                    lambda: build_iran_gold_post(
+                        get_iran_gold(),
+                        load_iran_gold_near_24h(history_db),
+                    ),
+                ),
+                ("usdt", build_default_alanchande_usdt_post),
+            ]
+        )
+
+        for key, text in daily_posts:
+            add_alanchande(text)
+            successful_market_posts.add(key)
+
+        for key, error in daily_failures.items():
+            print(f"WARNING: skipped daily {key}: {error}", file=sys.stderr)
+
+        if not daily_posts:
+            raise RuntimeError("All AlanChande daily posts failed")
+
     if args.post == "alanchande-usdt-tgju":
         add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
 
@@ -639,6 +687,10 @@ def main() -> int:
         timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
         print(f"recorded USD/TRY bank snapshot -> {timestamp}")
 
+    if "bank-usd" in successful_market_posts and "fx-pulse" not in successful_market_posts:
+        timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
+        print(f"recorded USD/TRY daily snapshot -> {timestamp}")
+
     if args.post in {"eur-bank-comparison", "bank-comparisons"}:
         timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
         print(f"recorded EUR/TRY bank snapshot -> {timestamp}")
@@ -648,6 +700,12 @@ def main() -> int:
         eur_timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
         print(f"recorded USD/TRY FX pulse snapshot -> {usd_timestamp}")
         print(f"recorded EUR/TRY FX pulse snapshot -> {eur_timestamp}")
+
+    if "fx-pulse" in successful_market_posts:
+        usd_timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
+        eur_timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
+        print(f"recorded USD/TRY daily FX snapshot -> {usd_timestamp}")
+        print(f"recorded EUR/TRY daily FX snapshot -> {eur_timestamp}")
 
     if "turkey-gold" in successful_market_posts:
         timestamp = record_turkey_gold_quotes(history_db, get_turkey_gold())
