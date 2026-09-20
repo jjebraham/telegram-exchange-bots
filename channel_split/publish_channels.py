@@ -161,6 +161,11 @@ def _history_db_path() -> Path:
     return Path(__file__).resolve().parent / path
 
 
+def build_default_alanchande_usdt_post() -> str:
+    """Build the production AlanChande USDT board using the seven-exchange hybrid."""
+    return fetch_and_build_hybrid_usdt_post()
+
+
 def build_kiani_rate_post(rates: dict[str, Decimal]) -> str:
     return "\n".join(
         [
@@ -521,13 +526,13 @@ def main() -> int:
         )
 
     if args.post in {"alanchande-usdt-exchanges", "alanchande-markets"}:
-        add_alanchande(fetch_and_build_hybrid_usdt_post())
+        add_alanchande(build_default_alanchande_usdt_post())
 
     if args.post == "alanchande-usdt-tgju":
         add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
 
     if args.post == "alanchande-usdt-seven":
-        add_alanchande(fetch_and_build_hybrid_usdt_post())
+        add_alanchande(build_default_alanchande_usdt_post())
 
     if args.post == "alanchande-usdt-nobitex":
         add_alanchande(build_nobitex_usdt_post(get_nobitex_usdt()))
