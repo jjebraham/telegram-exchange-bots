@@ -63,6 +63,32 @@ class HybridUsdtComparisonTests(unittest.TestCase):
         self.assertEqual(nobitex.source, "ramzarz")
         self.assertEqual(tabdeal.source, "ramzarz")
 
+    def test_crossed_tgju_pair_uses_valid_ramzarz_pair(self):
+        tgju = [
+            UsdtExchangeQuote(
+                "تبدیل",
+                Decimal("2295420"),
+                Decimal("2298290"),
+                Decimal("0.68"),
+                "1405/06/30",
+                "23:50",
+            ),
+            UsdtExchangeQuote("والکس", Decimal("2291000"), Decimal("2290000"), None, None, None),
+            UsdtExchangeQuote("رمزینکس", Decimal("2295000"), Decimal("2293000"), None, None, None),
+            UsdtExchangeQuote("بیت پین", Decimal("2294000"), Decimal("2292000"), None, None, None),
+            UsdtExchangeQuote("آبان تتر", Decimal("2298000"), Decimal("2296000"), None, None, None),
+        ]
+        ramzarz = [
+            RamzarzUsdtQuote("تبدیل", Decimal("229500"), Decimal("229260")),
+        ]
+
+        merged = merge_hybrid_usdt_quotes([], tgju, ramzarz)
+        tabdeal = next(q for q in merged if q.exchange == "تبدیل")
+        self.assertEqual(tabdeal.source, "ramzarz")
+        self.assertEqual(tabdeal.buy_toman, Decimal("229500"))
+        self.assertEqual(tabdeal.sell_toman, Decimal("229260"))
+        self.assertLess(tabdeal.sell_toman, tabdeal.buy_toman)
+
     def test_post_shows_direct_and_fallback_counts(self):
         quotes = [
             # Seven rows are not required by the formatter itself.
@@ -92,6 +118,14 @@ class HybridUsdtComparisonTests(unittest.TestCase):
         self.assertIn("🧩 پشتیبان: <b>1</b>", post)
         self.assertIn("🟢 میانگین خرید", post)
         self.assertIn("🔴 میانگین فروش", post)
+        self.assertIn(
+            "🏆 پایین‌ترین قیمت برای خرید: <b>والکس</b>　<code>229,100</code> تومان",
+            post,
+        )
+        self.assertIn(
+            "🏆 بالاترین قیمت برای فروش: <b>نوبیتکس</b>　<code>229,100</code> تومان",
+            post,
+        )
         self.assertIn("تهران", post)
         self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
 
