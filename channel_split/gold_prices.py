@@ -140,11 +140,11 @@ def build_turkish_gold_post(quotes: list[GoldQuote]) -> str:
         raise ValueError("No gold quotes supplied")
 
     table_lines = [
-        f"{'GOLD':<8} {'SELL':>9} {'BUY':>9}",
+        f"🌕{'GOLD':<8} {'SELL':>9} {'BUY':>9}",
     ]
     for quote in quotes:
         table_lines.append(
-            f"{DISPLAY_GOLD_NAMES.get(quote.key, quote.key):<8} "
+            f"🌕{DISPLAY_GOLD_NAMES.get(quote.key, quote.key):<8} "
             f"{_fmt_tl(quote.sell):>9} "
             f"{_fmt_tl(quote.buy):>9}"
         )
@@ -156,7 +156,7 @@ def build_turkish_gold_post(quotes: list[GoldQuote]) -> str:
         "",
         "<pre>" + "\n".join(table_lines) + "</pre>",
         "",
-        "💵 واحد: لیر ترکیه",
+        "💵 واحد: لیر ترکیه 🇹🇷",
         f"🕒 <code>{datetime.now(ISTANBUL_TZ).strftime('%H:%M')}</code> استانبول",
         "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
     ]
