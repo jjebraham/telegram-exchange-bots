@@ -48,7 +48,9 @@ from market_history import (
     build_alanchande_daily_change_post,
     build_snapshot,
     history_status,
+    load_bank_fx_near_24h,
     load_day,
+    record_bank_fx_quotes,
     record_snapshot,
 )
 
@@ -463,10 +465,20 @@ def main() -> int:
         return 0
 
     if args.post in {"bank-comparison", "bank-comparisons", "all"}:
-        add_alanchande(build_usd_comparison_post(get_usd_quotes()))
+        add_alanchande(
+            build_usd_comparison_post(
+                get_usd_quotes(),
+                load_bank_fx_near_24h(history_db, "USD/TRY"),
+            )
+        )
 
     if args.post in {"eur-bank-comparison", "bank-comparisons"}:
-        add_alanchande(build_eur_comparison_post(get_eur_quotes()))
+        add_alanchande(
+            build_eur_comparison_post(
+                get_eur_quotes(),
+                load_bank_fx_near_24h(history_db, "EUR/TRY"),
+            )
+        )
 
     if args.post in {"alanchande-converter", "demo-formats"}:
         add_alanchande(build_alanchande_converter_post(get_rates()))
@@ -540,6 +552,17 @@ def main() -> int:
         chat_id = _required_env(destination_env)
         telegram_send(token, chat_id, text)
         print(f"sent -> {destination_env} using {token_env}")
+
+    # Save bank-market snapshots only after successful Telegram delivery.
+    # Dry runs never mutate history. On the next daily post, the snapshot
+    # closest to 24 hours old is used for Δ24H.
+    if args.post in {"bank-comparison", "bank-comparisons", "all"}:
+        timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
+        print(f"recorded USD/TRY bank snapshot -> {timestamp}")
+
+    if args.post in {"eur-bank-comparison", "bank-comparisons"}:
+        timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
+        print(f"recorded EUR/TRY bank snapshot -> {timestamp}")
 
     return 0
 
