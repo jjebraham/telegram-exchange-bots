@@ -42,6 +42,7 @@ from abantether_usdt import build_abantether_usdt_post, fetch_abantether_usdt
 from tetherland_usdt import build_tetherland_usdt_post, fetch_tetherland_usdt
 from direct_usdt_compare import fetch_and_build_direct_usdt_comparison
 from primary_usdt import build_primary_usdt_post
+from hybrid_usdt_compare import fetch_and_build_hybrid_usdt_post
 from market_history import (
     DEFAULT_HISTORY_DB,
     build_alanchande_daily_change_post,
@@ -307,6 +308,7 @@ def main() -> int:
             "alanchande-usdt-tetherland",
             "alanchande-usdt-direct",
             "alanchande-usdt-tgju",
+            "alanchande-usdt-seven",
             "alanchande-markets",
             "kiani-rates",
             "kiani-try",
@@ -488,6 +490,9 @@ def main() -> int:
 
     if args.post == "alanchande-usdt-tgju":
         add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
+
+    if args.post == "alanchande-usdt-seven":
+        add_alanchande(fetch_and_build_hybrid_usdt_post())
 
     if args.post == "alanchande-usdt-nobitex":
         add_alanchande(build_nobitex_usdt_post(get_nobitex_usdt()))
