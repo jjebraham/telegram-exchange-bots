@@ -84,9 +84,12 @@ class HybridUsdtComparisonTests(unittest.TestCase):
         ]
 
         post = build_hybrid_usdt_post(quotes)
-        self.assertIn("مستقیم: <b>1</b>", post)
-        self.assertIn("پشتیبان: <b>1</b>", post)
-        self.assertIn("<code>229,100</code>", post)
+        self.assertIn("🟢 <b>خرید شما</b> / 🔴 <b>فروش شما</b>", post)
+        self.assertIn("<code>229,100</code> / <code>229,000</code>", post)
+        self.assertIn("🌐 مستقیم: <b>1</b>", post)
+        self.assertIn("🧩 پشتیبان: <b>1</b>", post)
+        self.assertIn("🟢 میانگین خرید", post)
+        self.assertIn("🔴 میانگین فروش", post)
 
 
 if __name__ == "__main__":
