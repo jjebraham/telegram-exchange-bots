@@ -106,12 +106,47 @@ class MarketPostTests(unittest.TestCase):
         self.assertIn("طلای ۱۸ عیار", post)
         self.assertIn("مثقال طلا", post)
         self.assertIn("حباب سکه", post)
+        self.assertIn("Δ24H", post)
+        self.assertIn("—", post)
         self.assertIn("237,500,000", post)
         self.assertIn("23,939,240", post)
         self.assertIn("-205,000", post)
         self.assertNotIn("IMAMI", post)
         self.assertNotIn("GOLD18", post)
         self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
+
+    def test_iran_gold_24h_change_uses_price_history(self):
+        market = parse_tgju_home(
+            """
+            <table>
+              <tr><td>سکه امامی</td><td>2,400,000,000</td></tr>
+              <tr><td>سکه بهار آزادی</td><td>2,300,000,000</td></tr>
+              <tr><td>نیم سکه</td><td>1,200,000,000</td></tr>
+              <tr><td>ربع سکه</td><td>600,000,000</td></tr>
+              <tr><td>سکه گرمی</td><td>300,000,000</td></tr>
+              <tr><td>حباب سکه امامی</td><td>10,000,000</td></tr>
+              <tr><td>حباب سکه بهار آزادی</td><td>10,000,000</td></tr>
+              <tr><td>حباب نیم سکه</td><td>10,000,000</td></tr>
+              <tr><td>حباب ربع سکه</td><td>10,000,000</td></tr>
+              <tr><td>حباب سکه گرمی</td><td>10,000,000</td></tr>
+              <tr><td>طلای 18 عیار</td><td>240,000,000</td></tr>
+              <tr><td>مثقال طلا</td><td>1,000,000,000</td></tr>
+            </table>
+            """
+        )
+        previous = {
+            "سکه امامی": Decimal("2300000000"),
+            "سکه بهار آزادی": Decimal("2300000000"),
+            "نیم سکه": Decimal("1200000000"),
+            "ربع سکه": Decimal("600000000"),
+            "سکه گرمی": Decimal("300000000"),
+            "طلای ۱۸ عیار": Decimal("230000000"),
+            "مثقال طلا": Decimal("1000000000"),
+        }
+
+        post = build_iran_gold_post(market, previous)
+        self.assertIn("+4.35%", post)
+        self.assertIn("+4.35%", post)
 
     @staticmethod
     def _usdt_row(name, sell, buy, change, date_time):
