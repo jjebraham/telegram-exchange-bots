@@ -32,7 +32,7 @@ class MarketPostTests(unittest.TestCase):
             GoldQuote("gram", "گرم طلا", "https://example.test/gram", Decimal("6826.39"), Decimal("6834.09")),
             GoldQuote("quarter", "ربع سکه", "https://example.test/quarter", Decimal("10922.22"), Decimal("11173.73")),
             GoldQuote("half", "نیم سکه", "https://example.test/half", Decimal("21776.17"), Decimal("22347.46")),
-            GoldQuote("republic", "طلای جمهوری", "https://example.test/republic", Decimal("45246"), Decimal("45930")),
+            GoldQuote("tam", "تمام سکه", "https://example.test/tam", Decimal("44332"), Decimal("44638")),
         ]
 
         post = build_turkish_gold_post(quotes)
@@ -40,9 +40,11 @@ class MarketPostTests(unittest.TestCase):
         self.assertIn("GOLD", post)
         self.assertIn("SELL", post)
         self.assertIn("BUY", post)
-        self.assertIn("Gram", post)
-        self.assertIn("Quarter", post)
-        self.assertIn("Republic", post)
+        self.assertIn("GRAM", post)
+        self.assertIn("CEYREK", post)
+        self.assertIn("YARIM", post)
+        self.assertIn("TAM", post)
+        self.assertNotIn("Republic", post)
         self.assertIn("6,834.09", post)
         self.assertIn("6,826.39", post)
         self.assertIn("💵 واحد: لیر ترکیه", post)
