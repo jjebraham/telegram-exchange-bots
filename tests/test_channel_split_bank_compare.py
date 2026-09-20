@@ -49,8 +49,8 @@ class BankComparisonTests(unittest.TestCase):
         self.assertIn("ZIRAAT", post)
         self.assertIn("48.7000", post)
         self.assertIn("48.6900", post)
-        self.assertIn("کمترین قیمت خرید", post)
-        self.assertIn("بیشترین قیمت فروش", post)
+        self.assertNotIn("کمترین قیمت خرید", post)
+        self.assertNotIn("بیشترین قیمت فروش", post)
         self.assertIn("استانبول", post)
         self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
 
