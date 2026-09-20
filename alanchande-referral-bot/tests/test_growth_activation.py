@@ -11,7 +11,13 @@ from referral_core import ReferralDB
 from telegram_bot.config import Settings
 from telegram_bot.growth import qualification_cutoff_text
 from telegram_bot.promo_handlers import _entry_text
-from telegram_bot.reminders import _engagement_v2_candidates, _qualification_soon_candidates
+from telegram_bot.reminders import (
+    _early_share_nudge_text,
+    _engagement_v2_candidates,
+    _participant_first_touch_source,
+    _qualification_soon_candidates,
+    _zero_referral_nudge_text,
+)
 from telegram_bot.ui import final_join_cutoff_text, link_keyboard, render_home
 
 
@@ -185,6 +191,54 @@ class GrowthActivationTests(unittest.TestCase):
                 db, campaign, now, within_hours=24, limit=100
             )
             self.assertEqual(rows, [])
+
+    def test_referral_source_gets_source_aware_share_nudges(self):
+        campaign = self._campaign()
+
+        early = _early_share_nudge_text(campaign, "referral")
+        self.assertIn("با لینک یکی از دوستات وارد شدی", early)
+        self.assertIn("زنجیره دعوت", early)
+        self.assertIn("فقط برای ۲ نفر", early)
+
+        final = _zero_referral_nudge_text(campaign, "referral")
+        self.assertIn("با دعوت یک دوست وارد مسابقه شدی", final)
+        self.assertIn("آخرین یادآوری خودکار", final)
+
+        generic = _early_share_nudge_text(campaign, "mainchannel_b")
+        self.assertNotIn("با لینک یکی از دوستات وارد شدی", generic)
+
+    def test_first_touch_source_uses_earliest_bot_start(self):
+        now = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = ReferralDB(os.path.join(tmp, "first-touch.sqlite"))
+            db.init()
+            campaign = db.create_campaign(
+                "source-test",
+                "Source test",
+                now - timedelta(days=1),
+                now + timedelta(days=10),
+                "prizes",
+                invites_per_point=2,
+                min_stay_hours=168,
+                max_points=20,
+                num_winners=5,
+            )
+            db.upsert_user(10, "u10", "U10", now=now - timedelta(hours=3))
+            db.track_funnel_event(
+                campaign.id, 10, "bot_start", "referral", now - timedelta(hours=2)
+            )
+            db.track_funnel_event(
+                campaign.id, 10, "bot_start", "mainchannel_b", now - timedelta(hours=1)
+            )
+
+            self.assertEqual(
+                _participant_first_touch_source(db, campaign.id, 10),
+                "referral",
+            )
+            self.assertEqual(
+                _participant_first_touch_source(db, campaign.id, 999),
+                "legacy/untracked",
+            )
 
     def test_early_share_nudge_defaults_to_two_hours(self):
         env = {
