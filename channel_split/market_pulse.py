@@ -65,9 +65,9 @@ def build_turkey_fx_pulse_post(
 
     table_lines = [
         f"{'MARKET':<8} {'RATE':>8} {'Δ24H':>7}",
-        f"{'USD/TRY':<8} {_fmt_rate(usd_mid):>8} "
+        f"{'🇺🇸USD/TL':<8} {_fmt_rate(usd_mid):>8} "
         f"{_fmt_change(usd.buy, usd.sell, previous_usd.get('Kapalıçarşı')):>7}",
-        f"{'EUR/TRY':<8} {_fmt_rate(eur_mid):>8} "
+        f"{'🇪🇺EUR/TL':<8} {_fmt_rate(eur_mid):>8} "
         f"{_fmt_change(eur.buy, eur.sell, previous_eur.get('Kapalıçarşı')):>7}",
     ]
 
@@ -76,11 +76,14 @@ def build_turkey_fx_pulse_post(
     return "\n".join(
         [
             "📊 <b>نبض بازار ارز ترکیه | 24H</b>",
+            "🇺🇸USD/🇹🇷TL",
+            "🇪🇺EUR/🇹🇷TL",
             "",
-            "🏛️ نرخ میانی Kapalıçarşı",
+            "🏛 نرخ میانی دلار و یورو  Kapalıçarşı",
             "",
             "<pre>" + "\n".join(table_lines) + "</pre>",
             "",
+            "💵 واحد: لیر ترکیه 🇹🇷",
             f"🕒 <code>{local_now.strftime('%H:%M')}</code> استانبول",
             "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
         ]
