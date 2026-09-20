@@ -81,6 +81,9 @@ def _safe_error(exc: Exception, proxy_url: str | None = None) -> str:
         r"\1***:***@",
         text,
     )
+    text = text.strip()
+    if not text:
+        text = type(exc).__name__
     return text[:500]
 
 
