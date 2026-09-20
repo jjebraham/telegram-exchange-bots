@@ -122,12 +122,13 @@ class HybridUsdtComparisonTests(unittest.TestCase):
         self.assertIn("🌐 مستقیم <b>1</b>", post)
         self.assertIn("🧩 پشتیبان <b>1</b>", post)
         self.assertNotIn("میانگین", post)
+        self.assertIn("🔴 SELL = فروش　•　🟢 BUY = خرید", post)
         self.assertIn(
-            "🛒 کمترین قیمت خرید: <b>Wallex</b>　<code>229,100</code> تومان",
+            "🛒 کمترین قیمت خرید: <b>والکس</b> <code>229,100</code> تومان",
             post,
         )
         self.assertIn(
-            "💰 بیشترین قیمت فروش: <b>Nobitex</b>　<code>229,100</code> تومان",
+            "💰 بیشترین قیمت فروش: <b>نوبیتکس</b>　<code>229,100</code> تومان",
             post,
         )
         self.assertIn("تهران", post)
