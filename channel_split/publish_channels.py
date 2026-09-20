@@ -43,7 +43,6 @@ from ramzinex_usdt import build_ramzinex_usdt_post, fetch_ramzinex_usdt
 from abantether_usdt import build_abantether_usdt_post, fetch_abantether_usdt
 from tetherland_usdt import build_tetherland_usdt_post, fetch_tetherland_usdt
 from direct_usdt_compare import fetch_and_build_direct_usdt_comparison
-from primary_usdt import build_primary_usdt_post
 from hybrid_usdt_compare import fetch_and_build_hybrid_usdt_post
 from market_pulse import build_turkey_fx_pulse_post
 from market_history import (
@@ -522,7 +521,7 @@ def main() -> int:
         )
 
     if args.post in {"alanchande-usdt-exchanges", "alanchande-markets"}:
-        add_alanchande(build_primary_usdt_post())
+        add_alanchande(fetch_and_build_hybrid_usdt_post())
 
     if args.post == "alanchande-usdt-tgju":
         add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
