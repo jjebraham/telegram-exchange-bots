@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,15 @@ class GoldQuote:
     buy: Decimal
     sell: Decimal
 
+
+ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+
+DISPLAY_GOLD_NAMES = {
+    "gram": "Gram",
+    "quarter": "Quarter",
+    "half": "Half",
+    "republic": "Republic",
+}
 
 GOLD_ASSETS = (
     (
@@ -128,14 +139,25 @@ def build_turkish_gold_post(quotes: list[GoldQuote]) -> str:
     if not quotes:
         raise ValueError("No gold quotes supplied")
 
-    lines = [
-        "🥇 <b>طلای ترکیه | Kapalıçarşı</b>",
-        "",
-        "خرید از شما | فروش به شما",
-        "",
+    table_lines = [
+        f"{'GOLD':<8} {'SELL':>9} {'BUY':>9}",
     ]
     for quote in quotes:
-        lines.append(
-            f"• {quote.fa_label}: <b>{_fmt_tl(quote.buy)}</b> | <b>{_fmt_tl(quote.sell)}</b> لیر"
+        table_lines.append(
+            f"{DISPLAY_GOLD_NAMES.get(quote.key, quote.key):<8} "
+            f"{_fmt_tl(quote.sell):>9} "
+            f"{_fmt_tl(quote.buy):>9}"
         )
+
+    lines = [
+        "🥇 <b>قیمت طلای ترکیه | Kapalıçarşı</b>",
+        "",
+        "🔴 SELL = فروش　•　🟢 BUY = خرید",
+        "",
+        "<pre>" + "\n".join(table_lines) + "</pre>",
+        "",
+        "💵 واحد: لیر ترکیه",
+        f"🕒 <code>{datetime.now(ISTANBUL_TZ).strftime('%H:%M')}</code> استانبول",
+        "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
+    ]
     return "\n".join(lines)
