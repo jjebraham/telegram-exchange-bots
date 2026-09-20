@@ -43,6 +43,7 @@ from tetherland_usdt import build_tetherland_usdt_post, fetch_tetherland_usdt
 from direct_usdt_compare import fetch_and_build_direct_usdt_comparison
 from primary_usdt import build_primary_usdt_post
 from hybrid_usdt_compare import fetch_and_build_hybrid_usdt_post
+from market_pulse import build_turkey_fx_pulse_post
 from market_history import (
     DEFAULT_HISTORY_DB,
     build_alanchande_daily_change_post,
@@ -297,6 +298,7 @@ def main() -> int:
             "alanchande-converter",
             "alanchande-snapshot",
             "alanchande-daily-change",
+            "alanchande-fx-pulse",
             "alanchande-turkey-gold",
             "alanchande-iran-gold",
             "alanchande-usdt-exchanges",
@@ -491,6 +493,16 @@ def main() -> int:
         stored = load_day(history_db, current.local_date)
         add_alanchande(build_alanchande_daily_change_post(stored, current))
 
+    if args.post == "alanchande-fx-pulse":
+        add_alanchande(
+            build_turkey_fx_pulse_post(
+                get_usd_quotes(),
+                get_eur_quotes(),
+                load_bank_fx_near_24h(history_db, "USD/TRY"),
+                load_bank_fx_near_24h(history_db, "EUR/TRY"),
+            )
+        )
+
     if args.post in {"alanchande-turkey-gold", "alanchande-markets"}:
         add_alanchande(build_turkish_gold_post(get_turkey_gold()))
 
@@ -563,6 +575,12 @@ def main() -> int:
     if args.post in {"eur-bank-comparison", "bank-comparisons"}:
         timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
         print(f"recorded EUR/TRY bank snapshot -> {timestamp}")
+
+    if args.post == "alanchande-fx-pulse":
+        usd_timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
+        eur_timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
+        print(f"recorded USD/TRY FX pulse snapshot -> {usd_timestamp}")
+        print(f"recorded EUR/TRY FX pulse snapshot -> {eur_timestamp}")
 
     return 0
 
