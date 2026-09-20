@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from typing import Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -135,18 +136,44 @@ def _fmt_tl(value: Decimal) -> str:
     return f"{rounded:,.2f}".rstrip("0").rstrip(".")
 
 
-def build_turkish_gold_post(quotes: list[GoldQuote]) -> str:
+def _midpoint(buy: Decimal, sell: Decimal) -> Decimal:
+    return (buy + sell) / Decimal("2")
+
+
+def _fmt_change_pct(
+    quote: GoldQuote,
+    previous: tuple[Decimal, Decimal] | None,
+) -> str:
+    if previous is None:
+        return "—"
+    previous_mid = _midpoint(previous[0], previous[1])
+    if previous_mid == 0:
+        return "—"
+    current_mid = _midpoint(quote.buy, quote.sell)
+    change = ((current_mid - previous_mid) / previous_mid) * Decimal("100")
+    rounded = change.quantize(Decimal("0.01"))
+    if rounded > 0:
+        return f"+{rounded:.2f}%"
+    return f"{rounded:.2f}%"
+
+
+def build_turkish_gold_post(
+    quotes: list[GoldQuote],
+    previous: Mapping[str, tuple[Decimal, Decimal]] | None = None,
+) -> str:
     if not quotes:
         raise ValueError("No gold quotes supplied")
 
+    previous = previous or {}
     table_lines = [
-        f"🌕{'GOLD':<8} {'SELL':>9} {'BUY':>9}",
+        f"🌕{'GOLD':<8} {'SELL':>9} {'BUY':>9} {'Δ24H':>7}",
     ]
     for quote in quotes:
         table_lines.append(
             f"🌕{DISPLAY_GOLD_NAMES.get(quote.key, quote.key):<8} "
             f"{_fmt_tl(quote.sell):>9} "
-            f"{_fmt_tl(quote.buy):>9}"
+            f"{_fmt_tl(quote.buy):>9} "
+            f"{_fmt_change_pct(quote, previous.get(quote.key)):>7}"
         )
 
     lines = [
