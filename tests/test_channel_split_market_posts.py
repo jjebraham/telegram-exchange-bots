@@ -77,9 +77,22 @@ class MarketPostTests(unittest.TestCase):
         self.assertEqual(market.mesghal_rial, Decimal("1037000000"))
 
         post = build_iran_gold_post(market)
-        self.assertIn("<code>237,500,000</code>", post)
-        self.assertIn("<code>23,939,240</code>", post)
-        self.assertIn("<code>-205,000</code>", post)
+        self.assertIn("<pre>", post)
+        self.assertIn("MARKET", post)
+        self.assertIn("PRICE", post)
+        self.assertIn("BUBBLE", post)
+        self.assertIn("IMAMI", post)
+        self.assertIn("BAHAR", post)
+        self.assertIn("HALF", post)
+        self.assertIn("QUARTER", post)
+        self.assertIn("GERAMI", post)
+        self.assertIn("GOLD18", post)
+        self.assertIn("MESGHAL", post)
+        self.assertIn("237,500,000", post)
+        self.assertIn("23,939,240", post)
+        self.assertIn("-205,000", post)
+        self.assertIn("BUBBLE = حباب سکه", post)
+        self.assertIn("قیمت‌ها صرفاً جهت اطلاع‌رسانی است.", post)
 
     @staticmethod
     def _usdt_row(name, sell, buy, change, date_time):
