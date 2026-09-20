@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 
-from price_proxy import fetch_json_with_price_proxy
+from price_proxy import fetch_json_direct_then_price_proxy
 
 TABDEAL_DEPTH_URL = "https://api1.tabdeal.org/r/api/v1/depth"
 
@@ -73,7 +73,7 @@ def parse_tabdeal_usdt_depth(payload: dict) -> TabdealUsdtQuote:
 
 def fetch_tabdeal_usdt(timeout: float | None = None) -> TabdealUsdtQuote:
     query = urlencode({"symbol": "USDTIRT", "limit": 1})
-    payload = fetch_json_with_price_proxy(
+    payload = fetch_json_direct_then_price_proxy(
         f"{TABDEAL_DEPTH_URL}?{query}",
         headers={
             "Accept": "application/json",
