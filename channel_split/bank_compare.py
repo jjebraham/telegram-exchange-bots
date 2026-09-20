@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
-from typing import Iterable
+from typing import Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -154,18 +154,47 @@ def _fmt_table(value: Decimal) -> str:
     return f"{value:.4f}"
 
 
-def _build_comparison_post(quotes: list[BankQuote], *, title: str, pair: str) -> str:
+def _midpoint(buy: Decimal, sell: Decimal) -> Decimal:
+    return (buy + sell) / Decimal("2")
+
+
+def _fmt_change_pct(
+    current: BankQuote,
+    previous: tuple[Decimal, Decimal] | None,
+) -> str:
+    if previous is None:
+        return "—"
+    previous_mid = _midpoint(previous[0], previous[1])
+    if previous_mid == 0:
+        return "—"
+    current_mid = _midpoint(current.buy, current.sell)
+    change = ((current_mid - previous_mid) / previous_mid) * Decimal("100")
+    rounded = change.quantize(Decimal("0.01"))
+    if rounded > 0:
+        return f"+{rounded:.2f}%"
+    return f"{rounded:.2f}%"
+
+
+def _build_comparison_post(
+    quotes: list[BankQuote],
+    *,
+    title: str,
+    pair: str,
+    previous: Mapping[str, tuple[Decimal, Decimal]] | None = None,
+) -> str:
     if not quotes:
         raise ValueError("No bank quotes supplied")
 
+    previous = previous or {}
     table_lines = [
-        f"{'MARKET':<8} {'SELL':>8} {'BUY':>8}",
+        f"{'MARKET':<8} {'SELL':>8} {'BUY':>8} {'Δ24H':>7}",
     ]
     for q in quotes:
         table_lines.append(
             f"{DISPLAY_NAMES.get(q.name, q.name):<8} "
             f"{_fmt_table(q.sell):>8} "
-            f"{_fmt_table(q.buy):>8}"
+            f"{_fmt_table(q.buy):>8} "
+            f"{_fmt_change_pct(q, previous.get(q.name)):>7}"
         )
 
     lines = [
@@ -183,9 +212,25 @@ def _build_comparison_post(quotes: list[BankQuote], *, title: str, pair: str) ->
     return "\n".join(lines)
 
 
-def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
-    return _build_comparison_post(quotes, title="مقایسه نرخ دلار در ترکیه", pair="USD/TRY")
+def build_usd_comparison_post(
+    quotes: list[BankQuote],
+    previous: Mapping[str, tuple[Decimal, Decimal]] | None = None,
+) -> str:
+    return _build_comparison_post(
+        quotes,
+        title="مقایسه نرخ دلار در ترکیه",
+        pair="USD/TRY",
+        previous=previous,
+    )
 
 
-def build_eur_comparison_post(quotes: list[BankQuote]) -> str:
-    return _build_comparison_post(quotes, title="مقایسه نرخ یورو در ترکیه", pair="EUR/TRY")
+def build_eur_comparison_post(
+    quotes: list[BankQuote],
+    previous: Mapping[str, tuple[Decimal, Decimal]] | None = None,
+) -> str:
+    return _build_comparison_post(
+        quotes,
+        title="مقایسه نرخ یورو در ترکیه",
+        pair="EUR/TRY",
+        previous=previous,
+    )
