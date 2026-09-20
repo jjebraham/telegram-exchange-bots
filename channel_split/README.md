@@ -37,18 +37,26 @@ Available post names:
 - `alanchande-daily-change` — intraday USD/EUR movement from local SQLite history.
 - `alanchande-turkey-gold` — Turkish Kapalıçarşı gold products.
 - `alanchande-iran-gold` — Iranian coin/gold prices + coin bubbles, converted from rial to toman.
-- `alanchande-usdt-exchanges` — USDT sell prices across selected Iranian exchanges.
-- `alanchande-markets` — sends the Turkish-gold, Iran-gold and Iran-USDT boards together.
+- `alanchande-usdt-exchanges` — primary USDT comparison from direct exchange APIs (Wallex, Exir, Ramzinex), with automatic TGJU fallback only if fewer than two direct sources survive.
+- `alanchande-usdt-direct` — direct-source-only USDT comparison for diagnostics.
+- `alanchande-usdt-tgju` — legacy TGJU comparison for diagnostics/fallback validation.
+- `alanchande-markets` — sends the Turkish-gold, Iran-gold and primary Iran-USDT boards together.
 
 The USD/EUR comparison source layer is isolated in `bank_compare.py`.
 Turkish gold is isolated in `gold_prices.py`. Iran gold/coin is isolated in
-`iran_gold.py`, and the Iranian-exchange USDT board is isolated in
-`iran_usdt.py`.
+`iran_gold.py`.
 
-The USDT comparison intentionally fails closed when too few preferred exchanges
-survive freshness/outlier checks. It filters older source-date rows, rows more
-than 90 minutes behind the freshest same-day quote, and sell-price outliers more
-than 12% away from the median.
+The primary USDT comparison is isolated in `direct_usdt_compare.py` and currently
+normalizes live Wallex, Exir and Ramzinex bid/ask data into customer-buy and
+customer-sell prices. Providers are fetched independently and concurrently; one
+provider may fail without killing the board, but at least two direct sources are
+required. Midpoint outliers more than 8% away from the cross-source median are
+discarded.
+
+`primary_usdt.py` promotes this direct board to the normal AlanChande flow. If
+the direct quorum drops below two sources, it automatically falls back to the
+legacy TGJU comparison in `iran_usdt.py`. The TGJU fallback retains its existing
+date/freshness and 12%-from-median filters.
 
 ### Kiani Exchange
 
@@ -160,6 +168,8 @@ python3 -m unittest discover -s ../tests -p 'test_channel_split_*.py'
 python3 publish_channels.py --post alanchande-turkey-gold --dry-run
 python3 publish_channels.py --post alanchande-iran-gold --dry-run
 python3 publish_channels.py --post alanchande-usdt-exchanges --dry-run
+python3 publish_channels.py --post alanchande-usdt-direct --dry-run
+python3 publish_channels.py --post alanchande-usdt-tgju --dry-run
 
 # Preview all three new boards.
 python3 publish_channels.py --post alanchande-markets --dry-run
@@ -179,6 +189,6 @@ Or send all three:
 python3 publish_channels.py --post alanchande-markets
 ```
 
-The Iran-market MVP uses public TGJU pages for test-channel validation. Before
-production-scale redistribution, verify source reuse/licensing terms and monitor
-the parser for upstream HTML changes.
+The USDT board now prefers direct exchange APIs. TGJU is retained as a fallback
+and diagnostic source only. Before production-scale redistribution, verify each
+provider's reuse/licensing terms and continue monitoring API/schema changes.
