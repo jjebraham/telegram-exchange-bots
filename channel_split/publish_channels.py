@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -267,6 +267,22 @@ def build_kiani_examples_post(rates: dict[str, Decimal]) -> str:
     return "\n".join(lines)
 
 
+def build_resilient_market_bundle(
+    builders: list[tuple[str, Callable[[], str]]],
+) -> tuple[list[tuple[str, str]], dict[str, str]]:
+    """Build independent AlanChande market posts without one failure killing all."""
+    posts: list[tuple[str, str]] = []
+    failures: dict[str, str] = {}
+
+    for key, builder in builders:
+        try:
+            posts.append((key, builder()))
+        except Exception as exc:
+            failures[key] = f"{type(exc).__name__}: {exc}"[:300]
+
+    return posts, failures
+
+
 def telegram_send(token: str, chat_id: str, text: str, timeout: int = 20) -> dict[str, Any]:
     endpoint = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = urlencode(
@@ -345,6 +361,7 @@ def main() -> int:
 
     # (token_env, destination_env, text)
     jobs: list[tuple[str, str, str]] = []
+    successful_market_posts: set[str] = set()
     rates_cache: dict[str, Decimal] | None = None
     usd_quotes_cache: list[Any] | None = None
     eur_quotes_cache: list[Any] | None = None
@@ -509,24 +526,58 @@ def main() -> int:
             )
         )
 
-    if args.post in {"alanchande-turkey-gold", "alanchande-markets"}:
+    if args.post == "alanchande-turkey-gold":
         add_alanchande(
             build_turkish_gold_post(
                 get_turkey_gold(),
                 load_turkey_gold_near_24h(history_db),
             )
         )
+        successful_market_posts.add("turkey-gold")
 
-    if args.post in {"alanchande-iran-gold", "alanchande-markets"}:
+    if args.post == "alanchande-iran-gold":
         add_alanchande(
             build_iran_gold_post(
                 get_iran_gold(),
                 load_iran_gold_near_24h(history_db),
             )
         )
+        successful_market_posts.add("iran-gold")
 
-    if args.post in {"alanchande-usdt-exchanges", "alanchande-markets"}:
+    if args.post == "alanchande-usdt-exchanges":
         add_alanchande(build_default_alanchande_usdt_post())
+        successful_market_posts.add("usdt")
+
+    if args.post == "alanchande-markets":
+        market_posts, market_failures = build_resilient_market_bundle(
+            [
+                (
+                    "turkey-gold",
+                    lambda: build_turkish_gold_post(
+                        get_turkey_gold(),
+                        load_turkey_gold_near_24h(history_db),
+                    ),
+                ),
+                (
+                    "iran-gold",
+                    lambda: build_iran_gold_post(
+                        get_iran_gold(),
+                        load_iran_gold_near_24h(history_db),
+                    ),
+                ),
+                ("usdt", build_default_alanchande_usdt_post),
+            ]
+        )
+
+        for key, text in market_posts:
+            add_alanchande(text)
+            successful_market_posts.add(key)
+
+        for key, error in market_failures.items():
+            print(f"WARNING: skipped {key}: {error}", file=sys.stderr)
+
+        if not market_posts:
+            raise RuntimeError("All AlanChande market posts failed")
 
     if args.post == "alanchande-usdt-tgju":
         add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
@@ -598,11 +649,11 @@ def main() -> int:
         print(f"recorded USD/TRY FX pulse snapshot -> {usd_timestamp}")
         print(f"recorded EUR/TRY FX pulse snapshot -> {eur_timestamp}")
 
-    if args.post in {"alanchande-turkey-gold", "alanchande-markets"}:
+    if "turkey-gold" in successful_market_posts:
         timestamp = record_turkey_gold_quotes(history_db, get_turkey_gold())
         print(f"recorded Turkey gold snapshot -> {timestamp}")
 
-    if args.post in {"alanchande-iran-gold", "alanchande-markets"}:
+    if "iran-gold" in successful_market_posts:
         timestamp = record_iran_gold_market(history_db, get_iran_gold())
         print(f"recorded Iran gold snapshot -> {timestamp}")
 
