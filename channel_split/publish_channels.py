@@ -40,6 +40,7 @@ from bitpin_usdt import build_bitpin_usdt_post, fetch_bitpin_usdt
 from ramzinex_usdt import build_ramzinex_usdt_post, fetch_ramzinex_usdt
 from abantether_usdt import build_abantether_usdt_post, fetch_abantether_usdt
 from tetherland_usdt import build_tetherland_usdt_post, fetch_tetherland_usdt
+from direct_usdt_compare import fetch_and_build_direct_usdt_comparison
 from market_history import (
     DEFAULT_HISTORY_DB,
     build_alanchande_daily_change_post,
@@ -303,6 +304,7 @@ def main() -> int:
             "alanchande-usdt-ramzinex",
             "alanchande-usdt-abantether",
             "alanchande-usdt-tetherland",
+            "alanchande-usdt-direct",
             "alanchande-markets",
             "kiani-rates",
             "kiani-try",
@@ -505,6 +507,9 @@ def main() -> int:
 
     if args.post == "alanchande-usdt-tetherland":
         add_alanchande(build_tetherland_usdt_post(get_tetherland_usdt()))
+
+    if args.post == "alanchande-usdt-direct":
+        add_alanchande(fetch_and_build_direct_usdt_comparison())
 
     if args.post in {"kiani-rates", "all"}:
         add_kiani(build_kiani_rate_post(get_rates()))
