@@ -111,19 +111,23 @@ class HybridUsdtComparisonTests(unittest.TestCase):
 
         post = build_hybrid_usdt_post(quotes)
         self.assertNotIn("1️⃣", post)
-        self.assertIn("<b>والکس</b>", post)
-        self.assertIn("🔴 فروش　<code>229,100</code>", post)
-        self.assertIn("🟢 خرید　<code>229,000</code>", post)
-        self.assertIn("🌐 مستقیم: <b>1</b>", post)
-        self.assertIn("🧩 پشتیبان: <b>1</b>", post)
-        self.assertIn("🟢 میانگین خرید", post)
-        self.assertIn("🔴 میانگین فروش", post)
+        self.assertIn("EXCHANGE", post)
+        self.assertIn("SELL", post)
+        self.assertIn("BUY", post)
+        self.assertIn("Δ24H", post)
+        self.assertIn("Wallex", post)
+        self.assertIn("Nobitex", post)
+        self.assertIn("<pre>", post)
+        self.assertIn("+1.00%", post)
+        self.assertIn("🌐 مستقیم <b>1</b>", post)
+        self.assertIn("🧩 پشتیبان <b>1</b>", post)
+        self.assertNotIn("میانگین", post)
         self.assertIn(
-            "🏆 پایین‌ترین قیمت برای خرید: <b>والکس</b>　<code>229,100</code> تومان",
+            "🛒 کمترین قیمت خرید: <b>Wallex</b>　<code>229,100</code> تومان",
             post,
         )
         self.assertIn(
-            "🏆 بالاترین قیمت برای فروش: <b>نوبیتکس</b>　<code>229,100</code> تومان",
+            "💰 بیشترین قیمت فروش: <b>Nobitex</b>　<code>229,100</code> تومان",
             post,
         )
         self.assertIn("تهران", post)
