@@ -14,14 +14,26 @@ available, each bank can be replaced without changing the Telegram formatter.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from typing import Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 USD_COMPARISON_URL = "https://kur.doviz.com/kapalicarsi/amerikan-dolari"
 EUR_COMPARISON_URL = "https://kur.doviz.com/kapalicarsi/euro"
+ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+
+DISPLAY_NAMES = {
+    "Kapalıçarşı": "KAPALI",
+    "Garanti BBVA": "GARANTI",
+    "İş Bankası": "ISBANK",
+    "Kuveyt Türk": "KUVEYT",
+    "Ziraat Bankası": "ZIRAAT",
+}
+
 TARGETS = (
     "Kapalıçarşı",
     "Garanti BBVA",
@@ -138,26 +150,50 @@ def _fmt(value: Decimal) -> str:
     return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
+def _fmt_table(value: Decimal) -> str:
+    return f"{value:.4f}"
+
+
 def _build_comparison_post(quotes: list[BankQuote], *, title: str, pair: str) -> str:
     if not quotes:
         raise ValueError("No bank quotes supplied")
 
+    cheapest_buy = min(quotes, key=lambda q: q.sell)
+    highest_sell = max(quotes, key=lambda q: q.buy)
+
+    table_lines = [
+        f"{'MARKET':<8} {'SELL':>8} {'BUY':>8}",
+    ]
+    for q in quotes:
+        table_lines.append(
+            f"{DISPLAY_NAMES.get(q.name, q.name):<8} "
+            f"{_fmt_table(q.sell):>8} "
+            f"{_fmt_table(q.buy):>8}"
+        )
+
     lines = [
         f"🏦 <b>{title}</b>",
         "",
-        f"نرخ {pair}",
-        "خرید از شما | فروش به شما",
+        f"💱 <b>{pair}</b>",
+        "🔴 SELL = فروش　•　🟢 BUY = خرید",
         "",
+        "<pre>" + "\n".join(table_lines) + "</pre>",
+        "",
+        f"🛒 کمترین قیمت خرید: <b>{cheapest_buy.name}</b>　"
+        f"<code>{_fmt(cheapest_buy.sell)}</code>",
+        f"💰 بیشترین قیمت فروش: <b>{highest_sell.name}</b>　"
+        f"<code>{_fmt(highest_sell.buy)}</code>",
+        "",
+        f"🕒 <code>{datetime.now(ISTANBUL_TZ).strftime('%H:%M')}</code> استانبول",
+        "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
     ]
-    for q in quotes:
-        lines.append(f"• {q.name}: <b>{_fmt(q.buy)}</b> | <b>{_fmt(q.sell)}</b>")
 
     return "\n".join(lines)
 
 
 def build_usd_comparison_post(quotes: list[BankQuote]) -> str:
-    return _build_comparison_post(quotes, title="دلار امروز کجا بهتره؟", pair="USD/TRY")
+    return _build_comparison_post(quotes, title="مقایسه نرخ دلار در ترکیه", pair="USD/TRY")
 
 
 def build_eur_comparison_post(quotes: list[BankQuote]) -> str:
-    return _build_comparison_post(quotes, title="یورو امروز کجا بهتره؟", pair="EUR/TRY")
+    return _build_comparison_post(quotes, title="مقایسه نرخ یورو در ترکیه", pair="EUR/TRY")
