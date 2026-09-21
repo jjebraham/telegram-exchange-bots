@@ -108,6 +108,73 @@ class PublisherSafetyModeTests(unittest.TestCase):
             self.assertIn("BLOCKED", status)
             self.assertIn("published=1", status)
 
+    def test_garanti_external_consensus_can_verify_when_official_is_down(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "bank-comparison"]
+            garanti = BankQuote(
+                name="Garanti BBVA",
+                buy=Decimal("47.6750"),
+                sell=Decimal("49.6750"),
+            )
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_usd_comparison",
+                    return_value=[garanti],
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_altinkaynak_currency_quotes",
+                    return_value={},
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_garanti_quote",
+                    side_effect=RuntimeError("official unavailable"),
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_canlidoviz_garanti_quote",
+                    return_value=(
+                        Decimal("47.6748"),
+                        Decimal("49.6752"),
+                    ),
+                ),
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                    return_value={"ok": True},
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_bank_fx_quotes",
+                    return_value="2026-09-22T00:00:00+00:00",
+                ) as record_bank_fx_quotes,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_called_once()
+            record_bank_fx_quotes.assert_called_once()
+
+            status = recent_safety_status(db)
+            self.assertIn("VERIFIED", status)
+            self.assertIn("published=1", status)
+            self.assertEqual(
+                load_last_accepted(db, "bank:USD/TRY:Garanti BBVA:buy"),
+                Decimal("47.6749"),
+            )
+            self.assertEqual(
+                load_last_accepted(db, "bank:USD/TRY:Garanti BBVA:sell"),
+                Decimal("49.6751"),
+            )
+
     def test_enforce_verified_post_is_sent_and_becomes_baseline(self):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
