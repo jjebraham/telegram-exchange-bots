@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
+import json
 import re
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 ISBANK_URL = "https://www.isbank.com.tr/doviz-kurlari"
 ZIRAAT_URL = "https://www.ziraatbank.com.tr/tr/fiyatlar-ve-oranlar"
+KUVEYT_PORTAL_URL = "https://www.kuveytturk.com.tr/finans-portali"
 
 
 class _TableParser(HTMLParser):
@@ -172,6 +175,105 @@ def parse_ziraat_midpoint(
             f"closest deviation {deviation.quantize(Decimal('0.01'))}%"
         )
     return selected
+
+
+def parse_kuveyt_quote(
+    payload: object,
+    pair: str,
+) -> tuple[Decimal, Decimal]:
+    code = _pair_code(pair)
+    if not isinstance(payload, list):
+        raise ValueError("Kuveyt official exchange-rates response is not a list")
+
+    row = next(
+        (
+            item
+            for item in payload
+            if isinstance(item, dict)
+            and str(item.get("CurrencyCode", "")).strip().upper() == code
+        ),
+        None,
+    )
+    if row is None:
+        raise ValueError(f"Kuveyt official exchange-rates response is missing {code}")
+
+    try:
+        buy = Decimal(str(row["BuyRate"]))
+        sell = Decimal(str(row["SellRate"]))
+    except (KeyError, InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Kuveyt official {code} row has invalid BuyRate/SellRate"
+        ) from exc
+
+    if (
+        not buy.is_finite()
+        or not sell.is_finite()
+        or buy <= 0
+        or sell <= 0
+        or sell <= buy
+    ):
+        raise ValueError(
+            f"Kuveyt official {code} quote is invalid: buy={buy} sell={sell}"
+        )
+    return buy, sell
+
+
+def _discover_kuveyt_exchange_rates_url(timeout: int = 20) -> str:
+    html = _fetch_html(KUVEYT_PORTAL_URL, timeout)
+    match = re.search(
+        r"""<script[^>]+src=["']([^"']*magiclick\.core\.min\.js[^"']*)["']""",
+        html,
+        re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError("Kuveyt finance portal does not expose magiclick.core")
+
+    core_url = urljoin(KUVEYT_PORTAL_URL, match.group(1))
+    javascript = _fetch_html(core_url, timeout)
+    endpoint_match = re.search(
+        r"""\bexchangeRates\s*:\s*["']([^"']+)["']""",
+        javascript,
+        re.IGNORECASE,
+    )
+    if not endpoint_match:
+        raise ValueError("Kuveyt core script does not expose exchangeRates endpoint")
+
+    endpoint = urljoin(KUVEYT_PORTAL_URL, endpoint_match.group(1))
+    if not endpoint.startswith("https://www.kuveytturk.com.tr/"):
+        raise ValueError(
+            f"Kuveyt exchange-rates endpoint escaped official host: {endpoint}"
+        )
+    return endpoint
+
+
+def _fetch_json(url: str, timeout: int = 20) -> object:
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5",
+            "User-Agent": "AlanChande-BankSafetyVerifier/1.0",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        raise RuntimeError(
+            f"Official bank verifier returned HTTP {exc.code} for {url}"
+        ) from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Could not load official bank JSON verifier {url}: {exc}"
+        ) from exc
+
+
+def fetch_kuveyt_quote(
+    pair: str,
+    timeout: int = 20,
+) -> tuple[Decimal, Decimal]:
+    endpoint = _discover_kuveyt_exchange_rates_url(timeout)
+    return parse_kuveyt_quote(_fetch_json(endpoint, timeout), pair)
 
 
 def _fetch_html(url: str, timeout: int = 20) -> str:
