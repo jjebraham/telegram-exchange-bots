@@ -17,8 +17,11 @@ from market_safety import (
     SUSPICIOUS,
     VERIFIED,
     PostSafetyAssessment,
+    SourceHealthEvent,
     alert_action,
     mark_alert_sent,
+    mark_source_health_alert_sent,
+    source_health_action,
 )
 
 
@@ -146,4 +149,71 @@ def maybe_notify_admin(
     )
     _send(token, chat_id, text)
     mark_alert_sent(db_path, assessment, action=action)
+    return action
+
+
+def format_source_health_alert(
+    event: SourceHealthEvent,
+    *,
+    recovery: bool,
+) -> str:
+    if recovery:
+        return "\n".join(
+            [
+                "✅ <b>AlanChande source recovered</b>",
+                "",
+                f"Source: <code>{html.escape(event.source_key)}</code>",
+                f"Time: <code>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</code>",
+                "",
+                "The provider is reachable/healthy again.",
+            ]
+        )
+
+    return "\n".join(
+        [
+            "⚠️ <b>AlanChande source degraded</b>",
+            "",
+            f"Source: <code>{html.escape(event.source_key)}</code>",
+            f"Time: <code>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</code>",
+            "",
+            f"Detail: {html.escape(event.detail or 'unavailable')}",
+            "",
+            "ℹ️ The public post may still be published if the remaining "
+            "independent sources satisfy the safety quorum.",
+        ]
+    )
+
+
+def maybe_notify_source_health(
+    db_path: Path,
+    event: SourceHealthEvent,
+    *,
+    token: str | None,
+    chat_id: str | None,
+    repeat_minutes: int = 60,
+) -> str | None:
+    action = source_health_action(
+        db_path,
+        event,
+        repeat_minutes=repeat_minutes,
+    )
+    if action is None:
+        return None
+
+    if not token or not chat_id:
+        return action
+
+    _send(
+        token,
+        chat_id,
+        format_source_health_alert(
+            event,
+            recovery=action == "recovery",
+        ),
+    )
+    mark_source_health_alert_sent(
+        db_path,
+        event,
+        action=action,
+    )
     return action
