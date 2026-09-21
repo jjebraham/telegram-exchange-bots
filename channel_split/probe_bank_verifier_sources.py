@@ -25,6 +25,9 @@ GARANTI_APP = (
     "currency-convertor-app-v3/?lang=tr"
 )
 KUVEYT_PORTAL = "https://www.kuveytturk.com.tr/finans-portali"
+KUVEYT_CONVERTER = (
+    "https://www.kuveytturk.com.tr/hesaplama-araclari/doviz-cevirici"
+)
 
 KEYWORDS = (
     "api",
@@ -39,6 +42,48 @@ KEYWORDS = (
     "market",
     "quote",
     "forex",
+    "parity",
+    "parities",
+    "converter",
+    "convertor",
+    "finance",
+    "portal",
+    "summary",
+)
+
+
+CALL_URL_PATTERNS = (
+    re.compile(
+        r"""fetch\(\s*["']([^"']{2,300})["']""",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"""axios(?:\.[a-z]+)?\(\s*["']([^"']{2,300})["']""",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"""\.open\(\s*["'][A-Z]+["']\s*,\s*["']([^"']{2,300})["']""",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"""\burl\s*:\s*["']([^"']{2,300})["']""",
+        re.IGNORECASE,
+    ),
+)
+
+CONTEXT_TERMS = (
+    "currency",
+    "exchange",
+    "doviz",
+    "döviz",
+    "parity",
+    "parities",
+    "alis",
+    "alış",
+    "satis",
+    "satış",
+    "usd",
+    "try",
 )
 
 ABSOLUTE_URL_RE = re.compile(
@@ -108,6 +153,13 @@ def _interesting(candidate: str) -> bool:
 def extract_endpoint_candidates(text: str, base_url: str) -> list[str]:
     found: set[str] = set()
 
+    for pattern in CALL_URL_PATTERNS:
+        for match in pattern.findall(text):
+            candidate = urljoin(base_url, match)
+            parsed = urlparse(candidate)
+            if parsed.scheme in {"http", "https"}:
+                found.add(candidate)
+
     for match in ABSOLUTE_URL_RE.findall(text):
         cleaned = match.rstrip(".,;]")
         if _interesting(cleaned):
@@ -131,17 +183,50 @@ def extract_endpoint_candidates(text: str, base_url: str) -> list[str]:
     return sorted(found)
 
 
+
+def extract_context_snippets(
+    text: str,
+    *,
+    radius: int = 180,
+    limit: int = 24,
+) -> list[str]:
+    """Return compact unique JS contexts around rate-related terms."""
+    lowered = text.lower()
+    snippets: list[str] = []
+    seen: set[str] = set()
+
+    for term in CONTEXT_TERMS:
+        start = 0
+        needle = term.lower()
+        while len(snippets) < limit:
+            index = lowered.find(needle, start)
+            if index < 0:
+                break
+            left = max(0, index - radius)
+            right = min(len(text), index + len(term) + radius)
+            snippet = " ".join(text[left:right].split())
+            if snippet and snippet not in seen:
+                seen.add(snippet)
+                snippets.append(snippet)
+            start = index + len(term)
+        if len(snippets) >= limit:
+            break
+
+    return snippets
+
+
 def discover_page(
     label: str,
     url: str,
     *,
     max_assets: int,
+    max_bytes: int,
 ) -> None:
     print(f"\n===== {label} =====")
     print(f"page: {url}")
 
     try:
-        html = _fetch_text(url)
+        html = _fetch_text(url, max_bytes=max_bytes)
     except Exception as exc:
         print(f"PAGE ERROR: {type(exc).__name__}: {exc}")
         return
@@ -177,18 +262,23 @@ def discover_page(
             continue
         print(f"\nasset: {asset}")
         try:
-            javascript = _fetch_text(asset)
+            javascript = _fetch_text(asset, max_bytes=max_bytes)
         except Exception as exc:
             print(f"  ASSET ERROR: {type(exc).__name__}: {exc}")
             continue
 
         candidates = extract_endpoint_candidates(javascript, asset)
-        if not candidates:
+        if candidates:
+            for candidate in candidates[:80]:
+                print(f"  candidate: {candidate}")
+        else:
             print("  no endpoint-like strings")
-            continue
 
-        for candidate in candidates[:60]:
-            print(f"  candidate: {candidate}")
+        snippets = extract_context_snippets(javascript)
+        if snippets:
+            print("  rate-related contexts:")
+            for snippet in snippets:
+                print(f"    context: {snippet[:700]}")
 
 
 def main() -> int:
@@ -204,15 +294,23 @@ def main() -> int:
         default=12,
         help="Maximum JavaScript assets to inspect per bank",
     )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=12_000_000,
+        help="Maximum response size to inspect for each page/asset",
+    )
     args = parser.parse_args()
 
     max_assets = max(1, min(args.max_assets, 30))
+    max_bytes = max(500_000, min(args.max_bytes, 25_000_000))
 
     if args.bank in {"all", "garanti"}:
         discover_page(
             "GARANTI BBVA OFFICIAL CURRENCY APP",
             GARANTI_APP,
             max_assets=max_assets,
+            max_bytes=max_bytes,
         )
 
     if args.bank in {"all", "kuveyt"}:
@@ -220,6 +318,13 @@ def main() -> int:
             "KUVEYT TURK OFFICIAL FINANCE PORTAL",
             KUVEYT_PORTAL,
             max_assets=max_assets,
+            max_bytes=max_bytes,
+        )
+        discover_page(
+            "KUVEYT TURK OFFICIAL CURRENCY CONVERTER",
+            KUVEYT_CONVERTER,
+            max_assets=max_assets,
+            max_bytes=max_bytes,
         )
 
     return 0
