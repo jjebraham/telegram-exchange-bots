@@ -7,6 +7,7 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 
 from probe_bank_verifier_sources import (  # noqa: E402
     AssetParser,
+    extract_context_snippets,
     extract_endpoint_candidates,
 )
 
@@ -29,6 +30,39 @@ class BankVerifierProbeTests(unittest.TestCase):
             parser.iframes,
             ["https://forms.example.test/rates"],
         )
+
+    def test_endpoint_extractor_finds_fetch_and_url_property_calls(self):
+        text = """
+        fetch("/services/GetRates");
+        const cfg = { url: "/data/MarketSummary" };
+        xhr.open("GET", "/ajax/CurrencyList");
+        """
+
+        candidates = extract_endpoint_candidates(
+            text,
+            "https://bank.example.test/app/",
+        )
+
+        self.assertIn(
+            "https://bank.example.test/services/GetRates",
+            candidates,
+        )
+        self.assertIn(
+            "https://bank.example.test/data/MarketSummary",
+            candidates,
+        )
+        self.assertIn(
+            "https://bank.example.test/ajax/CurrencyList",
+            candidates,
+        )
+
+    def test_context_extractor_surfaces_rate_semantics(self):
+        snippets = extract_context_snippets(
+            'const payload={currency:"USD",alis:48.1,satis:49.2};'
+        )
+        joined = "\n".join(snippets)
+        self.assertIn("currency", joined)
+        self.assertIn("alis", joined)
 
     def test_endpoint_extractor_finds_absolute_and_relative_candidates(self):
         text = """
