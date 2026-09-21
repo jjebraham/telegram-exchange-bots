@@ -590,35 +590,56 @@ def _midpoint(buy: Decimal, sell: Decimal) -> Decimal:
 def bank_fx_observations(
     pair: str,
     quotes: Iterable[Any],
-    extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+    extra_sources: Mapping[
+        str,
+        Mapping[str, tuple[Decimal, Decimal]],
+    ] | None = None,
     unavailable_sources: tuple[str, ...] = (),
     unavailable_by_name: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for quote in quotes:
         errors: list[str] = []
-        if Decimal(str(quote.sell)) <= Decimal(str(quote.buy)):
+        primary_buy = _decimal(quote.buy)
+        primary_sell = _decimal(quote.sell)
+        if primary_sell <= primary_buy:
             errors.append("sell must be greater than buy")
-        source_values = {"doviz": _midpoint(quote.buy, quote.sell)}
+
+        buy_values: dict[str, Decimal] = {"doviz": primary_buy}
+        sell_values: dict[str, Decimal] = {"doviz": primary_sell}
         for source_name, values in (extra_sources or {}).items():
-            if quote.name in values:
-                source_values[str(source_name)] = _decimal(values[quote.name])
+            if quote.name not in values:
+                continue
+            verifier_buy, verifier_sell = values[quote.name]
+            buy_values[str(source_name)] = _decimal(verifier_buy)
+            sell_values[str(source_name)] = _decimal(verifier_sell)
+
         missing = list(unavailable_sources)
         missing.extend((unavailable_by_name or {}).get(quote.name, ()))
-        if len(source_values) < 2 and quote.name != "Kapalıçarşı":
+        if len(buy_values) < 2 and quote.name != "Kapalıçarşı":
             missing.append(f"bank-specific-verifier:{quote.name}")
+
+        common = dict(
+            structural_errors=tuple(errors),
+            max_source_deviation_pct=Decimal("1.50"),
+            suspicious_move_pct=Decimal("4.00"),
+            unavailable_sources=tuple(missing),
+        )
         observations.append(
             SafetyObservation(
-                market_key=f"bank:{pair}:{quote.name}",
-                source_values=source_values,
-                structural_errors=tuple(errors),
-                max_source_deviation_pct=Decimal("1.50"),
-                suspicious_move_pct=Decimal("4.00"),
-                unavailable_sources=tuple(missing),
+                market_key=f"bank:{pair}:{quote.name}:buy",
+                source_values=buy_values,
+                **common,
+            )
+        )
+        observations.append(
+            SafetyObservation(
+                market_key=f"bank:{pair}:{quote.name}:sell",
+                source_values=sell_values,
+                **common,
             )
         )
     return observations
-
 
 def fx_pulse_observations(
     usd_quotes: Iterable[Any],
@@ -659,30 +680,50 @@ def fx_pulse_observations(
 
 def turkey_gold_observations(
     quotes: Iterable[Any],
-    extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+    extra_sources: Mapping[
+        str,
+        Mapping[str, tuple[Decimal, Decimal]],
+    ] | None = None,
     unavailable_sources: tuple[str, ...] = (),
 ) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for quote in quotes:
         errors: list[str] = []
-        if Decimal(str(quote.sell)) <= Decimal(str(quote.buy)):
+        primary_buy = _decimal(quote.buy)
+        primary_sell = _decimal(quote.sell)
+        if primary_sell <= primary_buy:
             errors.append("sell must be greater than buy")
-        source_values = {"doviz": _midpoint(quote.buy, quote.sell)}
+
+        buy_values: dict[str, Decimal] = {"doviz": primary_buy}
+        sell_values: dict[str, Decimal] = {"doviz": primary_sell}
         for source_name, values in (extra_sources or {}).items():
-            if quote.key in values:
-                source_values[str(source_name)] = _decimal(values[quote.key])
+            if quote.key not in values:
+                continue
+            verifier_buy, verifier_sell = values[quote.key]
+            buy_values[str(source_name)] = _decimal(verifier_buy)
+            sell_values[str(source_name)] = _decimal(verifier_sell)
+
+        common = dict(
+            structural_errors=tuple(errors),
+            max_source_deviation_pct=Decimal("1.50"),
+            suspicious_move_pct=Decimal("5.00"),
+            unavailable_sources=unavailable_sources,
+        )
         observations.append(
             SafetyObservation(
-                market_key=f"turkey-gold:{quote.key}",
-                source_values=source_values,
-                structural_errors=tuple(errors),
-                max_source_deviation_pct=Decimal("1.50"),
-                suspicious_move_pct=Decimal("5.00"),
-                unavailable_sources=unavailable_sources,
+                market_key=f"turkey-gold:{quote.key}:buy",
+                source_values=buy_values,
+                **common,
+            )
+        )
+        observations.append(
+            SafetyObservation(
+                market_key=f"turkey-gold:{quote.key}:sell",
+                source_values=sell_values,
+                **common,
             )
         )
     return observations
-
 
 def iran_gold_observations(
     market: Any,
