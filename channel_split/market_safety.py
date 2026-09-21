@@ -601,6 +601,9 @@ def bank_fx_observations(
         for source_name, values in (extra_sources or {}).items():
             if quote.name in values:
                 source_values[str(source_name)] = _decimal(values[quote.name])
+        missing = list(unavailable_sources)
+        if len(source_values) < 2 and quote.name != "Kapalıçarşı":
+            missing.append(f"bank-specific-verifier:{quote.name}")
         observations.append(
             SafetyObservation(
                 market_key=f"bank:{pair}:{quote.name}",
@@ -608,7 +611,7 @@ def bank_fx_observations(
                 structural_errors=tuple(errors),
                 max_source_deviation_pct=Decimal("1.50"),
                 suspicious_move_pct=Decimal("4.00"),
-                unavailable_sources=unavailable_sources,
+                unavailable_sources=tuple(missing),
             )
         )
     return observations
