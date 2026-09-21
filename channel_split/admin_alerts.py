@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -83,7 +84,7 @@ def format_problem_alert(
         )
         if check.move_pct is not None:
             lines.append(
-                f"Move: <code>{html.escape(str(check.move_pct.quantize(__import__('decimal').Decimal('0.01'))))}%</code>"
+                f"Move: <code>{html.escape(str(check.move_pct.quantize(Decimal('0.01'))))}%</code>"
             )
 
     if mode == "enforce":
