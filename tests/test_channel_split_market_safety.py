@@ -177,14 +177,35 @@ class MarketSafetyTests(unittest.TestCase):
                 }
             },
         )
-        self.assertEqual(len(observations), 2)
-        for observation in observations:
-            check = evaluate_observation(observation)
-            self.assertEqual(check.decision, VERIFIED)
-            self.assertEqual(
-                set(check.source_values),
-                {"doviz", "altinkaynak"},
-            )
+        self.assertEqual(len(observations), 1)
+        check = evaluate_observation(observations[0])
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(
+            set(check.source_values),
+            {"doviz", "altinkaynak"},
+        )
+
+    def test_turkey_gold_abnormally_wide_displayed_spread_blocks(self):
+        quote = type(
+            "GoldQuote",
+            (),
+            {
+                "key": "quarter",
+                "buy": Decimal("10000"),
+                "sell": Decimal("11000"),
+            },
+        )()
+        observation = turkey_gold_observations(
+            [quote],
+            {
+                "altinkaynak": {
+                    "quarter": (Decimal("10450"), Decimal("10550"))
+                }
+            },
+        )[0]
+        check = evaluate_observation(observation)
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("displayed dealer spread", check.reason)
 
     def test_usdt_requires_independent_source_families_not_just_rows(self):
         rows = [
