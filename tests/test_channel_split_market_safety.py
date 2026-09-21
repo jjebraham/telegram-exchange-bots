@@ -15,6 +15,7 @@ from market_safety import (  # noqa: E402
     SafetyObservation,
     SourceHealthEvent,
     alert_action,
+    bank_fx_observations,
     assess_post,
     evaluate_observation,
     mark_alert_sent,
@@ -163,6 +164,37 @@ class MarketSafetyTests(unittest.TestCase):
             )
             accepted = assess_post(db, "bank-usd", [observation])
             self.assertIsNotNone(accepted.checks[0].last_accepted_value)
+
+    def test_kuveyt_bank_row_can_verify_with_official_source(self):
+        quote = type(
+            "BankQuote",
+            (),
+            {
+                "name": "Kuveyt Türk",
+                "buy": Decimal("48.1475"),
+                "sell": Decimal("49.2544"),
+            },
+        )()
+        observations = bank_fx_observations(
+            "USD/TRY",
+            [quote],
+            {
+                "kuveyt-official": {
+                    "Kuveyt Türk": (
+                        Decimal("48.14757"),
+                        Decimal("49.25438"),
+                    )
+                }
+            },
+        )
+        self.assertEqual(len(observations), 2)
+        for observation in observations:
+            check = evaluate_observation(observation)
+            self.assertEqual(check.decision, VERIFIED)
+            self.assertEqual(
+                set(check.source_values),
+                {"doviz", "kuveyt-official"},
+            )
 
     def test_turkey_gold_can_verify_with_independent_altinkaynak_source(self):
         quote = type(
