@@ -185,6 +185,54 @@ class MarketSafetyTests(unittest.TestCase):
             {"doviz", "altinkaynak"},
         )
 
+    def test_physical_coin_allows_modest_cross_dealer_midpoint_premium(self):
+        quote = type(
+            "GoldQuote",
+            (),
+            {
+                "key": "quarter",
+                "buy": Decimal("10826.04"),
+                "sell": Decimal("11073.13"),
+            },
+        )()
+        observation = turkey_gold_observations(
+            [quote],
+            {
+                "altinkaynak": {
+                    "quarter": (
+                        Decimal("11000"),
+                        Decimal("11290"),
+                    )
+                }
+            },
+        )[0]
+        check = evaluate_observation(observation)
+        self.assertEqual(check.decision, VERIFIED)
+
+    def test_gram_gold_keeps_tighter_cross_source_tolerance(self):
+        quote = type(
+            "GoldQuote",
+            (),
+            {
+                "key": "gram",
+                "buy": Decimal("6766"),
+                "sell": Decimal("6773"),
+            },
+        )()
+        observation = turkey_gold_observations(
+            [quote],
+            {
+                "altinkaynak": {
+                    "gram": (
+                        Decimal("6880"),
+                        Decimal("6890"),
+                    )
+                }
+            },
+        )[0]
+        check = evaluate_observation(observation)
+        self.assertEqual(check.decision, BLOCKED)
+
     def test_turkey_gold_abnormally_wide_displayed_spread_blocks(self):
         quote = type(
             "GoldQuote",
