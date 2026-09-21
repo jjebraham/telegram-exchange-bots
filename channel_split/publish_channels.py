@@ -24,8 +24,8 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from altinkaynak_verifier import (
-    fetch_altinkaynak_currency,
-    fetch_altinkaynak_gold,
+    fetch_altinkaynak_currency_quotes,
+    fetch_altinkaynak_gold_quotes,
 )
 from bank_compare import (
     build_eur_comparison_post,
@@ -54,8 +54,8 @@ from hybrid_usdt_compare import (
 )
 from market_pulse import build_turkey_fx_pulse_post
 from official_bank_verifier import (
-    fetch_isbank_midpoint,
-    fetch_ziraat_midpoint,
+    fetch_isbank_quote,
+    fetch_ziraat_quote,
 )
 from admin_alerts import maybe_notify_admin
 from market_safety import (
@@ -411,13 +411,19 @@ def main() -> int:
     abantether_usdt_cache: Any | None = None
     tetherland_usdt_cache: Any | None = None
     hybrid_usdt_cache: list[Any] | None = None
-    altinkaynak_currency_cache: dict[str, Decimal] | None = None
+    altinkaynak_currency_cache: dict[
+        str, tuple[Decimal, Decimal]
+    ] | None = None
     altinkaynak_currency_attempted = False
     altinkaynak_currency_error: str | None = None
-    altinkaynak_gold_cache: dict[str, Decimal] | None = None
+    altinkaynak_gold_cache: dict[
+        str, tuple[Decimal, Decimal]
+    ] | None = None
     altinkaynak_gold_attempted = False
     altinkaynak_gold_error: str | None = None
-    official_bank_cache: dict[str, dict[str, Decimal]] = {}
+    official_bank_cache: dict[
+        str, dict[str, tuple[Decimal, Decimal]]
+    ] = {}
     official_bank_errors: dict[str, dict[str, str]] = {}
 
     def get_rates() -> dict[str, Decimal]:
@@ -517,14 +523,16 @@ def main() -> int:
             value = 90
         return max(value, 1)
 
-    def get_altinkaynak_currency_safe() -> dict[str, Decimal]:
+    def get_altinkaynak_currency_safe() -> dict[
+        str, tuple[Decimal, Decimal]
+    ]:
         nonlocal altinkaynak_currency_cache
         nonlocal altinkaynak_currency_attempted
         nonlocal altinkaynak_currency_error
         if not altinkaynak_currency_attempted:
             altinkaynak_currency_attempted = True
             try:
-                altinkaynak_currency_cache = fetch_altinkaynak_currency(
+                altinkaynak_currency_cache = fetch_altinkaynak_currency_quotes(
                     max_age_minutes=_altinkaynak_max_age_minutes()
                 )
             except Exception as exc:
@@ -539,14 +547,16 @@ def main() -> int:
                 )
         return altinkaynak_currency_cache or {}
 
-    def get_altinkaynak_gold_safe() -> dict[str, Decimal]:
+    def get_altinkaynak_gold_safe() -> dict[
+        str, tuple[Decimal, Decimal]
+    ]:
         nonlocal altinkaynak_gold_cache
         nonlocal altinkaynak_gold_attempted
         nonlocal altinkaynak_gold_error
         if not altinkaynak_gold_attempted:
             altinkaynak_gold_attempted = True
             try:
-                altinkaynak_gold_cache = fetch_altinkaynak_gold(
+                altinkaynak_gold_cache = fetch_altinkaynak_gold_quotes(
                     max_age_minutes=_altinkaynak_max_age_minutes()
                 )
             except Exception as exc:
@@ -564,9 +574,12 @@ def main() -> int:
     def get_official_bank_verifiers(
         pair: str,
         quotes: list[Any],
-    ) -> tuple[dict[str, Mapping[str, Decimal]], dict[str, tuple[str, ...]]]:
+    ) -> tuple[
+        dict[str, Mapping[str, tuple[Decimal, Decimal]]],
+        dict[str, tuple[str, ...]],
+    ]:
         if pair not in official_bank_cache:
-            values: dict[str, Decimal] = {}
+            values: dict[str, tuple[Decimal, Decimal]] = {}
             errors: dict[str, str] = {}
 
             isbank = next(
@@ -575,7 +588,7 @@ def main() -> int:
             )
             if isbank is not None:
                 try:
-                    values["İş Bankası"] = fetch_isbank_midpoint(pair)
+                    values["İş Bankası"] = fetch_isbank_quote(pair)
                 except Exception as exc:
                     errors["İş Bankası"] = (
                         f"isbank-official: {type(exc).__name__}: {exc}"
@@ -591,13 +604,11 @@ def main() -> int:
                 None,
             )
             if ziraat is not None:
-                primary_midpoint = (
-                    Decimal(str(ziraat.buy)) + Decimal(str(ziraat.sell))
-                ) / Decimal("2")
                 try:
-                    values["Ziraat Bankası"] = fetch_ziraat_midpoint(
+                    values["Ziraat Bankası"] = fetch_ziraat_quote(
                         pair,
-                        primary_midpoint=primary_midpoint,
+                        primary_buy=Decimal(str(ziraat.buy)),
+                        primary_sell=Decimal(str(ziraat.sell)),
                     )
                 except Exception as exc:
                     errors["Ziraat Bankası"] = (
@@ -612,7 +623,9 @@ def main() -> int:
             official_bank_cache[pair] = values
             official_bank_errors[pair] = errors
 
-        source_map: dict[str, Mapping[str, Decimal]] = {}
+        source_map: dict[
+            str, Mapping[str, tuple[Decimal, Decimal]]
+        ] = {}
         values = official_bank_cache[pair]
         if "İş Bankası" in values:
             source_map["isbank-official"] = {
@@ -686,7 +699,9 @@ def main() -> int:
             else build_eur_comparison_post(quotes, previous)
         )
         altinkaynak = get_altinkaynak_currency_safe()
-        extra: dict[str, Mapping[str, Decimal]] = {}
+        extra: dict[
+            str, Mapping[str, tuple[Decimal, Decimal]]
+        ] = {}
         if pair in altinkaynak:
             # Altinkaynak is a market-level verifier. It can independently
             # verify the Kapalicarsi row but must not be treated as proof of a
@@ -725,8 +740,16 @@ def main() -> int:
             load_bank_fx_near_24h(history_db, "USD/TRY"),
             load_bank_fx_near_24h(history_db, "EUR/TRY"),
         )
-        altinkaynak = get_altinkaynak_currency_safe()
-        extra = {"altinkaynak": altinkaynak} if altinkaynak else {}
+        altinkaynak_quotes = get_altinkaynak_currency_safe()
+        altinkaynak_midpoints = {
+            pair: (buy + sell) / Decimal("2")
+            for pair, (buy, sell) in altinkaynak_quotes.items()
+        }
+        extra = (
+            {"altinkaynak": altinkaynak_midpoints}
+            if altinkaynak_midpoints
+            else {}
+        )
         assessment = assess_post(
             history_db,
             "fx-pulse",
