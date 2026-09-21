@@ -18,6 +18,7 @@ from market_safety import (  # noqa: E402
     bank_fx_observations,
     assess_post,
     evaluate_observation,
+    iran_gold_observations,
     mark_alert_sent,
     mark_source_health_alert_sent,
     publication_allowed,
@@ -225,6 +226,46 @@ class MarketSafetyTests(unittest.TestCase):
             self.assertEqual(
                 set(check.source_values),
                 {"doviz", "kuveyt-official"},
+            )
+
+    def test_iran_gold_can_verify_with_independent_dolarchand_family(self):
+        market = type(
+            "IranGoldMarket",
+            (),
+            {
+                "coin_prices_rial": {
+                    "سکه امامی": Decimal("2339800000"),
+                    "سکه بهار آزادی": Decimal("2301300000"),
+                    "نیم سکه": Decimal("1200000000"),
+                    "ربع سکه": Decimal("630000000"),
+                    "سکه گرمی": Decimal("330000000"),
+                },
+                "gold18_rial": Decimal("237072000"),
+                "mesghal_rial": Decimal("1026980000"),
+            },
+        )()
+        external = {
+            "سکه امامی": Decimal("234000000"),
+            "سکه بهار آزادی": Decimal("230000000"),
+            "نیم سکه": Decimal("120000000"),
+            "ربع سکه": Decimal("63000000"),
+            "سکه گرمی": Decimal("33000000"),
+            "طلای ۱۸ عیار": Decimal("23731470"),
+            "مثقال طلا": Decimal("102800000"),
+        }
+
+        observations = iran_gold_observations(
+            market,
+            {"dolarchand": external},
+        )
+
+        self.assertEqual(len(observations), 7)
+        for observation in observations:
+            check = evaluate_observation(observation)
+            self.assertEqual(check.decision, VERIFIED)
+            self.assertEqual(
+                set(check.source_values),
+                {"tgju", "dolarchand"},
             )
 
     def test_turkey_gold_can_verify_with_independent_altinkaynak_source(self):
