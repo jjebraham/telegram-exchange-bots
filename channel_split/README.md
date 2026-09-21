@@ -237,8 +237,26 @@ python3 publish_channels.py --post alanchande-daily --dry-run
 Manual production execution through the lock-protected launcher:
 
 ```bash
-./run_alanchande_daily.sh
+/bin/bash run_alanchande_daily.sh
 ```
 
-The scheduler itself should only be enabled after the exact daily posting time
-has been confirmed.
+A systemd oneshot service is included at:
+
+```text
+deploy/systemd/alanchande-daily.service
+```
+
+Install and validate the service only after the production `.env` has been
+reviewed:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/alanchande-daily.service \
+  /etc/systemd/system/alanchande-daily.service
+
+sudo systemctl daemon-reload
+sudo systemctl cat alanchande-daily.service
+```
+
+Do not enable a timer yet. The scheduler itself should only be created/enabled
+after the exact daily posting time has been confirmed.
