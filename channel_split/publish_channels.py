@@ -450,25 +450,61 @@ def main() -> int:
     def get_usd_quotes() -> list[Any]:
         nonlocal usd_quotes_cache
         if usd_quotes_cache is None:
-            usd_quotes_cache = fetch_usd_comparison()
+            try:
+                usd_quotes_cache = fetch_usd_comparison()
+                note_source_health("turkey:doviz-usd", True)
+            except Exception as exc:
+                note_source_health(
+                    "turkey:doviz-usd",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
         return usd_quotes_cache
 
     def get_eur_quotes() -> list[Any]:
         nonlocal eur_quotes_cache
         if eur_quotes_cache is None:
-            eur_quotes_cache = fetch_eur_comparison()
+            try:
+                eur_quotes_cache = fetch_eur_comparison()
+                note_source_health("turkey:doviz-eur", True)
+            except Exception as exc:
+                note_source_health(
+                    "turkey:doviz-eur",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
         return eur_quotes_cache
 
     def get_turkey_gold() -> list[Any]:
         nonlocal turkey_gold_cache
         if turkey_gold_cache is None:
-            turkey_gold_cache = fetch_turkish_gold_quotes()
+            try:
+                turkey_gold_cache = fetch_turkish_gold_quotes()
+                note_source_health("turkey:doviz-gold", True)
+            except Exception as exc:
+                note_source_health(
+                    "turkey:doviz-gold",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
         return turkey_gold_cache
 
     def get_iran_gold() -> Any:
         nonlocal iran_gold_cache
         if iran_gold_cache is None:
-            iran_gold_cache = fetch_iran_gold_market()
+            try:
+                iran_gold_cache = fetch_iran_gold_market()
+                note_source_health("iran:tgju-gold", True)
+            except Exception as exc:
+                note_source_health(
+                    "iran:tgju-gold",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
         return iran_gold_cache
 
     def get_iran_usdt() -> list[Any]:
@@ -557,8 +593,14 @@ def main() -> int:
                 altinkaynak_currency_cache = fetch_altinkaynak_currency_quotes(
                     max_age_minutes=_altinkaynak_max_age_minutes()
                 )
+                note_source_health("turkey:altinkaynak-currency", True)
             except Exception as exc:
                 altinkaynak_currency_cache = {}
+                note_source_health(
+                    "turkey:altinkaynak-currency",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
                 altinkaynak_currency_error = (
                     f"altinkaynak-currency: {type(exc).__name__}: {exc}"
                 )[:240]
@@ -581,8 +623,14 @@ def main() -> int:
                 altinkaynak_gold_cache = fetch_altinkaynak_gold_quotes(
                     max_age_minutes=_altinkaynak_max_age_minutes()
                 )
+                note_source_health("turkey:altinkaynak-gold", True)
             except Exception as exc:
                 altinkaynak_gold_cache = {}
+                note_source_health(
+                    "turkey:altinkaynak-gold",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
                 altinkaynak_gold_error = (
                     f"altinkaynak-gold: {type(exc).__name__}: {exc}"
                 )[:240]
@@ -611,7 +659,16 @@ def main() -> int:
             if isbank is not None:
                 try:
                     values["İş Bankası"] = fetch_isbank_quote(pair)
+                    note_source_health(
+                        f"turkey:isbank-official:{pair}",
+                        True,
+                    )
                 except Exception as exc:
+                    note_source_health(
+                        f"turkey:isbank-official:{pair}",
+                        False,
+                        f"{type(exc).__name__}: {exc}",
+                    )
                     errors["İş Bankası"] = (
                         f"isbank-official: {type(exc).__name__}: {exc}"
                     )[:240]
@@ -632,7 +689,16 @@ def main() -> int:
                         primary_buy=Decimal(str(ziraat.buy)),
                         primary_sell=Decimal(str(ziraat.sell)),
                     )
+                    note_source_health(
+                        f"turkey:ziraat-official:{pair}",
+                        True,
+                    )
                 except Exception as exc:
+                    note_source_health(
+                        f"turkey:ziraat-official:{pair}",
+                        False,
+                        f"{type(exc).__name__}: {exc}",
+                    )
                     errors["Ziraat Bankası"] = (
                         f"ziraat-official: {type(exc).__name__}: {exc}"
                     )[:240]
