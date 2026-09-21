@@ -227,6 +227,44 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(check.decision, VERIFIED)
         self.assertEqual(set(check.source_values), {"direct:والکس", "tgju"})
 
+    def test_mixed_blocked_post_does_not_advance_any_baseline(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "safety.sqlite3"
+            assessment = assess_post(
+                db,
+                "mixed-post",
+                [
+                    SafetyObservation(
+                        "verified-market",
+                        {
+                            "a": Decimal("100"),
+                            "b": Decimal("100.1"),
+                        },
+                    ),
+                    SafetyObservation(
+                        "blocked-market",
+                        {"only": Decimal("200")},
+                    ),
+                ],
+            )
+            self.assertEqual(assessment.decision, BLOCKED)
+
+            record_assessment(
+                db,
+                assessment,
+                mode="shadow",
+                published=True,
+            )
+
+            from market_safety import load_last_accepted
+
+            self.assertIsNone(
+                load_last_accepted(db, "verified-market")
+            )
+            self.assertIsNone(
+                load_last_accepted(db, "blocked-market")
+            )
+
     def test_enforce_blocks_non_verified_but_shadow_allows(self):
         assessment = type(
             "Assessment",
