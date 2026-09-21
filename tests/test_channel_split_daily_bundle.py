@@ -1,7 +1,9 @@
 import io
 import sys
 import unittest
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,13 +29,30 @@ class DailyBundleCommandTests(unittest.TestCase):
             checks=(),
         )
 
+        usd = [
+            SimpleNamespace(
+                name="Kapalıçarşı",
+                buy=Decimal("48.69"),
+                sell=Decimal("48.71"),
+            )
+        ]
+        eur = [
+            SimpleNamespace(
+                name="Kapalıçarşı",
+                buy=Decimal("55.80"),
+                sell=Decimal("55.85"),
+            )
+        ]
+
         with (
             patch.object(sys, "argv", argv),
-            patch.object(publish_channels, "fetch_usd_comparison", return_value=["USD"]),
-            patch.object(publish_channels, "fetch_eur_comparison", return_value=["EUR"]),
+            patch.object(publish_channels, "fetch_usd_comparison", return_value=usd),
+            patch.object(publish_channels, "fetch_eur_comparison", return_value=eur),
             patch.object(publish_channels, "fetch_turkish_gold_quotes", return_value=["TGOLD"]),
             patch.object(publish_channels, "fetch_iran_gold_market", return_value="IGOLD"),
             patch.object(publish_channels, "collect_hybrid_usdt_quotes", return_value=["USDT"]),
+            patch.object(publish_channels, "fetch_altinkaynak_currency", return_value={}),
+            patch.object(publish_channels, "fetch_altinkaynak_gold", return_value={}),
             patch.object(publish_channels, "load_bank_fx_near_24h", return_value={}),
             patch.object(publish_channels, "load_turkey_gold_near_24h", return_value={}),
             patch.object(publish_channels, "load_iran_gold_near_24h", return_value={}),
