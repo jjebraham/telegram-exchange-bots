@@ -45,6 +45,20 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(check.decision, BLOCKED)
         self.assertIn("insufficient independent", check.reason)
 
+    def test_two_sources_cannot_hide_wide_gap_behind_midpoint(self):
+        check = evaluate_observation(
+            SafetyObservation(
+                "usdtry",
+                {
+                    "source-a": Decimal("48.70"),
+                    "source-b": Decimal("50.00"),
+                },
+                max_source_deviation_pct=Decimal("1.50"),
+            )
+        )
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("spread", check.reason)
+
     def test_disagreeing_sources_block(self):
         check = evaluate_observation(
             SafetyObservation(
