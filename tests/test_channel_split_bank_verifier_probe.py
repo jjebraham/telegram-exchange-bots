@@ -10,6 +10,7 @@ from probe_bank_verifier_sources import (  # noqa: E402
     _flatten_json,
     extract_context_snippets,
     extract_endpoint_candidates,
+    extract_garanti_hook_aliases,
     extract_kuveyt_api_tokens,
 )
 
@@ -51,6 +52,21 @@ class BankVerifierProbeTests(unittest.TestCase):
         self.assertEqual(
             rows["common.nested.url"],
             "https://example.test",
+        )
+
+    def test_extract_garanti_hook_aliases(self):
+        text = (
+            "{useCalculatePriceMutation:Zxi,"
+            "useGetExpandedCurrRateQuery:$V,"
+            "useGetCurrencyOverviewQuery:aOt}"
+        )
+        self.assertEqual(
+            extract_garanti_hook_aliases(text),
+            {
+                "useCalculatePriceMutation": "Zxi",
+                "useGetExpandedCurrRateQuery": "$V",
+                "useGetCurrencyOverviewQuery": "aOt",
+            },
         )
 
     def test_extract_kuveyt_api_tokens(self):
