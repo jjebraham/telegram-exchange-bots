@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
 from official_bank_verifier import (  # noqa: E402
+    _find_string_by_key,
     parse_garanti_quote,
     parse_isbank_midpoint,
     parse_kuveyt_quote,
@@ -27,6 +28,45 @@ class OfficialBankVerifierTests(unittest.TestCase):
             parse_isbank_midpoint(html, "USD/TRY"),
             (Decimal("47.314") + Decimal("49.9294")) / Decimal("2"),
         )
+
+    def test_garanti_config_key_can_be_nested_under_changed_wrapper(self):
+        payload = {
+            "runtime": {
+                "config": {
+                    "source": {
+                        "app_properties": {
+                            "common": {
+                                "expandedCurrRateServicePath": (
+                                    "https://customers.garantibbva.com.tr/"
+                                    "currency-management-pb/example"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.assertEqual(
+            _find_string_by_key(
+                payload,
+                "expandedCurrRateServicePath",
+            ),
+            (
+                "https://customers.garantibbva.com.tr/"
+                "currency-management-pb/example"
+            ),
+        )
+
+    def test_garanti_config_duplicate_service_keys_fail_closed(self):
+        payload = {
+            "a": {"expandedCurrRateServicePath": "https://a.example"},
+            "b": {"expandedCurrRateServicePath": "https://b.example"},
+        }
+        with self.assertRaisesRegex(ValueError, "multiple"):
+            _find_string_by_key(
+                payload,
+                "expandedCurrRateServicePath",
+            )
 
     def test_garanti_parses_official_expanded_rate_row(self):
         payload = {
