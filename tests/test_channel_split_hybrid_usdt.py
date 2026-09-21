@@ -121,6 +121,7 @@ class HybridUsdtComparisonTests(unittest.TestCase):
         self.assertIn("+1.00%", post)
         self.assertIn("🌐 مستقیم <b>1</b>", post)
         self.assertIn("🧩 پشتیبان <b>1</b>", post)
+        self.assertIn("🔎 منابع مستقل <b>2</b>", post)
         self.assertNotIn("میانگین", post)
         self.assertIn("🔴 SELL = فروش　•　🟢 BUY = خرید", post)
         self.assertIn(
