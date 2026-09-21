@@ -8,6 +8,7 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 
 from official_bank_verifier import (  # noqa: E402
     parse_isbank_midpoint,
+    parse_kuveyt_quote,
     parse_ziraat_midpoint,
 )
 
@@ -25,6 +26,43 @@ class OfficialBankVerifierTests(unittest.TestCase):
             parse_isbank_midpoint(html, "USD/TRY"),
             (Decimal("47.314") + Decimal("49.9294")) / Decimal("2"),
         )
+
+    def test_kuveyt_parses_official_exchange_rates_row(self):
+        payload = [
+            {
+                "Title": "USD",
+                "CurrencyCode": "USD",
+                "BuyRate": 48.14757,
+                "SellRate": 49.25438,
+            },
+            {
+                "Title": "EUR",
+                "CurrencyCode": "EUR",
+                "BuyRate": 55.10406,
+                "SellRate": 56.37895,
+            },
+        ]
+
+        self.assertEqual(
+            parse_kuveyt_quote(payload, "USD/TRY"),
+            (Decimal("48.14757"), Decimal("49.25438")),
+        )
+
+    def test_kuveyt_missing_or_crossed_row_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "missing USD"):
+            parse_kuveyt_quote([], "USD/TRY")
+
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            parse_kuveyt_quote(
+                [
+                    {
+                        "CurrencyCode": "USD",
+                        "BuyRate": 50,
+                        "SellRate": 49,
+                    }
+                ],
+                "USD/TRY",
+            )
 
     def test_ziraat_selects_official_channel_matching_displayed_row(self):
         html = """
