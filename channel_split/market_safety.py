@@ -686,6 +686,21 @@ def turkey_gold_observations(
     ] | None = None,
     unavailable_sources: tuple[str, ...] = (),
 ) -> list[SafetyObservation]:
+    """Verify the market level, while validating the displayed dealer spread.
+
+    Doviz and Altinkaynak are different dealers/aggregators, so their retail
+    buy/sell spreads are not expected to be identical. Requiring each side to
+    match tightly produced false blocks on legitimate quarter/half/full coins.
+    Instead, independent providers must agree on the midpoint while the actual
+    Doviz quote shown to users must have a sane, non-crossed spread.
+    """
+    spread_caps = {
+        "gram": Decimal("1.00"),
+        "quarter": Decimal("4.00"),
+        "half": Decimal("4.00"),
+        "tam": Decimal("4.00"),
+    }
+
     observations: list[SafetyObservation] = []
     for quote in quotes:
         errors: list[str] = []
@@ -694,33 +709,42 @@ def turkey_gold_observations(
         if primary_sell <= primary_buy:
             errors.append("sell must be greater than buy")
 
-        buy_values: dict[str, Decimal] = {"doviz": primary_buy}
-        sell_values: dict[str, Decimal] = {"doviz": primary_sell}
+        primary_mid = (primary_buy + primary_sell) / Decimal("2")
+        primary_spread_pct = (
+            (primary_sell - primary_buy) / primary_mid * Decimal("100")
+        )
+        spread_cap = spread_caps.get(str(quote.key), Decimal("4.00"))
+        if primary_spread_pct > spread_cap:
+            errors.append(
+                f"displayed dealer spread "
+                f"{primary_spread_pct.quantize(Decimal('0.01'))}% > "
+                f"{spread_cap}%"
+            )
+
+        source_values: dict[str, Decimal] = {"doviz": primary_mid}
         for source_name, values in (extra_sources or {}).items():
             if quote.key not in values:
                 continue
             verifier_buy, verifier_sell = values[quote.key]
-            buy_values[str(source_name)] = _decimal(verifier_buy)
-            sell_values[str(source_name)] = _decimal(verifier_sell)
+            verifier_buy = _decimal(verifier_buy)
+            verifier_sell = _decimal(verifier_sell)
+            if verifier_sell <= verifier_buy:
+                errors.append(
+                    f"{source_name}: verifier sell must be greater than buy"
+                )
+                continue
+            source_values[str(source_name)] = (
+                verifier_buy + verifier_sell
+            ) / Decimal("2")
 
-        common = dict(
-            structural_errors=tuple(errors),
-            max_source_deviation_pct=Decimal("1.50"),
-            suspicious_move_pct=Decimal("5.00"),
-            unavailable_sources=unavailable_sources,
-        )
         observations.append(
             SafetyObservation(
-                market_key=f"turkey-gold:{quote.key}:buy",
-                source_values=buy_values,
-                **common,
-            )
-        )
-        observations.append(
-            SafetyObservation(
-                market_key=f"turkey-gold:{quote.key}:sell",
-                source_values=sell_values,
-                **common,
+                market_key=f"turkey-gold:{quote.key}:mid",
+                source_values=source_values,
+                structural_errors=tuple(errors),
+                max_source_deviation_pct=Decimal("1.50"),
+                suspicious_move_pct=Decimal("5.00"),
+                unavailable_sources=unavailable_sources,
             )
         )
     return observations
