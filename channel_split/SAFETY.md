@@ -168,14 +168,23 @@ guards.
 
 ### Turkey bank comparison
 
-Doviz currently supplies all displayed bank rows. Altinkaynak verifies only the
-market/Kapalicarsi row; it is not evidence for a specific bank's own customer
-quote.
+Doviz supplies the displayed rows, but each bank must be independently checked
+against its own official source where available.
+
+Current verifier coverage:
+
+- Kapalicarsi: Altinkaynak market-level verifier;
+- Is Bankasi: official Isbank rate page;
+- Ziraat Bankasi: official Ziraat rate page/channel matched to the displayed row;
+- Kuveyt Turk: official Kuveyt Finance Portal exchange-rates endpoint. The
+  bank's own converter JavaScript consumes CurrencyCode, BuyRate and SellRate
+  from this endpoint, so both displayed sides are verified independently;
+- Garanti BBVA: official public service endpoints are identified, but the exact
+  expanded-rate request payload/response mapping is still being validated.
 
 Therefore the complete bank board intentionally remains BLOCKED under strict
-enforce until bank-specific official verification is added for every displayed
-bank row or the product policy is changed to publish only independently
-verifiable rows.
+enforce until Garanti BBVA has a verified bank-specific mapping or the product
+policy is changed to omit that row.
 
 ### Iran gold and coin
 
