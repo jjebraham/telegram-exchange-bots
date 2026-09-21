@@ -55,6 +55,7 @@ from hybrid_usdt_compare import (
 from market_pulse import build_turkey_fx_pulse_post
 from official_bank_verifier import (
     fetch_isbank_quote,
+    fetch_kuveyt_quote,
     fetch_ziraat_quote,
 )
 from admin_alerts import maybe_notify_admin, maybe_notify_source_health
@@ -679,6 +680,32 @@ def main() -> int:
                         file=sys.stderr,
                     )
 
+            kuveyt = next(
+                (quote for quote in quotes if quote.name == "Kuveyt Türk"),
+                None,
+            )
+            if kuveyt is not None:
+                try:
+                    values["Kuveyt Türk"] = fetch_kuveyt_quote(pair)
+                    note_source_health(
+                        f"turkey:kuveyt-official:{pair}",
+                        True,
+                    )
+                except Exception as exc:
+                    note_source_health(
+                        f"turkey:kuveyt-official:{pair}",
+                        False,
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    errors["Kuveyt Türk"] = (
+                        f"kuveyt-official: {type(exc).__name__}: {exc}"
+                    )[:240]
+                    print(
+                        f"WARNING: Kuveyt official verifier unavailable: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+
             ziraat = next(
                 (quote for quote in quotes if quote.name == "Ziraat Bankası"),
                 None,
@@ -719,6 +746,10 @@ def main() -> int:
         if "İş Bankası" in values:
             source_map["isbank-official"] = {
                 "İş Bankası": values["İş Bankası"],
+            }
+        if "Kuveyt Türk" in values:
+            source_map["kuveyt-official"] = {
+                "Kuveyt Türk": values["Kuveyt Türk"],
             }
         if "Ziraat Bankası" in values:
             source_map["ziraat-official"] = {
