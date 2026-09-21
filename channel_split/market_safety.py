@@ -592,6 +592,7 @@ def bank_fx_observations(
     quotes: Iterable[Any],
     extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
     unavailable_sources: tuple[str, ...] = (),
+    unavailable_by_name: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for quote in quotes:
@@ -603,6 +604,7 @@ def bank_fx_observations(
             if quote.name in values:
                 source_values[str(source_name)] = _decimal(values[quote.name])
         missing = list(unavailable_sources)
+        missing.extend((unavailable_by_name or {}).get(quote.name, ()))
         if len(source_values) < 2 and quote.name != "Kapalıçarşı":
             missing.append(f"bank-specific-verifier:{quote.name}")
         observations.append(
