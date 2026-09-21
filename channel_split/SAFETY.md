@@ -144,8 +144,14 @@ Independent verifier: Altinkaynak public Gold service:
 - PY -> half;
 - PT -> full/tam.
 
+Doviz and Altinkaynak are different retail providers, so their individual
+dealer spreads are allowed to differ. The safety gate verifies their product
+midpoints against each other and separately rejects a crossed or abnormally
+wide spread in the Doviz quote actually displayed to users.
+
 This board can reach VERIFIED when all required products have fresh agreeing
-verification.
+market-level verification and the displayed spreads pass their structural
+guards.
 
 ### Turkey bank comparison
 
@@ -160,7 +166,10 @@ verifiable rows.
 
 ### Iran gold and coin
 
-Primary source: TGJU.
+Primary source: TGJU. The collector first tries the aggregate/home table and,
+if that layout is incomplete, falls back to TGJU's dedicated profile pages for
+each coin, 18k gold and mesghal. Bubble values are omitted rather than guessed
+when the aggregate page does not expose them.
 
 No proven independent live verifier has been accepted yet. Therefore this board
 intentionally remains BLOCKED under strict enforce.
