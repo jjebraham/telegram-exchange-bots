@@ -48,7 +48,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
                 ),
                 patch.object(
                     publish_channels,
-                    "fetch_altinkaynak_currency",
+                    "fetch_altinkaynak_currency_quotes",
                     side_effect=TimeoutError("verifier unavailable"),
                 ),
                 patch.object(publish_channels, "telegram_send") as telegram_send,
@@ -80,7 +80,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
                 ),
                 patch.object(
                     publish_channels,
-                    "fetch_altinkaynak_currency",
+                    "fetch_altinkaynak_currency_quotes",
                     side_effect=TimeoutError("verifier unavailable"),
                 ),
                 patch.object(
@@ -117,7 +117,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
                 ),
                 patch.object(
                     publish_channels,
-                    "fetch_altinkaynak_currency",
+                    "fetch_altinkaynak_currency_quotes",
                     return_value={"USD/TRY": Decimal("48.70")},
                 ),
                 patch.object(
