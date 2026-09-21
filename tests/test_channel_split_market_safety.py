@@ -171,11 +171,20 @@ class MarketSafetyTests(unittest.TestCase):
         )()
         observations = turkey_gold_observations(
             [quote],
-            {"altinkaynak": {"gram": Decimal("6788")}},
+            {
+                "altinkaynak": {
+                    "gram": (Decimal("6825"), Decimal("6835"))
+                }
+            },
         )
-        check = evaluate_observation(observations[0])
-        self.assertEqual(check.decision, VERIFIED)
-        self.assertEqual(set(check.source_values), {"doviz", "altinkaynak"})
+        self.assertEqual(len(observations), 2)
+        for observation in observations:
+            check = evaluate_observation(observation)
+            self.assertEqual(check.decision, VERIFIED)
+            self.assertEqual(
+                set(check.source_values),
+                {"doviz", "altinkaynak"},
+            )
 
     def test_usdt_requires_independent_source_families_not_just_rows(self):
         rows = [
