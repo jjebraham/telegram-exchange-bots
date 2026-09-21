@@ -296,6 +296,92 @@ def _context_around(
     )
 
 
+
+def _find_garanti_main_bundle(html: str) -> str | None:
+    parser = AssetParser()
+    parser.feed(html)
+    for src in parser.assets:
+        if "/assets/index." in src and src.endswith(".js"):
+            return urljoin(GARANTI_APP, src)
+    return None
+
+
+def extract_garanti_hook_aliases(text: str) -> dict[str, str]:
+    names = (
+        "useCalculatePriceMutation",
+        "useGetExpandedCurrRateQuery",
+        "useGetCurrencyOverviewQuery",
+        "useGetExchangeChartSeriesQuery",
+    )
+    aliases: dict[str, str] = {}
+    for name in names:
+        match = re.search(
+            rf"""\b{name}\s*:\s*([A-Za-z_$][A-Za-z0-9_$]*)""",
+            text,
+        )
+        if match:
+            aliases[name] = match.group(1)
+    return aliases
+
+
+def _contexts_for_call_alias(
+    text: str,
+    alias: str,
+    *,
+    limit: int = 8,
+    radius: int = 900,
+) -> list[str]:
+    pattern = re.compile(rf"""(?<![A-Za-z0-9_$]){re.escape(alias)}\s*\(""")
+    snippets: list[str] = []
+    for match in pattern.finditer(text):
+        left = max(0, match.start() - radius)
+        right = min(len(text), match.end() + radius)
+        snippet = " ".join(text[left:right].split())
+        if snippet not in snippets:
+            snippets.append(snippet)
+        if len(snippets) >= limit:
+            break
+    return snippets
+
+
+def inspect_garanti_request_shape(*, max_bytes: int) -> None:
+    print("\n===== GARANTI FOCUSED REQUEST SHAPE =====")
+    try:
+        html = _fetch_text(GARANTI_APP, max_bytes=max_bytes)
+    except Exception as exc:
+        print(f"APP ERROR: {type(exc).__name__}: {exc}")
+        return
+
+    bundle_url = _find_garanti_main_bundle(html)
+    if not bundle_url:
+        print("main index bundle not found")
+        return
+
+    print(f"bundle: {bundle_url}")
+    try:
+        javascript = _fetch_text(bundle_url, max_bytes=max_bytes)
+    except Exception as exc:
+        print(f"BUNDLE ERROR: {type(exc).__name__}: {exc}")
+        return
+
+    aliases = extract_garanti_hook_aliases(javascript)
+    for hook, alias in aliases.items():
+        print(f"{hook}: alias={alias}")
+        contexts = _contexts_for_call_alias(javascript, alias)
+        for index, context in enumerate(contexts, 1):
+            print(f"  call-context-{index}: {context[:4200]}")
+
+    for needle in (
+        "expandedCurrRateServicePath",
+        "currencyListServicePath",
+        "convertCurrencyServicePath",
+        "getExpandedCurrRate",
+    ):
+        context = _context_around(javascript, needle, radius=1400)
+        if context:
+            print(f"bundle context [{needle}]: {context[:4200]}")
+
+
 def inspect_kuveyt_core(
     *,
     max_bytes: int,
@@ -490,6 +576,7 @@ def main() -> int:
     if args.focused:
         if args.bank in {"all", "garanti"}:
             inspect_garanti_config(max_bytes=max_bytes)
+            inspect_garanti_request_shape(max_bytes=max_bytes)
         if args.bank in {"all", "kuveyt"}:
             inspect_kuveyt_core(
                 max_bytes=max_bytes,
