@@ -236,6 +236,76 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(check.decision, VERIFIED)
         self.assertEqual(set(check.source_values), {"direct:والکس", "tgju"})
 
+    def test_usdt_bad_displayed_exchange_row_blocks_post(self):
+        rows = [
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "والکس",
+                    "buy_toman": Decimal("230000"),
+                    "sell_toman": Decimal("229900"),
+                    "source": "direct",
+                },
+            )(),
+            *[
+                type(
+                    "Q",
+                    (),
+                    {
+                        "exchange": name,
+                        "buy_toman": Decimal("230100") + Decimal(index),
+                        "sell_toman": Decimal("230000") + Decimal(index),
+                        "source": "tgju",
+                    },
+                )()
+                for index, name in enumerate(["b", "c", "d"])
+            ],
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "bad-row",
+                    "buy_toman": Decimal("245000"),
+                    "sell_toman": Decimal("244900"),
+                    "source": "ramzarz",
+                },
+            )(),
+        ]
+        check = evaluate_observation(usdt_observations(rows)[0])
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("cross-exchange median", check.reason)
+
+    def test_usdt_abnormally_wide_customer_spread_blocks_post(self):
+        rows = [
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "wide",
+                    "buy_toman": Decimal("235000"),
+                    "sell_toman": Decimal("225000"),
+                    "source": "direct",
+                },
+            )(),
+            *[
+                type(
+                    "Q",
+                    (),
+                    {
+                        "exchange": name,
+                        "buy_toman": Decimal("230050") + Decimal(index),
+                        "sell_toman": Decimal("229950") + Decimal(index),
+                        "source": "tgju",
+                    },
+                )()
+                for index, name in enumerate(["b", "c", "d", "e"])
+            ],
+        ]
+        check = evaluate_observation(usdt_observations(rows)[0])
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("customer spread", check.reason)
+
     def test_mixed_blocked_post_does_not_advance_any_baseline(self):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "safety.sqlite3"
