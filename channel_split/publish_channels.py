@@ -395,7 +395,6 @@ def main() -> int:
     jobs: list[
         tuple[str, str, str, str | None, PostSafetyAssessment | None]
     ] = []
-    successful_market_posts: set[str] = set()
     sent_market_posts: set[str] = set()
     rates_cache: dict[str, Decimal] | None = None
     usd_quotes_cache: list[Any] | None = None
@@ -817,17 +816,14 @@ def main() -> int:
     if args.post == "alanchande-turkey-gold":
         text, safety = build_safe_turkey_gold()
         add_alanchande(text, "turkey-gold", safety)
-        successful_market_posts.add("turkey-gold")
 
     if args.post == "alanchande-iran-gold":
         text, safety = build_safe_iran_gold()
         add_alanchande(text, "iran-gold", safety)
-        successful_market_posts.add("iran-gold")
 
     if args.post == "alanchande-usdt-exchanges":
         text, safety = build_safe_usdt()
         add_alanchande(text, "usdt", safety)
-        successful_market_posts.add("usdt")
 
     if args.post == "alanchande-markets":
         safe_builders = [
@@ -846,7 +842,6 @@ def main() -> int:
                 )
                 continue
             add_alanchande(text, key, safety)
-            successful_market_posts.add(key)
             built_count += 1
 
         if built_count == 0:
@@ -871,7 +866,6 @@ def main() -> int:
                 )
                 continue
             add_alanchande(text, key, safety)
-            successful_market_posts.add(key)
             built_count += 1
 
         if built_count == 0:
