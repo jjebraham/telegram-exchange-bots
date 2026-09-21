@@ -23,6 +23,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from aggregator_bank_verifier import fetch_canlidoviz_garanti_quote
 from altinkaynak_verifier import (
     fetch_altinkaynak_currency_quotes,
     fetch_altinkaynak_gold_quotes,
@@ -644,6 +645,18 @@ def main() -> int:
                 )
         return altinkaynak_gold_cache or {}
 
+    def _bank_aggregator_max_age_minutes() -> int:
+        try:
+            value = int(
+                os.environ.get(
+                    "BANK_AGGREGATOR_MAX_AGE_MINUTES",
+                    "720",
+                )
+            )
+        except ValueError:
+            value = 720
+        return max(value, 1)
+
     def get_official_bank_verifiers(
         pair: str,
         quotes: list[Any],
@@ -703,6 +716,37 @@ def main() -> int:
                     )[:240]
                     print(
                         f"WARNING: Garanti official verifier unavailable: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+
+                try:
+                    external_quote = fetch_canlidoviz_garanti_quote(
+                        pair,
+                        max_age_minutes=_bank_aggregator_max_age_minutes(),
+                    )
+                    values["Garanti BBVA (external)"] = external_quote
+                    note_source_health(
+                        f"turkey:garanti-external:{pair}",
+                        True,
+                    )
+                except Exception as exc:
+                    note_source_health(
+                        f"turkey:garanti-external:{pair}",
+                        False,
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    existing = errors.get("Garanti BBVA", "")
+                    external_error = (
+                        f"garanti-external: {type(exc).__name__}: {exc}"
+                    )[:240]
+                    errors["Garanti BBVA"] = (
+                        f"{existing}; {external_error}"
+                        if existing
+                        else external_error
+                    )[:400]
+                    print(
+                        f"WARNING: Garanti external verifier unavailable: "
                         f"{type(exc).__name__}: {exc}",
                         file=sys.stderr,
                     )
@@ -773,6 +817,10 @@ def main() -> int:
         if "Garanti BBVA" in values:
             source_map["garanti-official"] = {
                 "Garanti BBVA": values["Garanti BBVA"],
+            }
+        if "Garanti BBVA (external)" in values:
+            source_map["garanti-external"] = {
+                "Garanti BBVA": values["Garanti BBVA (external)"],
             }
         if "İş Bankası" in values:
             source_map["isbank-official"] = {
