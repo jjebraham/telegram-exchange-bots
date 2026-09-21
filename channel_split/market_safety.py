@@ -73,6 +73,13 @@ class AlertState:
     reason_hash: str | None
 
 
+@dataclass(frozen=True)
+class SourceHealthEvent:
+    source_key: str
+    healthy: bool
+    detail: str = ""
+
+
 def normalize_mode(value: str | None) -> str:
     mode = (value or "shadow").strip().lower()
     if mode not in VALID_MODES:
@@ -176,6 +183,31 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             reason_hash TEXT
         )
         """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_source_health_state (
+            source_key TEXT PRIMARY KEY,
+            degraded INTEGER NOT NULL,
+            last_sent_at_utc TEXT,
+            reason_hash TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_source_health_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            checked_at_utc TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            healthy INTEGER NOT NULL,
+            detail TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_source_health_audit_time "
+        "ON market_source_health_audit(checked_at_utc, id)"
     )
     return connection
 
@@ -554,6 +586,151 @@ def mark_alert_sent(
             """,
             (assessment.post_type, active, timestamp, reason_hash),
         )
+
+
+def record_source_health_event(
+    db_path: Path,
+    event: SourceHealthEvent,
+    *,
+    now: datetime | None = None,
+) -> None:
+    checked = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    with _connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO market_source_health_audit (
+                checked_at_utc, source_key, healthy, detail
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                checked.isoformat(timespec="seconds"),
+                event.source_key,
+                1 if event.healthy else 0,
+                event.detail[:500],
+            ),
+        )
+
+
+def _get_source_health_state(
+    db_path: Path,
+    source_key: str,
+) -> AlertState:
+    if not db_path.exists():
+        return AlertState(source_key, False, None, None)
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT degraded, last_sent_at_utc, reason_hash
+            FROM market_source_health_state
+            WHERE source_key = ?
+            """,
+            (source_key,),
+        ).fetchone()
+    if not row:
+        return AlertState(source_key, False, None, None)
+    return AlertState(
+        alert_key=source_key,
+        active=bool(row[0]),
+        last_sent_at_utc=str(row[1]) if row[1] else None,
+        reason_hash=str(row[2]) if row[2] else None,
+    )
+
+
+def source_health_action(
+    db_path: Path,
+    event: SourceHealthEvent,
+    *,
+    now: datetime | None = None,
+    repeat_minutes: int = 60,
+) -> str | None:
+    """Return 'degraded', 'recovery', or None for source-health alerts."""
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    state = _get_source_health_state(db_path, event.source_key)
+
+    if event.healthy:
+        return "recovery" if state.active else None
+
+    digest = hashlib.sha256(event.detail.encode("utf-8")).hexdigest()
+    if not state.active:
+        return "degraded"
+    if state.reason_hash != digest:
+        return "degraded"
+    if state.last_sent_at_utc:
+        try:
+            last = datetime.fromisoformat(state.last_sent_at_utc)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if current - last.astimezone(timezone.utc) >= timedelta(
+                minutes=repeat_minutes
+            ):
+                return "degraded"
+        except ValueError:
+            return "degraded"
+    return None
+
+
+def mark_source_health_alert_sent(
+    db_path: Path,
+    event: SourceHealthEvent,
+    *,
+    action: str,
+    now: datetime | None = None,
+) -> None:
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    reason_hash = (
+        hashlib.sha256(event.detail.encode("utf-8")).hexdigest()
+        if action == "degraded"
+        else None
+    )
+    degraded = 1 if action == "degraded" else 0
+
+    with _connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO market_source_health_state (
+                source_key, degraded, last_sent_at_utc, reason_hash
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_key) DO UPDATE SET
+                degraded = excluded.degraded,
+                last_sent_at_utc = excluded.last_sent_at_utc,
+                reason_hash = excluded.reason_hash
+            """,
+            (
+                event.source_key,
+                degraded,
+                current.isoformat(timespec="seconds"),
+                reason_hash,
+            ),
+        )
+
+
+def recent_source_health_status(
+    db_path: Path,
+    limit: int = 20,
+) -> str:
+    if not db_path.exists():
+        return "source health: no database yet"
+    with _connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT checked_at_utc, source_key, healthy, detail
+            FROM market_source_health_audit
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+
+    if not rows:
+        return "source health: no checks recorded yet"
+
+    lines = ["source health (newest first):"]
+    for checked, source_key, healthy, detail in rows:
+        state = "HEALTHY" if healthy else "DEGRADED"
+        lines.append(
+            f"{checked} | {source_key} | {state} | {detail or '-'}"
+        )
+    return "\n".join(lines)
 
 
 def recent_safety_status(db_path: Path, limit: int = 20) -> str:
