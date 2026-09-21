@@ -246,32 +246,49 @@ def parse_garanti_quote(
     return buy, sell
 
 
-def _find_nested_string(payload: object, path: tuple[str, ...]) -> str:
-    current = payload
-    for key in path:
-        if not isinstance(current, dict) or key not in current:
-            raise ValueError(
-                "Garanti config is missing " + ".".join(path)
-            )
-        current = current[key]
-    if not isinstance(current, str) or not current.strip():
+def _find_string_by_key(payload: object, target_key: str) -> str:
+    """Find a unique non-empty string value by key anywhere in JSON.
+
+    Garanti has changed/wrapped the public config structure over time. The
+    public app still identifies the service by the stable semantic key, so use
+    that key rather than depending on one exact object nesting path.
+    """
+    matches: list[str] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if (
+                    key == target_key
+                    and isinstance(child, str)
+                    and child.strip()
+                ):
+                    matches.append(child.strip())
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(payload)
+
+    unique = list(dict.fromkeys(matches))
+    if not unique:
         raise ValueError(
-            "Garanti config path is not a non-empty string: "
-            + ".".join(path)
+            f"Garanti config is missing {target_key}"
         )
-    return current.strip()
+    if len(unique) > 1:
+        raise ValueError(
+            f"Garanti config has multiple {target_key} values: "
+            + ", ".join(unique[:3])
+        )
+    return unique[0]
 
 
 def _discover_garanti_expanded_rate_url(timeout: int = 20) -> str:
     config = _fetch_json(GARANTI_CONFIG_URL, timeout)
-    endpoint = _find_nested_string(
+    endpoint = _find_string_by_key(
         config,
-        (
-            "source",
-            "app_properties",
-            "common",
-            "expandedCurrRateServicePath",
-        ),
+        "expandedCurrRateServicePath",
     )
     if not endpoint.startswith(
         "https://customers.garantibbva.com.tr:"
