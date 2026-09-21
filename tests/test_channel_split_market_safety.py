@@ -19,6 +19,8 @@ from market_safety import (  # noqa: E402
     mark_alert_sent,
     publication_allowed,
     record_assessment,
+    turkey_gold_observations,
+    usdt_observations,
 )
 
 
@@ -142,6 +144,74 @@ class MarketSafetyTests(unittest.TestCase):
             )
             accepted = assess_post(db, "bank-usd", [observation])
             self.assertIsNotNone(accepted.checks[0].last_accepted_value)
+
+    def test_turkey_gold_can_verify_with_independent_altinkaynak_source(self):
+        quote = type(
+            "GoldQuote",
+            (),
+            {
+                "key": "gram",
+                "buy": Decimal("6826"),
+                "sell": Decimal("6834"),
+            },
+        )()
+        observations = turkey_gold_observations(
+            [quote],
+            {"altinkaynak": {"gram": Decimal("6788")}},
+        )
+        check = evaluate_observation(observations[0])
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(set(check.source_values), {"doviz", "altinkaynak"})
+
+    def test_usdt_requires_independent_source_families_not_just_rows(self):
+        rows = [
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": name,
+                    "buy_toman": Decimal("230000") + Decimal(index),
+                    "sell_toman": Decimal("229900") + Decimal(index),
+                    "source": "tgju",
+                },
+            )()
+            for index, name in enumerate(
+                ["a", "b", "c", "d", "e", "f", "g"]
+            )
+        ]
+        check = evaluate_observation(usdt_observations(rows)[0])
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("independent source families", check.reason)
+
+    def test_usdt_direct_exchange_plus_aggregator_can_reach_quorum(self):
+        rows = [
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "والکس",
+                    "buy_toman": Decimal("230000"),
+                    "sell_toman": Decimal("229900"),
+                    "source": "direct",
+                },
+            )(),
+            *[
+                type(
+                    "Q",
+                    (),
+                    {
+                        "exchange": name,
+                        "buy_toman": Decimal("230010") + Decimal(index),
+                        "sell_toman": Decimal("229910") + Decimal(index),
+                        "source": "tgju",
+                    },
+                )()
+                for index, name in enumerate(["b", "c", "d", "e"])
+            ],
+        ]
+        check = evaluate_observation(usdt_observations(rows)[0])
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(set(check.source_values), {"direct:والکس", "tgju"})
 
     def test_enforce_blocks_non_verified_but_shadow_allows(self):
         assessment = type(
