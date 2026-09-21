@@ -447,6 +447,7 @@ def record_assessment(
             # baseline for future circuit-breaker comparisons.
             if (
                 published
+                and assessment.decision == VERIFIED
                 and check.decision == VERIFIED
                 and check.reference_value is not None
             ):
