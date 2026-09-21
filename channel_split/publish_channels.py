@@ -54,6 +54,7 @@ from hybrid_usdt_compare import (
 )
 from market_pulse import build_turkey_fx_pulse_post
 from official_bank_verifier import (
+    fetch_garanti_quote,
     fetch_isbank_quote,
     fetch_kuveyt_quote,
     fetch_ziraat_quote,
@@ -680,6 +681,32 @@ def main() -> int:
                         file=sys.stderr,
                     )
 
+            garanti = next(
+                (quote for quote in quotes if quote.name == "Garanti BBVA"),
+                None,
+            )
+            if garanti is not None:
+                try:
+                    values["Garanti BBVA"] = fetch_garanti_quote(pair)
+                    note_source_health(
+                        f"turkey:garanti-official:{pair}",
+                        True,
+                    )
+                except Exception as exc:
+                    note_source_health(
+                        f"turkey:garanti-official:{pair}",
+                        False,
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    errors["Garanti BBVA"] = (
+                        f"garanti-official: {type(exc).__name__}: {exc}"
+                    )[:240]
+                    print(
+                        f"WARNING: Garanti official verifier unavailable: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+
             kuveyt = next(
                 (quote for quote in quotes if quote.name == "Kuveyt Türk"),
                 None,
@@ -743,6 +770,10 @@ def main() -> int:
             str, Mapping[str, tuple[Decimal, Decimal]]
         ] = {}
         values = official_bank_cache[pair]
+        if "Garanti BBVA" in values:
+            source_map["garanti-official"] = {
+                "Garanti BBVA": values["Garanti BBVA"],
+            }
         if "İş Bankası" in values:
             source_map["isbank-official"] = {
                 "İş Bankası": values["İş Bankası"],
