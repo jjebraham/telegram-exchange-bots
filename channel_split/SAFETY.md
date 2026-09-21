@@ -179,12 +179,15 @@ Current verifier coverage:
 - Kuveyt Turk: official Kuveyt Finance Portal exchange-rates endpoint. The
   bank's own converter JavaScript consumes CurrencyCode, BuyRate and SellRate
   from this endpoint, so both displayed sides are verified independently;
-- Garanti BBVA: official public service endpoints are identified, but the exact
-  expanded-rate request payload/response mapping is still being validated.
+- Garanti BBVA: official currency-converter config is read live to discover
+  the current expanded-rate endpoint. The verifier POSTs the same DOVIZ_PUBLIC
+  / CURRENCIES request object used by Garanti's own public app and validates
+  the USD/EUR currCode rows using exchBuyRate and exchSellRate.
 
-Therefore the complete bank board intentionally remains BLOCKED under strict
-enforce until Garanti BBVA has a verified bank-specific mapping or the product
-policy is changed to omit that row.
+The complete bank board can reach VERIFIED when all five displayed rows are
+fresh, structurally valid, and each official/independent verifier agrees with
+the Doviz display within the configured tolerance. Any unavailable or
+disagreeing bank-specific verifier still blocks the complete board.
 
 ### Iran gold and coin
 
