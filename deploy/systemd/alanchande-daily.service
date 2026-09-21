@@ -1,0 +1,11 @@
+[Unit]
+Description=AlanChande resilient daily market publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kianirad2020
+WorkingDirectory=/home/kianirad2020/telegram_bot_repo/channel_split
+ExecStart=/bin/bash /home/kianirad2020/telegram_bot_repo/channel_split/run_alanchande_daily.sh
+TimeoutStartSec=180
