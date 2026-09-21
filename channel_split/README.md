@@ -217,9 +217,11 @@ Or send all three:
 python3 publish_channels.py --post alanchande-markets
 ```
 
-The USDT board now prefers direct exchange APIs. TGJU is retained as a fallback
-and diagnostic source only. Before production-scale redistribution, verify each
-provider's reuse/licensing terms and continue monitoring API/schema changes.
+The production USDT board now uses the seven-exchange hybrid strategy described
+above: direct data is preferred per exchange row and TGJU/Ramzarz fill unavailable
+rows. The direct-only and TGJU-only commands remain diagnostic tools. Before
+production-scale redistribution, verify each provider's reuse/licensing terms and
+continue monitoring API/schema changes.
 
 ## Daily production launcher
 
