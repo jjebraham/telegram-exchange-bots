@@ -775,6 +775,8 @@ def main() -> int:
 
     if args.safety_status:
         print(recent_safety_status(history_db))
+        print()
+        print(recent_source_health_status(history_db))
         print(f"database: {history_db}")
         return 0
 
@@ -1027,6 +1029,10 @@ def main() -> int:
 
     if args.dry_run:
         print(f"MARKET_SAFETY_MODE={safety_mode}")
+        for event in source_health_events.values():
+            state = "HEALTHY" if event.healthy else "DEGRADED"
+            detail = f" | {event.detail}" if event.detail else ""
+            print(f"SOURCE HEALTH {event.source_key}: {state}{detail}")
         for token_env, destination_env, text, post_key, safety in jobs:
             if safety is not None:
                 print(
@@ -1050,6 +1056,34 @@ def main() -> int:
         )
     except ValueError:
         alert_repeat_minutes = 60
+
+    for event in source_health_events.values():
+        record_source_health_event(history_db, event)
+        try:
+            action = maybe_notify_source_health(
+                history_db,
+                event,
+                token=admin_token,
+                chat_id=admin_chat_id,
+                repeat_minutes=alert_repeat_minutes,
+            )
+            if action == "degraded":
+                print(
+                    f"SOURCE DEGRADED -> {event.source_key}: "
+                    f"{event.detail or 'unavailable'}",
+                    file=sys.stderr,
+                )
+            elif action == "recovery":
+                print(
+                    f"SOURCE RECOVERED -> {event.source_key}",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            print(
+                f"WARNING: source-health admin alert failed for "
+                f"{event.source_key}: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
 
     for token_env, destination_env, text, post_key, safety in jobs:
         if safety is not None and not publication_allowed(safety_mode, safety):
