@@ -43,6 +43,7 @@ class SafetyObservation:
     suspicious_move_pct: Decimal = Decimal("5.00")
     strong_quorum: int = 3
     structural_errors: tuple[str, ...] = ()
+    unavailable_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -218,12 +219,18 @@ def evaluate_observation(
         )
 
     if len(normalized) < observation.min_sources:
+        unavailable_note = (
+            "; unavailable: " + ", ".join(observation.unavailable_sources)
+            if observation.unavailable_sources
+            else ""
+        )
         return SafetyCheck(
             market_key=observation.market_key,
             decision=BLOCKED,
             reason=(
                 "insufficient independent source families: "
                 f"{len(normalized)} < {observation.min_sources}"
+                f"{unavailable_note}"
             ),
             source_values=normalized,
             reference_value=_median(normalized.values()) if normalized else None,
@@ -271,6 +278,10 @@ def evaluate_observation(
             f"{source}={value}" for source, value in sorted(rejected.items())
         )
         consensus_note = f"; rejected outlier source(s): {rejected_text}"
+    if observation.unavailable_sources:
+        consensus_note += (
+            "; unavailable: " + ", ".join(observation.unavailable_sources)
+        )
 
     move_pct: Decimal | None = None
     if last_accepted_value is not None:
@@ -560,6 +571,7 @@ def bank_fx_observations(
     pair: str,
     quotes: Iterable[Any],
     extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+    unavailable_sources: tuple[str, ...] = (),
 ) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for quote in quotes:
@@ -577,6 +589,7 @@ def bank_fx_observations(
                 structural_errors=tuple(errors),
                 max_source_deviation_pct=Decimal("1.50"),
                 suspicious_move_pct=Decimal("4.00"),
+                unavailable_sources=unavailable_sources,
             )
         )
     return observations
@@ -586,6 +599,7 @@ def fx_pulse_observations(
     usd_quotes: Iterable[Any],
     eur_quotes: Iterable[Any],
     extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+    unavailable_sources: tuple[str, ...] = (),
 ) -> list[SafetyObservation]:
     result: list[SafetyObservation] = []
     for pair, quotes in (("USD/TRY", usd_quotes), ("EUR/TRY", eur_quotes)):
@@ -598,6 +612,7 @@ def fx_pulse_observations(
                     structural_errors=("Kapalıçarşı row missing",),
                     max_source_deviation_pct=Decimal("1.50"),
                     suspicious_move_pct=Decimal("4.00"),
+                    unavailable_sources=unavailable_sources,
                 )
             )
             continue
@@ -611,6 +626,7 @@ def fx_pulse_observations(
                 source_values=source_values,
                 max_source_deviation_pct=Decimal("1.50"),
                 suspicious_move_pct=Decimal("4.00"),
+                unavailable_sources=unavailable_sources,
             )
         )
     return result
@@ -619,6 +635,7 @@ def fx_pulse_observations(
 def turkey_gold_observations(
     quotes: Iterable[Any],
     extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+    unavailable_sources: tuple[str, ...] = (),
 ) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for quote in quotes:
@@ -636,6 +653,7 @@ def turkey_gold_observations(
                 structural_errors=tuple(errors),
                 max_source_deviation_pct=Decimal("1.50"),
                 suspicious_move_pct=Decimal("5.00"),
+                unavailable_sources=unavailable_sources,
             )
         )
     return observations
@@ -644,6 +662,7 @@ def turkey_gold_observations(
 def iran_gold_observations(
     market: Any,
     extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+    unavailable_sources: tuple[str, ...] = (),
 ) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for label, value in market.coin_prices_rial.items():
@@ -657,6 +676,7 @@ def iran_gold_observations(
                 source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
+                unavailable_sources=unavailable_sources,
             )
         )
     if market.gold18_rial is not None:
@@ -670,6 +690,7 @@ def iran_gold_observations(
                 source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
+                unavailable_sources=unavailable_sources,
             )
         )
     if market.mesghal_rial is not None:
@@ -683,6 +704,7 @@ def iran_gold_observations(
                 source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
+                unavailable_sources=unavailable_sources,
             )
         )
     return observations
