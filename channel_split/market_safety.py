@@ -272,6 +272,25 @@ def evaluate_observation(
     # Recompute the reference from the surviving consensus. A single provider
     # may be rejected without vetoing two or more agreeing independent sources.
     reference = _median(inliers.values())
+    consensus_spread_pct = (
+        (max(inliers.values()) - min(inliers.values()))
+        / reference
+        * Decimal("100")
+    )
+    if consensus_spread_pct > observation.max_source_deviation_pct:
+        return SafetyCheck(
+            market_key=observation.market_key,
+            decision=BLOCKED,
+            reason=(
+                "independent-source consensus spread is too wide: "
+                f"{consensus_spread_pct.quantize(Decimal('0.01'))}% > "
+                f"{observation.max_source_deviation_pct}%"
+            ),
+            source_values=inliers,
+            reference_value=reference,
+            last_accepted_value=last_accepted_value,
+            move_pct=None,
+        )
     consensus_note = ""
     if rejected:
         rejected_text = ", ".join(
