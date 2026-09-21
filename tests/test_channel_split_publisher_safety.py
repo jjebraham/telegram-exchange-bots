@@ -88,6 +88,11 @@ class PublisherSafetyModeTests(unittest.TestCase):
                     "telegram_send",
                     return_value={"ok": True},
                 ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_bank_fx_quotes",
+                    return_value="unexpected",
+                ) as record_bank_fx_quotes,
                 patch("sys.stdout", new_callable=io.StringIO),
                 patch("sys.stderr", new_callable=io.StringIO),
             ):
@@ -95,6 +100,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             telegram_send.assert_called_once()
+            record_bank_fx_quotes.assert_not_called()
             self.assertIsNone(
                 load_last_accepted(db, "bank:USD/TRY:Kapalıçarşı:buy")
             )
@@ -127,6 +133,11 @@ class PublisherSafetyModeTests(unittest.TestCase):
                     "telegram_send",
                     return_value={"ok": True},
                 ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_bank_fx_quotes",
+                    return_value="2026-09-22T00:00:00+00:00",
+                ) as record_bank_fx_quotes,
                 patch("sys.stdout", new_callable=io.StringIO),
                 patch("sys.stderr", new_callable=io.StringIO),
             ):
@@ -134,6 +145,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             telegram_send.assert_called_once()
+            record_bank_fx_quotes.assert_called_once()
             self.assertEqual(
                 load_last_accepted(db, "bank:USD/TRY:Kapalıçarşı:buy"),
                 Decimal("48.69"),
