@@ -14,6 +14,10 @@ from urllib.request import Request, urlopen
 ISBANK_URL = "https://www.isbank.com.tr/doviz-kurlari"
 ZIRAAT_URL = "https://www.ziraatbank.com.tr/tr/fiyatlar-ve-oranlar"
 KUVEYT_PORTAL_URL = "https://www.kuveytturk.com.tr/finans-portali"
+GARANTI_CONFIG_URL = (
+    "https://webforms.garantibbva.com.tr/"
+    "currency-convertor-app-v3/config"
+)
 
 
 class _TableParser(HTMLParser):
@@ -175,6 +179,183 @@ def parse_ziraat_midpoint(
             f"closest deviation {deviation.quantize(Decimal('0.01'))}%"
         )
     return selected
+
+
+def parse_garanti_quote(
+    payload: object,
+    pair: str,
+) -> tuple[Decimal, Decimal]:
+    code = _pair_code(pair)
+
+    def find_rows(value: object) -> list[object] | None:
+        if isinstance(value, dict):
+            rows = value.get("expandedCurrRateRespons")
+            if isinstance(rows, list):
+                return rows
+            for child in value.values():
+                found = find_rows(child)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_rows(child)
+                if found is not None:
+                    return found
+        return None
+
+    rows = find_rows(payload)
+    if rows is None:
+        raise ValueError(
+            "Garanti official response has no expandedCurrRateRespons"
+        )
+
+    row = next(
+        (
+            item
+            for item in rows
+            if isinstance(item, dict)
+            and str(item.get("currCode", "")).strip().upper() == code
+        ),
+        None,
+    )
+    if row is None:
+        raise ValueError(
+            f"Garanti official expanded-rate response is missing {code}"
+        )
+
+    try:
+        buy = Decimal(str(row["exchBuyRate"]))
+        sell = Decimal(str(row["exchSellRate"]))
+    except (KeyError, InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Garanti official {code} row has invalid "
+            "exchBuyRate/exchSellRate"
+        ) from exc
+
+    if (
+        not buy.is_finite()
+        or not sell.is_finite()
+        or buy <= 0
+        or sell <= 0
+        or sell <= buy
+    ):
+        raise ValueError(
+            f"Garanti official {code} quote is invalid: "
+            f"buy={buy} sell={sell}"
+        )
+    return buy, sell
+
+
+def _find_nested_string(payload: object, path: tuple[str, ...]) -> str:
+    current = payload
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            raise ValueError(
+                "Garanti config is missing " + ".".join(path)
+            )
+        current = current[key]
+    if not isinstance(current, str) or not current.strip():
+        raise ValueError(
+            "Garanti config path is not a non-empty string: "
+            + ".".join(path)
+        )
+    return current.strip()
+
+
+def _discover_garanti_expanded_rate_url(timeout: int = 20) -> str:
+    config = _fetch_json(GARANTI_CONFIG_URL, timeout)
+    endpoint = _find_nested_string(
+        config,
+        (
+            "source",
+            "app_properties",
+            "common",
+            "expandedCurrRateServicePath",
+        ),
+    )
+    if not endpoint.startswith(
+        "https://customers.garantibbva.com.tr:"
+    ) and not endpoint.startswith(
+        "https://customers.garantibbva.com.tr/"
+    ):
+        raise ValueError(
+            "Garanti expanded-rate endpoint escaped official host: "
+            f"{endpoint}"
+        )
+    return endpoint
+
+
+def _fetch_json_post(
+    url: str,
+    payload: object,
+    *,
+    timeout: int = 20,
+    origin: str | None = None,
+    referer: str | None = None,
+) -> object:
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    headers = {
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5",
+        "Content-Type": "application/json",
+        "User-Agent": "AlanChande-BankSafetyVerifier/1.0",
+    }
+    if origin:
+        headers["Origin"] = origin
+    if referer:
+        headers["Referer"] = referer
+
+    request = Request(
+        url,
+        data=body,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        detail = exc.read(1200).decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Official bank verifier returned HTTP {exc.code} "
+            f"for {url}: {detail}"
+        ) from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Could not load official bank JSON verifier {url}: {exc}"
+        ) from exc
+
+
+def fetch_garanti_quote(
+    pair: str,
+    timeout: int = 20,
+) -> tuple[Decimal, Decimal]:
+    endpoint = _discover_garanti_expanded_rate_url(timeout)
+    request_payload = {
+        "parityParamName": "DOVIZ_PUBLIC",
+        "parityParamAttrName": "CURRENCIES",
+        "currCode": "",
+        "currType": "A",
+        "cdcFlag": "N",
+        "latencyValue": 1800,
+        "currTime": {
+            "hour": 0,
+            "minute": 0,
+            "second": 0,
+            "nano": 0,
+        },
+    }
+    response = _fetch_json_post(
+        endpoint,
+        request_payload,
+        timeout=timeout,
+        origin="https://webforms.garantibbva.com.tr",
+        referer=(
+            "https://webforms.garantibbva.com.tr/"
+            "currency-convertor-app-v3/"
+        ),
+    )
+    return parse_garanti_quote(response, pair)
 
 
 def parse_kuveyt_quote(
