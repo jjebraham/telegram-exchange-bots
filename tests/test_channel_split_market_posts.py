@@ -1,12 +1,14 @@
 import sys
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
 from gold_prices import GoldQuote, build_turkish_gold_post, parse_buy_sell  # noqa: E402
+import iran_gold  # noqa: E402
 from iran_gold import (  # noqa: E402
     IranGoldMarket,
     build_iran_gold_post,
@@ -88,6 +90,46 @@ class MarketPostTests(unittest.TestCase):
             parse_tgju_profile_current(html),
             Decimal("2390050000"),
         )
+
+    def test_iran_gold_fetch_falls_back_to_dedicated_profiles(self):
+        values = {
+            "sekee": "2,390,050,000",
+            "sekeb": "2,351,000,000",
+            "nim": "1,220,000,000",
+            "rob": "650,000,000",
+            "gerami": "330,000,000",
+            "geram18": "241,814,000",
+            "mesghal": "1,047,490,000",
+        }
+
+        def fake_fetch(url, timeout):
+            if url.endswith("/home"):
+                return "<html><body>homepage layout changed</body></html>"
+            slug = url.rsplit("/", 1)[-1]
+            value = values[slug]
+            return (
+                "<html><body>"
+                f"<h1>{slug}</h1>"
+                f"<div>نرخ فعلی:: {value} -</div>"
+                "</body></html>"
+            )
+
+        with patch.object(
+            iran_gold,
+            "_fetch_tgju_html",
+            side_effect=fake_fetch,
+        ):
+            market = iran_gold.fetch_iran_gold_market()
+
+        self.assertEqual(
+            market.coin_prices_rial["سکه امامی"],
+            Decimal("2390050000"),
+        )
+        self.assertEqual(
+            market.gold18_rial,
+            Decimal("241814000"),
+        )
+        self.assertEqual(market.bubble_values_rial, {})
 
     def test_iran_gold_post_omits_bubbles_when_fallback_has_none(self):
         market = IranGoldMarket(
