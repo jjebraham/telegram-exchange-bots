@@ -43,8 +43,26 @@ from ramzinex_usdt import build_ramzinex_usdt_post, fetch_ramzinex_usdt
 from abantether_usdt import build_abantether_usdt_post, fetch_abantether_usdt
 from tetherland_usdt import build_tetherland_usdt_post, fetch_tetherland_usdt
 from direct_usdt_compare import fetch_and_build_direct_usdt_comparison
-from hybrid_usdt_compare import fetch_and_build_hybrid_usdt_post
+from hybrid_usdt_compare import (
+    build_hybrid_usdt_post,
+    collect_hybrid_usdt_quotes,
+    fetch_and_build_hybrid_usdt_post,
+)
 from market_pulse import build_turkey_fx_pulse_post
+from admin_alerts import maybe_notify_admin
+from market_safety import (
+    PostSafetyAssessment,
+    assess_post,
+    bank_fx_observations,
+    fx_pulse_observations,
+    iran_gold_observations,
+    normalize_mode,
+    publication_allowed,
+    recent_safety_status,
+    record_assessment,
+    turkey_gold_observations,
+    usdt_observations,
+)
 from market_history import (
     DEFAULT_HISTORY_DB,
     build_alanchande_daily_change_post,
@@ -357,12 +375,20 @@ def main() -> int:
         action="store_true",
         help="Show how many market snapshots are stored for today, then exit",
     )
+    history_actions.add_argument(
+        "--safety-status",
+        action="store_true",
+        help="Show recent market-safety audit decisions, then exit",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print posts instead of sending to Telegram")
     args = parser.parse_args()
 
-    # (token_env, destination_env, text)
-    jobs: list[tuple[str, str, str]] = []
+    # (token_env, destination_env, text, post_key, safety_assessment)
+    jobs: list[
+        tuple[str, str, str, str | None, PostSafetyAssessment | None]
+    ] = []
     successful_market_posts: set[str] = set()
+    sent_market_posts: set[str] = set()
     rates_cache: dict[str, Decimal] | None = None
     usd_quotes_cache: list[Any] | None = None
     eur_quotes_cache: list[Any] | None = None
@@ -377,6 +403,7 @@ def main() -> int:
     ramzinex_usdt_cache: Any | None = None
     abantether_usdt_cache: Any | None = None
     tetherland_usdt_cache: Any | None = None
+    hybrid_usdt_cache: list[Any] | None = None
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -462,17 +489,38 @@ def main() -> int:
             tetherland_usdt_cache = fetch_tetherland_usdt()
         return tetherland_usdt_cache
 
+    def get_hybrid_usdt() -> list[Any]:
+        nonlocal hybrid_usdt_cache
+        if hybrid_usdt_cache is None:
+            hybrid_usdt_cache = collect_hybrid_usdt_quotes()
+        return hybrid_usdt_cache
+
     def current_history_snapshot():
         # AlanChande history intentionally depends only on neutral market feeds.
         return build_snapshot(get_usd_quotes(), get_eur_quotes())
 
-    def add_alanchande(text: str) -> None:
-        jobs.append(("ALANCHANDE_TELEGRAM_BOT_TOKEN", "ALANCHANDE_CHANNEL_ID", text))
+    def add_alanchande(
+        text: str,
+        post_key: str | None = None,
+        safety: PostSafetyAssessment | None = None,
+    ) -> None:
+        jobs.append(
+            (
+                "ALANCHANDE_TELEGRAM_BOT_TOKEN",
+                "ALANCHANDE_CHANNEL_ID",
+                text,
+                post_key,
+                safety,
+            )
+        )
 
     def add_kiani(text: str) -> None:
-        jobs.append(("KIANI_TELEGRAM_BOT_TOKEN", "KIANI_CHANNEL_ID", text))
+        jobs.append(
+            ("KIANI_TELEGRAM_BOT_TOKEN", "KIANI_CHANNEL_ID", text, None, None)
+        )
 
     history_db = _history_db_path()
+    safety_mode = normalize_mode(os.environ.get("MARKET_SAFETY_MODE", "shadow"))
 
     if args.record_history:
         snapshot = current_history_snapshot()
@@ -490,21 +538,85 @@ def main() -> int:
         print(f"database: {history_db}")
         return 0
 
-    if args.post in {"bank-comparison", "bank-comparisons", "all"}:
-        add_alanchande(
-            build_usd_comparison_post(
-                get_usd_quotes(),
-                load_bank_fx_near_24h(history_db, "USD/TRY"),
-            )
+    if args.safety_status:
+        print(recent_safety_status(history_db))
+        print(f"database: {history_db}")
+        return 0
+
+    def build_safe_bank(pair: str) -> tuple[str, PostSafetyAssessment]:
+        quotes = get_usd_quotes() if pair == "USD/TRY" else get_eur_quotes()
+        previous = load_bank_fx_near_24h(history_db, pair)
+        text = (
+            build_usd_comparison_post(quotes, previous)
+            if pair == "USD/TRY"
+            else build_eur_comparison_post(quotes, previous)
         )
+        assessment = assess_post(
+            history_db,
+            "bank-usd" if pair == "USD/TRY" else "bank-eur",
+            bank_fx_observations(pair, quotes),
+        )
+        return text, assessment
+
+    def build_safe_fx_pulse() -> tuple[str, PostSafetyAssessment]:
+        usd = get_usd_quotes()
+        eur = get_eur_quotes()
+        text = build_turkey_fx_pulse_post(
+            usd,
+            eur,
+            load_bank_fx_near_24h(history_db, "USD/TRY"),
+            load_bank_fx_near_24h(history_db, "EUR/TRY"),
+        )
+        assessment = assess_post(
+            history_db,
+            "fx-pulse",
+            fx_pulse_observations(usd, eur),
+        )
+        return text, assessment
+
+    def build_safe_turkey_gold() -> tuple[str, PostSafetyAssessment]:
+        quotes = get_turkey_gold()
+        text = build_turkish_gold_post(
+            quotes,
+            load_turkey_gold_near_24h(history_db),
+        )
+        assessment = assess_post(
+            history_db,
+            "turkey-gold",
+            turkey_gold_observations(quotes),
+        )
+        return text, assessment
+
+    def build_safe_iran_gold() -> tuple[str, PostSafetyAssessment]:
+        market = get_iran_gold()
+        text = build_iran_gold_post(
+            market,
+            load_iran_gold_near_24h(history_db),
+        )
+        assessment = assess_post(
+            history_db,
+            "iran-gold",
+            iran_gold_observations(market),
+        )
+        return text, assessment
+
+    def build_safe_usdt() -> tuple[str, PostSafetyAssessment]:
+        quotes = get_hybrid_usdt()
+        text = build_hybrid_usdt_post(quotes)
+        assessment = assess_post(
+            history_db,
+            "usdt",
+            usdt_observations(quotes),
+        )
+        return text, assessment
+
+    if args.post in {"bank-comparison", "bank-comparisons", "all"}:
+        text, safety = build_safe_bank("USD/TRY")
+        add_alanchande(text, "bank-usd", safety)
 
     if args.post in {"eur-bank-comparison", "bank-comparisons"}:
-        add_alanchande(
-            build_eur_comparison_post(
-                get_eur_quotes(),
-                load_bank_fx_near_24h(history_db, "EUR/TRY"),
-            )
-        )
+        text, safety = build_safe_bank("EUR/TRY")
+        add_alanchande(text, "bank-eur", safety)
 
     if args.post in {"alanchande-converter", "demo-formats"}:
         add_alanchande(build_alanchande_converter_post(get_rates()))
@@ -518,120 +630,78 @@ def main() -> int:
         add_alanchande(build_alanchande_daily_change_post(stored, current))
 
     if args.post == "alanchande-fx-pulse":
-        add_alanchande(
-            build_turkey_fx_pulse_post(
-                get_usd_quotes(),
-                get_eur_quotes(),
-                load_bank_fx_near_24h(history_db, "USD/TRY"),
-                load_bank_fx_near_24h(history_db, "EUR/TRY"),
-            )
-        )
+        text, safety = build_safe_fx_pulse()
+        add_alanchande(text, "fx-pulse", safety)
 
     if args.post == "alanchande-turkey-gold":
-        add_alanchande(
-            build_turkish_gold_post(
-                get_turkey_gold(),
-                load_turkey_gold_near_24h(history_db),
-            )
-        )
+        text, safety = build_safe_turkey_gold()
+        add_alanchande(text, "turkey-gold", safety)
         successful_market_posts.add("turkey-gold")
 
     if args.post == "alanchande-iran-gold":
-        add_alanchande(
-            build_iran_gold_post(
-                get_iran_gold(),
-                load_iran_gold_near_24h(history_db),
-            )
-        )
+        text, safety = build_safe_iran_gold()
+        add_alanchande(text, "iran-gold", safety)
         successful_market_posts.add("iran-gold")
 
     if args.post == "alanchande-usdt-exchanges":
-        add_alanchande(build_default_alanchande_usdt_post())
+        text, safety = build_safe_usdt()
+        add_alanchande(text, "usdt", safety)
         successful_market_posts.add("usdt")
 
     if args.post == "alanchande-markets":
-        market_posts, market_failures = build_resilient_market_bundle(
-            [
-                (
-                    "turkey-gold",
-                    lambda: build_turkish_gold_post(
-                        get_turkey_gold(),
-                        load_turkey_gold_near_24h(history_db),
-                    ),
-                ),
-                (
-                    "iran-gold",
-                    lambda: build_iran_gold_post(
-                        get_iran_gold(),
-                        load_iran_gold_near_24h(history_db),
-                    ),
-                ),
-                ("usdt", build_default_alanchande_usdt_post),
-            ]
-        )
-
-        for key, text in market_posts:
-            add_alanchande(text)
+        safe_builders = [
+            ("turkey-gold", build_safe_turkey_gold),
+            ("iran-gold", build_safe_iran_gold),
+            ("usdt", build_safe_usdt),
+        ]
+        built_count = 0
+        for key, builder in safe_builders:
+            try:
+                text, safety = builder()
+            except Exception as exc:
+                print(
+                    f"WARNING: skipped {key}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            add_alanchande(text, key, safety)
             successful_market_posts.add(key)
+            built_count += 1
 
-        for key, error in market_failures.items():
-            print(f"WARNING: skipped {key}: {error}", file=sys.stderr)
-
-        if not market_posts:
+        if built_count == 0:
             raise RuntimeError("All AlanChande market posts failed")
 
     if args.post == "alanchande-daily":
-        daily_posts, daily_failures = build_resilient_market_bundle(
-            [
-                (
-                    "bank-usd",
-                    lambda: build_usd_comparison_post(
-                        get_usd_quotes(),
-                        load_bank_fx_near_24h(history_db, "USD/TRY"),
-                    ),
-                ),
-                (
-                    "fx-pulse",
-                    lambda: build_turkey_fx_pulse_post(
-                        get_usd_quotes(),
-                        get_eur_quotes(),
-                        load_bank_fx_near_24h(history_db, "USD/TRY"),
-                        load_bank_fx_near_24h(history_db, "EUR/TRY"),
-                    ),
-                ),
-                (
-                    "turkey-gold",
-                    lambda: build_turkish_gold_post(
-                        get_turkey_gold(),
-                        load_turkey_gold_near_24h(history_db),
-                    ),
-                ),
-                (
-                    "iran-gold",
-                    lambda: build_iran_gold_post(
-                        get_iran_gold(),
-                        load_iran_gold_near_24h(history_db),
-                    ),
-                ),
-                ("usdt", build_default_alanchande_usdt_post),
-            ]
-        )
-
-        for key, text in daily_posts:
-            add_alanchande(text)
+        safe_builders = [
+            ("bank-usd", lambda: build_safe_bank("USD/TRY")),
+            ("fx-pulse", build_safe_fx_pulse),
+            ("turkey-gold", build_safe_turkey_gold),
+            ("iran-gold", build_safe_iran_gold),
+            ("usdt", build_safe_usdt),
+        ]
+        built_count = 0
+        for key, builder in safe_builders:
+            try:
+                text, safety = builder()
+            except Exception as exc:
+                print(
+                    f"WARNING: skipped daily {key}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            add_alanchande(text, key, safety)
             successful_market_posts.add(key)
+            built_count += 1
 
-        for key, error in daily_failures.items():
-            print(f"WARNING: skipped daily {key}: {error}", file=sys.stderr)
-
-        if not daily_posts:
+        if built_count == 0:
             raise RuntimeError("All AlanChande daily posts failed")
 
     if args.post == "alanchande-usdt-tgju":
         add_alanchande(build_usdt_exchange_post(get_iran_usdt()))
 
     if args.post == "alanchande-usdt-seven":
-        add_alanchande(build_default_alanchande_usdt_post())
+        text, safety = build_safe_usdt()
+        add_alanchande(text, "usdt", safety)
 
     if args.post == "alanchande-usdt-nobitex":
         add_alanchande(build_nobitex_usdt_post(get_nobitex_usdt()))
@@ -670,48 +740,120 @@ def main() -> int:
         add_kiani(build_kiani_examples_post(get_rates()))
 
     if args.dry_run:
-        for token_env, destination_env, text in jobs:
-            print(f"\n===== {destination_env} (bot: {token_env}) =====\n{text}\n")
+        print(f"MARKET_SAFETY_MODE={safety_mode}")
+        for token_env, destination_env, text, post_key, safety in jobs:
+            if safety is not None:
+                print(
+                    f"SAFETY {safety.post_type}: {safety.decision} | "
+                    f"{safety.reason}"
+                )
+            print(
+                f"\n===== {destination_env} (bot: {token_env}) =====\n{text}\n"
+            )
         return 0
 
-    for token_env, destination_env, text in jobs:
+    admin_chat_id = os.environ.get("ALANCHANDE_ADMIN_CHAT_ID", "").strip() or None
+    admin_token = (
+        os.environ.get("ALANCHANDE_ADMIN_BOT_TOKEN", "").strip()
+        or os.environ.get("ALANCHANDE_TELEGRAM_BOT_TOKEN", "").strip()
+        or None
+    )
+    try:
+        alert_repeat_minutes = int(
+            os.environ.get("MARKET_SAFETY_ALERT_REPEAT_MINUTES", "60")
+        )
+    except ValueError:
+        alert_repeat_minutes = 60
+
+    for token_env, destination_env, text, post_key, safety in jobs:
+        if safety is not None and not publication_allowed(safety_mode, safety):
+            record_assessment(
+                history_db,
+                safety,
+                mode=safety_mode,
+                published=False,
+            )
+            print(
+                f"BLOCKED -> {destination_env}: {safety.post_type} | "
+                f"{safety.reason}",
+                file=sys.stderr,
+            )
+            try:
+                maybe_notify_admin(
+                    history_db,
+                    safety,
+                    mode=safety_mode,
+                    token=admin_token,
+                    chat_id=admin_chat_id,
+                    repeat_minutes=alert_repeat_minutes,
+                )
+            except Exception as exc:
+                print(
+                    f"WARNING: admin safety alert failed: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+            continue
+
         token = _required_env(token_env)
         chat_id = _required_env(destination_env)
         telegram_send(token, chat_id, text)
         print(f"sent -> {destination_env} using {token_env}")
 
+        if post_key is not None:
+            sent_market_posts.add(post_key)
+
+        if safety is not None:
+            record_assessment(
+                history_db,
+                safety,
+                mode=safety_mode,
+                published=True,
+            )
+            if safety.decision != "VERIFIED":
+                print(
+                    f"SHADOW SAFETY {safety.post_type}: {safety.decision} | "
+                    f"{safety.reason}",
+                    file=sys.stderr,
+                )
+            try:
+                maybe_notify_admin(
+                    history_db,
+                    safety,
+                    mode=safety_mode,
+                    token=admin_token,
+                    chat_id=admin_chat_id,
+                    repeat_minutes=alert_repeat_minutes,
+                )
+            except Exception as exc:
+                print(
+                    f"WARNING: admin safety alert failed: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+
     # Save bank-market snapshots only after successful Telegram delivery.
     # Dry runs never mutate history. On the next daily post, the snapshot
     # closest to 24 hours old is used for Δ24H.
-    if args.post in {"bank-comparison", "bank-comparisons", "all"}:
+    if "bank-usd" in sent_market_posts and "fx-pulse" not in sent_market_posts:
         timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
         print(f"recorded USD/TRY bank snapshot -> {timestamp}")
 
-    if "bank-usd" in successful_market_posts and "fx-pulse" not in successful_market_posts:
-        timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
-        print(f"recorded USD/TRY daily snapshot -> {timestamp}")
-
-    if args.post in {"eur-bank-comparison", "bank-comparisons"}:
+    if "bank-eur" in sent_market_posts and "fx-pulse" not in sent_market_posts:
         timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
         print(f"recorded EUR/TRY bank snapshot -> {timestamp}")
 
-    if args.post == "alanchande-fx-pulse":
-        usd_timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
-        eur_timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
-        print(f"recorded USD/TRY FX pulse snapshot -> {usd_timestamp}")
-        print(f"recorded EUR/TRY FX pulse snapshot -> {eur_timestamp}")
-
-    if "fx-pulse" in successful_market_posts:
+    if "fx-pulse" in sent_market_posts:
         usd_timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
         eur_timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
         print(f"recorded USD/TRY daily FX snapshot -> {usd_timestamp}")
         print(f"recorded EUR/TRY daily FX snapshot -> {eur_timestamp}")
 
-    if "turkey-gold" in successful_market_posts:
+    if "turkey-gold" in sent_market_posts:
         timestamp = record_turkey_gold_quotes(history_db, get_turkey_gold())
         print(f"recorded Turkey gold snapshot -> {timestamp}")
 
-    if "iran-gold" in successful_market_posts:
+    if "iran-gold" in sent_market_posts:
         timestamp = record_iran_gold_market(history_db, get_iran_gold())
         print(f"recorded Iran gold snapshot -> {timestamp}")
 
