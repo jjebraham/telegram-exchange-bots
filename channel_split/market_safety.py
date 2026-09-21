@@ -532,16 +532,24 @@ def _midpoint(buy: Decimal, sell: Decimal) -> Decimal:
     return (_decimal(buy) + _decimal(sell)) / Decimal("2")
 
 
-def bank_fx_observations(pair: str, quotes: Iterable[Any]) -> list[SafetyObservation]:
+def bank_fx_observations(
+    pair: str,
+    quotes: Iterable[Any],
+    extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for quote in quotes:
         errors: list[str] = []
         if Decimal(str(quote.sell)) <= Decimal(str(quote.buy)):
             errors.append("sell must be greater than buy")
+        source_values = {"doviz": _midpoint(quote.buy, quote.sell)}
+        for source_name, values in (extra_sources or {}).items():
+            if quote.name in values:
+                source_values[str(source_name)] = _decimal(values[quote.name])
         observations.append(
             SafetyObservation(
                 market_key=f"bank:{pair}:{quote.name}",
-                source_values={"doviz": _midpoint(quote.buy, quote.sell)},
+                source_values=source_values,
                 structural_errors=tuple(errors),
                 max_source_deviation_pct=Decimal("1.50"),
                 suspicious_move_pct=Decimal("4.00"),
@@ -553,6 +561,7 @@ def bank_fx_observations(pair: str, quotes: Iterable[Any]) -> list[SafetyObserva
 def fx_pulse_observations(
     usd_quotes: Iterable[Any],
     eur_quotes: Iterable[Any],
+    extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
 ) -> list[SafetyObservation]:
     result: list[SafetyObservation] = []
     for pair, quotes in (("USD/TRY", usd_quotes), ("EUR/TRY", eur_quotes)):
@@ -568,10 +577,14 @@ def fx_pulse_observations(
                 )
             )
             continue
+        source_values = {"doviz": _midpoint(kapali.buy, kapali.sell)}
+        for source_name, pair_values in (extra_sources or {}).items():
+            if pair in pair_values:
+                source_values[str(source_name)] = _decimal(pair_values[pair])
         result.append(
             SafetyObservation(
                 market_key=f"fx:{pair}:kapalicarsi",
-                source_values={"doviz": _midpoint(kapali.buy, kapali.sell)},
+                source_values=source_values,
                 max_source_deviation_pct=Decimal("1.50"),
                 suspicious_move_pct=Decimal("4.00"),
             )
@@ -579,16 +592,23 @@ def fx_pulse_observations(
     return result
 
 
-def turkey_gold_observations(quotes: Iterable[Any]) -> list[SafetyObservation]:
+def turkey_gold_observations(
+    quotes: Iterable[Any],
+    extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for quote in quotes:
         errors: list[str] = []
         if Decimal(str(quote.sell)) <= Decimal(str(quote.buy)):
             errors.append("sell must be greater than buy")
+        source_values = {"doviz": _midpoint(quote.buy, quote.sell)}
+        for source_name, values in (extra_sources or {}).items():
+            if quote.key in values:
+                source_values[str(source_name)] = _decimal(values[quote.key])
         observations.append(
             SafetyObservation(
                 market_key=f"turkey-gold:{quote.key}",
-                source_values={"doviz": _midpoint(quote.buy, quote.sell)},
+                source_values=source_values,
                 structural_errors=tuple(errors),
                 max_source_deviation_pct=Decimal("1.50"),
                 suspicious_move_pct=Decimal("5.00"),
@@ -597,31 +617,46 @@ def turkey_gold_observations(quotes: Iterable[Any]) -> list[SafetyObservation]:
     return observations
 
 
-def iran_gold_observations(market: Any) -> list[SafetyObservation]:
+def iran_gold_observations(
+    market: Any,
+    extra_sources: Mapping[str, Mapping[str, Decimal]] | None = None,
+) -> list[SafetyObservation]:
     observations: list[SafetyObservation] = []
     for label, value in market.coin_prices_rial.items():
+        source_values = {"tgju": _decimal(value) / Decimal("10")}
+        for source_name, values in (extra_sources or {}).items():
+            if label in values:
+                source_values[str(source_name)] = _decimal(values[label])
         observations.append(
             SafetyObservation(
                 market_key=f"iran-gold:{label}",
-                source_values={"tgju": _decimal(value) / Decimal("10")},
+                source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
             )
         )
     if market.gold18_rial is not None:
+        source_values = {"tgju": _decimal(market.gold18_rial) / Decimal("10")}
+        for source_name, values in (extra_sources or {}).items():
+            if "طلای ۱۸ عیار" in values:
+                source_values[str(source_name)] = _decimal(values["طلای ۱۸ عیار"])
         observations.append(
             SafetyObservation(
                 market_key="iran-gold:طلای ۱۸ عیار",
-                source_values={"tgju": _decimal(market.gold18_rial) / Decimal("10")},
+                source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
             )
         )
     if market.mesghal_rial is not None:
+        source_values = {"tgju": _decimal(market.mesghal_rial) / Decimal("10")}
+        for source_name, values in (extra_sources or {}).items():
+            if "مثقال طلا" in values:
+                source_values[str(source_name)] = _decimal(values["مثقال طلا"])
         observations.append(
             SafetyObservation(
                 market_key="iran-gold:مثقال طلا",
-                source_values={"tgju": _decimal(market.mesghal_rial) / Decimal("10")},
+                source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
             )
