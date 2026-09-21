@@ -692,7 +692,12 @@ def main() -> int:
         assessment = assess_post(
             history_db,
             "iran-gold",
-            iran_gold_observations(market),
+            iran_gold_observations(
+                market,
+                unavailable_sources=(
+                    "independent-iran-gold-verifier:not-configured",
+                ),
+            ),
         )
         return text, assessment
 
