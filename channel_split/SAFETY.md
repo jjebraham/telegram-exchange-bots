@@ -200,15 +200,24 @@ warning but does not block a row when quorum is still satisfied.
 
 ### Iran gold and coin
 
-Primary source: TGJU. The collector first tries the aggregate/home table and,
-if that layout is incomplete, falls back to TGJU's dedicated profile pages for
-each coin, 18k gold and mesghal. Bubble values are omitted rather than guessed
-when the aggregate page does not expose them.
+Primary/display source: TGJU. The collector first tries the aggregate/home table
+and, if that layout is incomplete, falls back to TGJU's dedicated profile pages
+for each coin, 18k gold and mesghal. Bubble values are omitted rather than
+guessed when the aggregate page does not expose them.
 
-No proven independent live verifier has been accepted yet. Therefore this board
-intentionally remains BLOCKED under strict enforce.
+Independent verifier family: Dolarchand public Gold & Silver page. It must
+provide a parseable Last updated timestamp and all seven required Toman values:
+Emami, Bahar Azadi, half, quarter, Gerami, 18K gold and mesghal. When Dolarchand
+exposes separate Buy/Sell values, the verifier uses their midpoint to compare
+against TGJU's single displayed market price.
 
-Do not weaken the quorum merely to make it publish.
+RialNerkh and Arzbin are currently observational cross-checks only. Their values
+are extremely close to Dolarchand, so they are not counted as additional
+independent families until upstream independence has been demonstrated.
+
+The board can reach VERIFIED when TGJU and Dolarchand are fresh and agree within
+the Iran-gold tolerance. If the external family is stale, malformed, missing a
+required row, or materially disagrees, the board remains BLOCKED.
 
 ### Iran USDT comparison
 
