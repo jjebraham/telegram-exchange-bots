@@ -513,11 +513,9 @@ def main() -> int:
         return max(value, 1)
 
     def get_altinkaynak_currency_safe() -> dict[str, Decimal]:
-        nonlocal (
-            altinkaynak_currency_cache,
-            altinkaynak_currency_attempted,
-            altinkaynak_currency_error,
-        )
+        nonlocal altinkaynak_currency_cache
+        nonlocal altinkaynak_currency_attempted
+        nonlocal altinkaynak_currency_error
         if not altinkaynak_currency_attempted:
             altinkaynak_currency_attempted = True
             try:
@@ -537,11 +535,9 @@ def main() -> int:
         return altinkaynak_currency_cache or {}
 
     def get_altinkaynak_gold_safe() -> dict[str, Decimal]:
-        nonlocal (
-            altinkaynak_gold_cache,
-            altinkaynak_gold_attempted,
-            altinkaynak_gold_error,
-        )
+        nonlocal altinkaynak_gold_cache
+        nonlocal altinkaynak_gold_attempted
+        nonlocal altinkaynak_gold_error
         if not altinkaynak_gold_attempted:
             altinkaynak_gold_attempted = True
             try:
