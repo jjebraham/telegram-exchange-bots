@@ -636,7 +636,11 @@ def _usdt_source_family(quote: Any) -> str:
         return f"direct:{quote.exchange}"
     if source in {"tgju", "ramzarz"}:
         return source
-    return f"mixed:{source}"
+    if source == "tgju+ramzarz":
+        # A mixed row is not a new independent source family. Count it
+        # conservatively as one aggregator family rather than inflating quorum.
+        return "tgju"
+    return f"fallback:{source}"
 
 
 def usdt_source_family_values(quotes: Iterable[Any]) -> dict[str, Decimal]:
