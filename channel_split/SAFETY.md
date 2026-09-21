@@ -118,6 +118,16 @@ Alert behavior:
 - materially different reason: immediate new alert;
 - first VERIFIED decision after an active problem: recovery alert.
 
+Source health is monitored independently from post safety. A redundant provider
+may be DEGRADED while the public post remains VERIFIED because enough other
+independent providers still satisfy quorum. These source outages generate a
+separate admin warning and a recovery notice when the provider returns. This
+prevents a silent loss of redundancy.
+
+Source-health checks are stored in market_source_health_audit, while
+market_source_health_state keeps alert deduplication/recovery state. The
+--safety-status command shows both recent post decisions and source health.
+
 Alert delivery is independent of publication safety. Failure to deliver an
 admin alert never turns a blocked rate into a publishable rate.
 
@@ -147,7 +157,10 @@ Independent verifier: Altinkaynak public Gold service:
 Doviz and Altinkaynak are different retail providers, so their individual
 dealer spreads are allowed to differ. The safety gate verifies their product
 midpoints against each other and separately rejects a crossed or abnormally
-wide spread in the Doviz quote actually displayed to users.
+wide spread in the Doviz quote actually displayed to users. Gram gold keeps a
+tight 1.5% cross-provider midpoint limit; physical quarter/half/full coins use
+a 2.5% midpoint limit because dealer premiums on physical coins are
+structurally wider, while their displayed spread remains capped separately.
 
 This board can reach VERIFIED when all required products have fresh agreeing
 market-level verification and the displayed spreads pass their structural
@@ -178,7 +191,8 @@ Do not weaken the quorum merely to make it publish.
 
 ### Iran USDT comparison
 
-The hybrid board tracks source families separately:
+The hybrid board tracks source families separately and reports health for each
+direct provider plus TGJU and Ramzarz:
 
 - each direct exchange API is independent;
 - TGJU is one aggregator family regardless of how many rows it supplies;
