@@ -700,6 +700,15 @@ def turkey_gold_observations(
         "half": Decimal("4.00"),
         "tam": Decimal("4.00"),
     }
+    midpoint_caps = {
+        # Gram gold is a tight commodity quote. Physical coins legitimately
+        # carry wider dealer premiums, so compare their market midpoints with a
+        # slightly wider tolerance while still keeping a hard spread guard.
+        "gram": Decimal("1.50"),
+        "quarter": Decimal("2.50"),
+        "half": Decimal("2.50"),
+        "tam": Decimal("2.50"),
+    }
 
     observations: list[SafetyObservation] = []
     for quote in quotes:
@@ -742,7 +751,10 @@ def turkey_gold_observations(
                 market_key=f"turkey-gold:{quote.key}:mid",
                 source_values=source_values,
                 structural_errors=tuple(errors),
-                max_source_deviation_pct=Decimal("1.50"),
+                max_source_deviation_pct=midpoint_caps.get(
+                    str(quote.key),
+                    Decimal("2.50"),
+                ),
                 suspicious_move_pct=Decimal("5.00"),
                 unavailable_sources=unavailable_sources,
             )
