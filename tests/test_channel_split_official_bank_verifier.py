@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
 from official_bank_verifier import (  # noqa: E402
+    parse_garanti_quote,
     parse_isbank_midpoint,
     parse_kuveyt_quote,
     parse_ziraat_midpoint,
@@ -26,6 +27,67 @@ class OfficialBankVerifierTests(unittest.TestCase):
             parse_isbank_midpoint(html, "USD/TRY"),
             (Decimal("47.314") + Decimal("49.9294")) / Decimal("2"),
         )
+
+    def test_garanti_parses_official_expanded_rate_row(self):
+        payload = {
+            "expandedCurrRateRespons": [
+                {
+                    "currCode": "USD",
+                    "exchBuyRate": 47.675,
+                    "exchSellRate": 49.675,
+                },
+                {
+                    "currCode": "EUR",
+                    "exchBuyRate": 54.9,
+                    "exchSellRate": 57.1,
+                },
+            ]
+        }
+
+        self.assertEqual(
+            parse_garanti_quote(payload, "USD/TRY"),
+            (Decimal("47.675"), Decimal("49.675")),
+        )
+
+    def test_garanti_nested_response_is_supported(self):
+        payload = {
+            "data": {
+                "result": {
+                    "expandedCurrRateRespons": [
+                        {
+                            "currCode": "USD",
+                            "exchBuyRate": "47.675",
+                            "exchSellRate": "49.675",
+                        }
+                    ]
+                }
+            }
+        }
+        self.assertEqual(
+            parse_garanti_quote(payload, "USD/TRY"),
+            (Decimal("47.675"), Decimal("49.675")),
+        )
+
+    def test_garanti_missing_or_crossed_row_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "missing USD"):
+            parse_garanti_quote(
+                {"expandedCurrRateRespons": []},
+                "USD/TRY",
+            )
+
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            parse_garanti_quote(
+                {
+                    "expandedCurrRateRespons": [
+                        {
+                            "currCode": "USD",
+                            "exchBuyRate": 50,
+                            "exchSellRate": 49,
+                        }
+                    ]
+                },
+                "USD/TRY",
+            )
 
     def test_kuveyt_parses_official_exchange_rates_row(self):
         payload = [
