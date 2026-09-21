@@ -37,26 +37,28 @@ Available post names:
 - `alanchande-daily-change` — intraday USD/EUR movement from local SQLite history.
 - `alanchande-turkey-gold` — Turkish Kapalıçarşı gold products.
 - `alanchande-iran-gold` — Iranian coin/gold prices + coin bubbles, converted from rial to toman.
-- `alanchande-usdt-exchanges` — primary USDT comparison from direct exchange APIs (Wallex, Exir, Ramzinex), with automatic TGJU fallback only if fewer than two direct sources survive.
+- `alanchande-usdt-exchanges` — production 7-exchange hybrid USDT board. It combines direct exchange APIs where available with TGJU/Ramzarz fallbacks per exchange.
 - `alanchande-usdt-direct` — direct-source-only USDT comparison for diagnostics.
 - `alanchande-usdt-tgju` — legacy TGJU comparison for diagnostics/fallback validation.
-- `alanchande-markets` — sends the Turkish-gold, Iran-gold and primary Iran-USDT boards together.
+- `alanchande-markets` — resilient bundle of Turkey gold, Iran gold/coins and the 7-exchange USDT board. One failed market source does not block the healthy posts.
+- `alanchande-fx-pulse` — compact Kapalıçarşı USD/TL + EUR/TL midpoint board with ~24-hour changes.
+- `alanchande-daily` — resilient daily AlanChande package: USD bank comparison, FX pulse, Turkey gold, Iran gold/coins and 7-exchange USDT.
 
 The USD/EUR comparison source layer is isolated in `bank_compare.py`.
 Turkish gold is isolated in `gold_prices.py`. Iran gold/coin is isolated in
 `iran_gold.py`.
 
-The primary USDT comparison is isolated in `direct_usdt_compare.py` and currently
-normalizes live Wallex, Exir and Ramzinex bid/ask data into customer-buy and
-customer-sell prices. Providers are fetched independently and concurrently; one
-provider may fail without killing the board, but at least two direct sources are
-required. Midpoint outliers more than 8% away from the cross-source median are
-discarded.
+The production USDT board is isolated in `hybrid_usdt_compare.py`. It targets
+Wallex, Nobitex, Ramzinex, Bitpin, AbanTether, Tabdeal and Exir. Direct exchange
+quotes are preferred per row; TGJU and Ramzarz are used as fallbacks when a
+direct source is unavailable. The board requires at least five surviving
+exchanges, rejects crossed customer-facing bid/ask pairs, applies an 8% median
+outlier guard, and reports how many rows came from direct versus fallback
+sources.
 
-`primary_usdt.py` promotes this direct board to the normal AlanChande flow. If
-the direct quorum drops below two sources, it automatically falls back to the
-legacy TGJU comparison in `iran_usdt.py`. The TGJU fallback retains its existing
-date/freshness and 12%-from-median filters.
+The older `direct_usdt_compare.py`, `primary_usdt.py` and TGJU-only commands
+remain available for diagnostics and source validation, but
+`alanchande-usdt-exchanges` and `alanchande-markets` use the hybrid board.
 
 ### Kiani Exchange
 
@@ -129,8 +131,21 @@ python3 publish_channels.py --post all
 
 ## Production cut-over
 
-After several days of test posting and source/error monitoring, no code change
-is required. Replace the test secrets/destinations with the production values:
+The publisher auto-loads `channel_split/.env` on the server. Do not commit that
+file or any real BotFather token.
+
+Before cut-over, run the full test suite and preview the complete daily bundle:
+
+```bash
+cd /home/kianirad2020/telegram_bot_repo
+python3 -m unittest discover -s tests -p 'test_channel_split_*.py' -v
+
+cd channel_split
+python3 publish_channels.py --post alanchande-daily --dry-run
+```
+
+After test-channel validation, replace only the test secrets/destinations with
+the production values:
 
 ```bash
 ALANCHANDE_TELEGRAM_BOT_TOKEN=<production AlanChande publisher token>
@@ -142,16 +157,29 @@ KIANI_CHANNEL_ID=@ExchangeKiani
 
 and ensure each production publisher bot is an admin of its matching channel.
 
+For the first production run, send the daily bundle manually once and inspect
+all resulting posts before enabling any scheduler:
+
+```bash
+python3 publish_channels.py --post alanchande-daily
+```
+
+Successful non-dry-run market posts record local SQLite history only after
+Telegram delivery. Bank/FX, Turkey gold and Iran gold therefore gain genuine
+`Δ24H` values on later daily runs. The history lookup accepts snapshots roughly
+18–30 hours old and chooses the one closest to 24 hours.
+
+Do not run multiple copies of the daily publisher concurrently. Use the
+repository launcher `run_alanchande_daily.sh` from cron/systemd once the final
+posting time has been chosen.
+
 ## Next implementation steps
 
-- add timestamps/staleness checks to bank comparison data;
-- add EUR/TRY comparison after USD is stable;
-- add morning/evening AlanChande market summary;
-- add Toman→TRY / TRY→Toman human-friendly converters;
-- add gold + USDT market/reference prices to AlanChande;
+- verify third-party market-data reuse/licensing terms before sustained production redistribution;
+- replace aggregator bank rows with official adapters where stable APIs/endpoints and reuse terms permit it;
 - add significant-change alerts instead of repetitive ticker spam;
-- add state/history for day change, daily range and 7-day chart data;
-- add scheduled posting only after dry-run/test channels are clean;
+- extend stored history into 7-day chart data;
+- decide the final production posting time, then enable the scheduler;
 - replace aggregator bank rows with official adapters where stable APIs/endpoints
   and reuse terms permit it.
 
@@ -192,3 +220,25 @@ python3 publish_channels.py --post alanchande-markets
 The USDT board now prefers direct exchange APIs. TGJU is retained as a fallback
 and diagnostic source only. Before production-scale redistribution, verify each
 provider's reuse/licensing terms and continue monitoring API/schema changes.
+
+## Daily production launcher
+
+`run_alanchande_daily.sh` is a thin production-safe wrapper around
+`publish_channels.py --post alanchande-daily`. It uses `flock` to prevent
+overlapping runs, changes to the correct repository directory itself, and leaves
+stdout/stderr available to cron/systemd logging.
+
+Manual preview remains:
+
+```bash
+python3 publish_channels.py --post alanchande-daily --dry-run
+```
+
+Manual production execution through the lock-protected launcher:
+
+```bash
+./run_alanchande_daily.sh
+```
+
+The scheduler itself should only be enabled after the exact daily posting time
+has been confirmed.
