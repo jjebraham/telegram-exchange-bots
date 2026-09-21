@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
 import publish_channels  # noqa: E402
+from market_safety import PostSafetyAssessment, VERIFIED  # noqa: E402
 
 
 class DailyBundleCommandTests(unittest.TestCase):
@@ -19,12 +20,20 @@ class DailyBundleCommandTests(unittest.TestCase):
             "--dry-run",
         ]
 
+        verified = PostSafetyAssessment(
+            post_type="fixture",
+            decision=VERIFIED,
+            reason="fixture verified",
+            checks=(),
+        )
+
         with (
             patch.object(sys, "argv", argv),
             patch.object(publish_channels, "fetch_usd_comparison", return_value=["USD"]),
             patch.object(publish_channels, "fetch_eur_comparison", return_value=["EUR"]),
             patch.object(publish_channels, "fetch_turkish_gold_quotes", return_value=["TGOLD"]),
             patch.object(publish_channels, "fetch_iran_gold_market", return_value="IGOLD"),
+            patch.object(publish_channels, "collect_hybrid_usdt_quotes", return_value=["USDT"]),
             patch.object(publish_channels, "load_bank_fx_near_24h", return_value={}),
             patch.object(publish_channels, "load_turkey_gold_near_24h", return_value={}),
             patch.object(publish_channels, "load_iran_gold_near_24h", return_value={}),
@@ -32,7 +41,13 @@ class DailyBundleCommandTests(unittest.TestCase):
             patch.object(publish_channels, "build_turkey_fx_pulse_post", return_value="PULSE"),
             patch.object(publish_channels, "build_turkish_gold_post", return_value="TURKEY-GOLD"),
             patch.object(publish_channels, "build_iran_gold_post", return_value="IRAN-GOLD"),
-            patch.object(publish_channels, "build_default_alanchande_usdt_post", return_value="USDT"),
+            patch.object(publish_channels, "build_hybrid_usdt_post", return_value="USDT"),
+            patch.object(publish_channels, "bank_fx_observations", return_value=[]),
+            patch.object(publish_channels, "fx_pulse_observations", return_value=[]),
+            patch.object(publish_channels, "turkey_gold_observations", return_value=[]),
+            patch.object(publish_channels, "iran_gold_observations", return_value=[]),
+            patch.object(publish_channels, "usdt_observations", return_value=[]),
+            patch.object(publish_channels, "assess_post", return_value=verified),
             patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
             result = publish_channels.main()
