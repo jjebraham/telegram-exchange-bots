@@ -23,6 +23,10 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from altinkaynak_verifier import (
+    fetch_altinkaynak_currency,
+    fetch_altinkaynak_gold,
+)
 from bank_compare import (
     build_eur_comparison_post,
     build_usd_comparison_post,
@@ -404,6 +408,10 @@ def main() -> int:
     abantether_usdt_cache: Any | None = None
     tetherland_usdt_cache: Any | None = None
     hybrid_usdt_cache: list[Any] | None = None
+    altinkaynak_currency_cache: dict[str, Decimal] | None = None
+    altinkaynak_currency_attempted = False
+    altinkaynak_gold_cache: dict[str, Decimal] | None = None
+    altinkaynak_gold_attempted = False
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -495,6 +503,47 @@ def main() -> int:
             hybrid_usdt_cache = collect_hybrid_usdt_quotes()
         return hybrid_usdt_cache
 
+    def _altinkaynak_max_age_minutes() -> int:
+        try:
+            value = int(os.environ.get("ALTINKAYNAK_MAX_AGE_MINUTES", "90"))
+        except ValueError:
+            value = 90
+        return max(value, 1)
+
+    def get_altinkaynak_currency_safe() -> dict[str, Decimal]:
+        nonlocal altinkaynak_currency_cache, altinkaynak_currency_attempted
+        if not altinkaynak_currency_attempted:
+            altinkaynak_currency_attempted = True
+            try:
+                altinkaynak_currency_cache = fetch_altinkaynak_currency(
+                    max_age_minutes=_altinkaynak_max_age_minutes()
+                )
+            except Exception as exc:
+                altinkaynak_currency_cache = {}
+                print(
+                    f"WARNING: Altinkaynak currency verifier unavailable: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+        return altinkaynak_currency_cache or {}
+
+    def get_altinkaynak_gold_safe() -> dict[str, Decimal]:
+        nonlocal altinkaynak_gold_cache, altinkaynak_gold_attempted
+        if not altinkaynak_gold_attempted:
+            altinkaynak_gold_attempted = True
+            try:
+                altinkaynak_gold_cache = fetch_altinkaynak_gold(
+                    max_age_minutes=_altinkaynak_max_age_minutes()
+                )
+            except Exception as exc:
+                altinkaynak_gold_cache = {}
+                print(
+                    f"WARNING: Altinkaynak gold verifier unavailable: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+        return altinkaynak_gold_cache or {}
+
     def current_history_snapshot():
         # AlanChande history intentionally depends only on neutral market feeds.
         return build_snapshot(get_usd_quotes(), get_eur_quotes())
@@ -551,10 +600,21 @@ def main() -> int:
             if pair == "USD/TRY"
             else build_eur_comparison_post(quotes, previous)
         )
+        altinkaynak = get_altinkaynak_currency_safe()
+        extra = {}
+        if pair in altinkaynak:
+            # Altinkaynak is a market-level verifier. It can independently
+            # verify the Kapalicarsi row but must not be treated as proof of a
+            # specific bank's own customer quote.
+            extra = {
+                "altinkaynak": {
+                    "Kapalıçarşı": altinkaynak[pair],
+                }
+            }
         assessment = assess_post(
             history_db,
             "bank-usd" if pair == "USD/TRY" else "bank-eur",
-            bank_fx_observations(pair, quotes),
+            bank_fx_observations(pair, quotes, extra),
         )
         return text, assessment
 
@@ -567,10 +627,12 @@ def main() -> int:
             load_bank_fx_near_24h(history_db, "USD/TRY"),
             load_bank_fx_near_24h(history_db, "EUR/TRY"),
         )
+        altinkaynak = get_altinkaynak_currency_safe()
+        extra = {"altinkaynak": altinkaynak} if altinkaynak else {}
         assessment = assess_post(
             history_db,
             "fx-pulse",
-            fx_pulse_observations(usd, eur),
+            fx_pulse_observations(usd, eur, extra),
         )
         return text, assessment
 
@@ -580,10 +642,12 @@ def main() -> int:
             quotes,
             load_turkey_gold_near_24h(history_db),
         )
+        altinkaynak = get_altinkaynak_gold_safe()
+        extra = {"altinkaynak": altinkaynak} if altinkaynak else {}
         assessment = assess_post(
             history_db,
             "turkey-gold",
-            turkey_gold_observations(quotes),
+            turkey_gold_observations(quotes, extra),
         )
         return text, assessment
 
