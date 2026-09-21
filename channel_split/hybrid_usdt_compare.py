@@ -51,6 +51,12 @@ DISPLAY_EXCHANGE_NAMES = {
 
 
 @dataclass(frozen=True)
+class HybridUsdtCollection:
+    quotes: list["HybridUsdtQuote"]
+    source_health: dict[str, str | None]
+
+
+@dataclass(frozen=True)
 class HybridUsdtQuote:
     exchange: str
     buy_toman: Decimal
@@ -68,20 +74,28 @@ def _safe_direct() -> tuple[list[DirectUsdtQuote], dict[str, str]]:
         return [], {"direct": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-def _safe_tgju() -> list[UsdtExchangeQuote]:
+def _safe_tgju() -> tuple[list[UsdtExchangeQuote], str | None]:
     try:
-        return filter_usdt_quotes(fetch_usdt_exchange_quotes())
+        quotes = filter_usdt_quotes(fetch_usdt_exchange_quotes())
+        if not quotes:
+            return [], "no usable TGJU exchange rows"
+        return quotes, None
     except Exception as exc:
-        logger.warning("TGJU USDT source failed: %s: %s", type(exc).__name__, exc)
-        return []
+        detail = f"{type(exc).__name__}: {exc}"[:300]
+        logger.warning("TGJU USDT source failed: %s", detail)
+        return [], detail
 
 
-def _safe_ramzarz() -> list[RamzarzUsdtQuote]:
+def _safe_ramzarz() -> tuple[list[RamzarzUsdtQuote], str | None]:
     try:
-        return fetch_ramzarz_usdt_quotes()
+        quotes = fetch_ramzarz_usdt_quotes()
+        if not quotes:
+            return [], "no usable Ramzarz exchange rows"
+        return quotes, None
     except Exception as exc:
-        logger.warning("Ramzarz USDT source failed: %s: %s", type(exc).__name__, exc)
-        return []
+        detail = f"{type(exc).__name__}: {exc}"[:300]
+        logger.warning("Ramzarz USDT source failed: %s", detail)
+        return [], detail
 
 
 def _valid_customer_pair(
@@ -192,7 +206,7 @@ def merge_hybrid_usdt_quotes(
     return merged
 
 
-def collect_hybrid_usdt_quotes() -> list[HybridUsdtQuote]:
+def collect_hybrid_usdt_snapshot() -> HybridUsdtCollection:
     # The three source families are independent and can be fetched in parallel.
     with ThreadPoolExecutor(max_workers=3) as executor:
         direct_future = executor.submit(_safe_direct)
@@ -200,8 +214,8 @@ def collect_hybrid_usdt_quotes() -> list[HybridUsdtQuote]:
         ramzarz_future = executor.submit(_safe_ramzarz)
 
         direct_quotes, direct_errors = direct_future.result()
-        tgju_quotes = tgju_future.result()
-        ramzarz_quotes = ramzarz_future.result()
+        tgju_quotes, tgju_error = tgju_future.result()
+        ramzarz_quotes, ramzarz_error = ramzarz_future.result()
 
     quotes = merge_hybrid_usdt_quotes(
         direct_quotes,
@@ -212,9 +226,39 @@ def collect_hybrid_usdt_quotes() -> list[HybridUsdtQuote]:
     mapping = ", ".join(f"{q.exchange}={q.source}" for q in quotes)
     logger.info("Hybrid USDT source mapping: %s", mapping)
     if direct_errors:
-        logger.info("Direct USDT partial errors: %s", ", ".join(sorted(direct_errors)))
+        logger.info(
+            "Direct USDT partial errors: %s",
+            ", ".join(sorted(direct_errors)),
+        )
 
-    return quotes
+    source_health: dict[str, str | None] = {}
+    direct_expected = {
+        "Wallex": "والکس",
+        "Exir": "اکسیر",
+        "Ramzinex": "رمزینکس",
+    }
+    active_direct = {q.exchange for q in direct_quotes}
+    for provider, exchange in direct_expected.items():
+        key = f"usdt:direct:{provider}"
+        if exchange in active_direct:
+            source_health[key] = None
+        else:
+            source_health[key] = direct_errors.get(
+                provider,
+                "missing after validation/outlier filtering",
+            )
+
+    source_health["usdt:tgju"] = tgju_error
+    source_health["usdt:ramzarz"] = ramzarz_error
+
+    return HybridUsdtCollection(
+        quotes=quotes,
+        source_health=source_health,
+    )
+
+
+def collect_hybrid_usdt_quotes() -> list[HybridUsdtQuote]:
+    return collect_hybrid_usdt_snapshot().quotes
 
 
 def _fmt_toman(value: Decimal | None) -> str:
