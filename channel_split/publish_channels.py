@@ -49,7 +49,7 @@ from tetherland_usdt import build_tetherland_usdt_post, fetch_tetherland_usdt
 from direct_usdt_compare import fetch_and_build_direct_usdt_comparison
 from hybrid_usdt_compare import (
     build_hybrid_usdt_post,
-    collect_hybrid_usdt_quotes,
+    collect_hybrid_usdt_snapshot,
     fetch_and_build_hybrid_usdt_post,
 )
 from market_pulse import build_turkey_fx_pulse_post
@@ -57,9 +57,10 @@ from official_bank_verifier import (
     fetch_isbank_quote,
     fetch_ziraat_quote,
 )
-from admin_alerts import maybe_notify_admin
+from admin_alerts import maybe_notify_admin, maybe_notify_source_health
 from market_safety import (
     PostSafetyAssessment,
+    SourceHealthEvent,
     assess_post,
     bank_fx_observations,
     fx_pulse_observations,
@@ -67,7 +68,9 @@ from market_safety import (
     normalize_mode,
     publication_allowed,
     recent_safety_status,
+    recent_source_health_status,
     record_assessment,
+    record_source_health_event,
     turkey_gold_observations,
     usdt_observations,
 )
@@ -411,6 +414,7 @@ def main() -> int:
     abantether_usdt_cache: Any | None = None
     tetherland_usdt_cache: Any | None = None
     hybrid_usdt_cache: list[Any] | None = None
+    source_health_events: dict[str, SourceHealthEvent] = {}
     altinkaynak_currency_cache: dict[
         str, tuple[Decimal, Decimal]
     ] | None = None
@@ -425,6 +429,17 @@ def main() -> int:
         str, dict[str, tuple[Decimal, Decimal]]
     ] = {}
     official_bank_errors: dict[str, dict[str, str]] = {}
+
+    def note_source_health(
+        source_key: str,
+        healthy: bool,
+        detail: str = "",
+    ) -> None:
+        source_health_events[source_key] = SourceHealthEvent(
+            source_key=source_key,
+            healthy=healthy,
+            detail=detail[:500],
+        )
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -513,7 +528,14 @@ def main() -> int:
     def get_hybrid_usdt() -> list[Any]:
         nonlocal hybrid_usdt_cache
         if hybrid_usdt_cache is None:
-            hybrid_usdt_cache = collect_hybrid_usdt_quotes()
+            snapshot = collect_hybrid_usdt_snapshot()
+            hybrid_usdt_cache = snapshot.quotes
+            for source_key, error in snapshot.source_health.items():
+                note_source_health(
+                    source_key,
+                    error is None,
+                    error or "",
+                )
         return hybrid_usdt_cache
 
     def _altinkaynak_max_age_minutes() -> int:
