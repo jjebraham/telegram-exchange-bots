@@ -103,11 +103,50 @@ def _candidate_quotes(html: str, pair: str) -> list[tuple[Decimal, Decimal]]:
     return candidates
 
 
-def parse_isbank_midpoint(html: str, pair: str) -> Decimal:
+def parse_isbank_quote(
+    html: str,
+    pair: str,
+) -> tuple[Decimal, Decimal]:
     candidates = _candidate_quotes(html, pair)
     # Isbank's public page exposes one live bank buy/sell row per currency.
-    buy, sell = candidates[0]
+    return candidates[0]
+
+
+def parse_isbank_midpoint(html: str, pair: str) -> Decimal:
+    buy, sell = parse_isbank_quote(html, pair)
     return (buy + sell) / Decimal("2")
+
+
+def parse_ziraat_quote(
+    html: str,
+    pair: str,
+    *,
+    primary_buy: Decimal,
+    primary_sell: Decimal,
+    max_mapping_deviation_pct: Decimal = Decimal("5.00"),
+) -> tuple[Decimal, Decimal]:
+    candidates = _candidate_quotes(html, pair)
+    primary_buy = Decimal(str(primary_buy))
+    primary_sell = Decimal(str(primary_sell))
+    if primary_buy <= 0 or primary_sell <= 0 or primary_sell <= primary_buy:
+        raise ValueError("Primary Ziraat quote must be positive and non-crossed")
+
+    def mapping_deviation(
+        candidate: tuple[Decimal, Decimal],
+    ) -> Decimal:
+        buy, sell = candidate
+        buy_dev = abs(buy - primary_buy) / primary_buy * Decimal("100")
+        sell_dev = abs(sell - primary_sell) / primary_sell * Decimal("100")
+        return max(buy_dev, sell_dev)
+
+    selected = min(candidates, key=mapping_deviation)
+    deviation = mapping_deviation(selected)
+    if deviation > max_mapping_deviation_pct:
+        raise ValueError(
+            "No Ziraat official rate channel matches the displayed row: "
+            f"closest side deviation {deviation.quantize(Decimal('0.01'))}%"
+        )
+    return selected
 
 
 def parse_ziraat_midpoint(
@@ -117,15 +156,14 @@ def parse_ziraat_midpoint(
     primary_midpoint: Decimal,
     max_mapping_deviation_pct: Decimal = Decimal("5.00"),
 ) -> Decimal:
+    # Backwards-compatible helper for tests/diagnostics where only a midpoint
+    # is available. Select by midpoint, while production uses parse_ziraat_quote
+    # so both displayed sides are independently checked.
     candidates = _candidate_quotes(html, pair)
     primary = Decimal(str(primary_midpoint))
     if primary <= 0:
         raise ValueError("Primary Ziraat midpoint must be positive")
-
-    midpoints = [
-        (buy + sell) / Decimal("2")
-        for buy, sell in candidates
-    ]
+    midpoints = [(buy + sell) / Decimal("2") for buy, sell in candidates]
     selected = min(midpoints, key=lambda value: abs(value - primary))
     deviation = abs(selected - primary) / primary * Decimal("100")
     if deviation > max_mapping_deviation_pct:
@@ -157,8 +195,31 @@ def _fetch_html(url: str, timeout: int = 20) -> str:
         raise RuntimeError(f"Could not load official bank verifier {url}: {exc}") from exc
 
 
+def fetch_isbank_quote(
+    pair: str,
+    timeout: int = 20,
+) -> tuple[Decimal, Decimal]:
+    return parse_isbank_quote(_fetch_html(ISBANK_URL, timeout), pair)
+
+
 def fetch_isbank_midpoint(pair: str, timeout: int = 20) -> Decimal:
-    return parse_isbank_midpoint(_fetch_html(ISBANK_URL, timeout), pair)
+    buy, sell = fetch_isbank_quote(pair, timeout)
+    return (buy + sell) / Decimal("2")
+
+
+def fetch_ziraat_quote(
+    pair: str,
+    *,
+    primary_buy: Decimal,
+    primary_sell: Decimal,
+    timeout: int = 20,
+) -> tuple[Decimal, Decimal]:
+    return parse_ziraat_quote(
+        _fetch_html(ZIRAAT_URL, timeout),
+        pair,
+        primary_buy=primary_buy,
+        primary_sell=primary_sell,
+    )
 
 
 def fetch_ziraat_midpoint(
