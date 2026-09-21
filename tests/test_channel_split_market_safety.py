@@ -165,6 +165,37 @@ class MarketSafetyTests(unittest.TestCase):
             accepted = assess_post(db, "bank-usd", [observation])
             self.assertIsNotNone(accepted.checks[0].last_accepted_value)
 
+    def test_garanti_bank_row_can_verify_with_official_source(self):
+        quote = type(
+            "BankQuote",
+            (),
+            {
+                "name": "Garanti BBVA",
+                "buy": Decimal("47.6750"),
+                "sell": Decimal("49.6750"),
+            },
+        )()
+        observations = bank_fx_observations(
+            "USD/TRY",
+            [quote],
+            {
+                "garanti-official": {
+                    "Garanti BBVA": (
+                        Decimal("47.6751"),
+                        Decimal("49.6749"),
+                    )
+                }
+            },
+        )
+        self.assertEqual(len(observations), 2)
+        for observation in observations:
+            check = evaluate_observation(observation)
+            self.assertEqual(check.decision, VERIFIED)
+            self.assertEqual(
+                set(check.source_values),
+                {"doviz", "garanti-official"},
+            )
+
     def test_kuveyt_bank_row_can_verify_with_official_source(self):
         quote = type(
             "BankQuote",
