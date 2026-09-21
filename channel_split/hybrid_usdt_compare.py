@@ -246,12 +246,30 @@ def _display_exchange(exchange: str) -> str:
     return DISPLAY_EXCHANGE_NAMES.get(exchange, exchange)
 
 
+
+def independent_source_family_count(quotes: list[HybridUsdtQuote]) -> int:
+    families: set[str] = set()
+    for quote in quotes:
+        if quote.source == "direct":
+            families.add(f"direct:{quote.exchange}")
+        elif quote.source in {"tgju", "ramzarz"}:
+            families.add(quote.source)
+        elif quote.source == "tgju+ramzarz":
+            # The mixed row consumes two fallback providers but is not itself
+            # an additional independent provider.
+            families.add("tgju")
+        else:
+            families.add(f"fallback:{quote.source}")
+    return len(families)
+
+
 def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     if not quotes:
         raise ValueError("No hybrid USDT quotes")
 
     direct_count = sum(1 for q in quotes if q.source == "direct")
     fallback_count = len(quotes) - direct_count
+    independent_count = independent_source_family_count(quotes)
 
     buy_average = sum((q.buy_toman for q in quotes), Decimal("0")) / Decimal(len(quotes))
     sell_values = [q.sell_toman for q in quotes if q.sell_toman is not None]
@@ -303,6 +321,7 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
             "",
             f"✅ <b>{len(quotes)}/{len(TARGET_EXCHANGES)}</b>　"
             f"🌐 مستقیم <b>{direct_count}</b>　🧩 پشتیبان <b>{fallback_count}</b>",
+            f"🔎 منابع مستقل <b>{independent_count}</b>",
             f"🕒 <code>{datetime.now(TEHRAN_TZ).strftime('%H:%M')}</code> تهران",
             "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
         ]
