@@ -129,6 +129,28 @@ Or both:
 python3 publish_channels.py --post all
 ```
 
+## Financial-rate safety gate
+
+Production financial posts must pass the fail-closed market-safety layer before
+Telegram delivery. The implementation, source-coverage matrix, alert behavior,
+audit rules, and shadow-to-enforce rollout are documented in
+[channel_split/SAFETY.md](SAFETY.md).
+
+Keep the test rollout in:
+
+    MARKET_SAFETY_MODE=shadow
+
+until independent verifier coverage and shadow logs are clean. Production
+scheduling should use:
+
+    MARKET_SAFETY_MODE=enforce
+
+and must not be enabled merely because a source is reachable.
+
+Recent non-dry-run safety decisions can be inspected with:
+
+    python3 publish_channels.py --safety-status
+
 ## Production cut-over
 
 The publisher auto-loads `channel_split/.env` on the server. Do not commit that
