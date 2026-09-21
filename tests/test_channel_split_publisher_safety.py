@@ -96,7 +96,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
             self.assertEqual(result, 0)
             telegram_send.assert_called_once()
             self.assertIsNone(
-                load_last_accepted(db, "bank:USD/TRY:Kapalıçarşı")
+                load_last_accepted(db, "bank:USD/TRY:Kapalıçarşı:buy")
             )
             status = recent_safety_status(db)
             self.assertIn("BLOCKED", status)
@@ -118,7 +118,9 @@ class PublisherSafetyModeTests(unittest.TestCase):
                 patch.object(
                     publish_channels,
                     "fetch_altinkaynak_currency_quotes",
-                    return_value={"USD/TRY": Decimal("48.70")},
+                    return_value={
+                        "USD/TRY": (Decimal("48.69"), Decimal("48.71"))
+                    },
                 ),
                 patch.object(
                     publish_channels,
@@ -133,8 +135,12 @@ class PublisherSafetyModeTests(unittest.TestCase):
             self.assertEqual(result, 0)
             telegram_send.assert_called_once()
             self.assertEqual(
-                load_last_accepted(db, "bank:USD/TRY:Kapalıçarşı"),
-                Decimal("48.70"),
+                load_last_accepted(db, "bank:USD/TRY:Kapalıçarşı:buy"),
+                Decimal("48.69"),
+            )
+            self.assertEqual(
+                load_last_accepted(db, "bank:USD/TRY:Kapalıçarşı:sell"),
+                Decimal("48.71"),
             )
             status = recent_safety_status(db)
             self.assertIn("VERIFIED", status)
