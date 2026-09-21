@@ -810,18 +810,50 @@ def usdt_observations(quotes: Iterable[Any]) -> list[SafetyObservation]:
     if len(rows) < 5:
         errors.append(f"only {len(rows)} exchange rows survived; need at least 5")
 
+    row_midpoints: list[tuple[Any, Decimal]] = []
     two_sided = 0
     for quote in rows:
         buy = _decimal(quote.buy_toman)
         if quote.sell_toman is None:
+            row_midpoints.append((quote, buy))
             continue
+
         sell = _decimal(quote.sell_toman)
         if sell >= buy:
             errors.append(f"{quote.exchange}: crossed customer buy/sell pair")
-        else:
-            two_sided += 1
+            row_midpoints.append((quote, buy))
+            continue
+
+        two_sided += 1
+        midpoint = (buy + sell) / Decimal("2")
+        row_midpoints.append((quote, midpoint))
+
+        spread_pct = (buy - sell) / midpoint * Decimal("100")
+        if spread_pct > Decimal("3.00"):
+            errors.append(
+                f"{quote.exchange}: customer spread "
+                f"{spread_pct.quantize(Decimal('0.01'))}% > 3.00%"
+            )
+
     if two_sided < 4:
         errors.append(f"only {two_sided} two-sided exchange rows; need at least 4")
+
+    if len(row_midpoints) >= 3:
+        market_median = _median(
+            midpoint for _, midpoint in row_midpoints
+        )
+        for quote, midpoint in row_midpoints:
+            deviation = (
+                abs(midpoint - market_median)
+                / market_median
+                * Decimal("100")
+            )
+            if deviation > Decimal("2.00"):
+                errors.append(
+                    f"{quote.exchange}: displayed row is "
+                    f"{deviation.quantize(Decimal('0.01'))}% from "
+                    "cross-exchange median"
+                )
 
     return [
         SafetyObservation(
@@ -834,3 +866,4 @@ def usdt_observations(quotes: Iterable[Any]) -> list[SafetyObservation]:
             structural_errors=tuple(errors),
         )
     ]
+
