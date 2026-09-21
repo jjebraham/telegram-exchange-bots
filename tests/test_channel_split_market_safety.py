@@ -57,6 +57,22 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(check.decision, BLOCKED)
         self.assertIn("disagree", check.reason)
 
+    def test_three_sources_can_reject_one_outlier_and_keep_quorum(self):
+        check = evaluate_observation(
+            SafetyObservation(
+                "usdtry",
+                {
+                    "source-a": Decimal("48.70"),
+                    "source-b": Decimal("48.72"),
+                    "source-bad": Decimal("55.00"),
+                },
+                max_source_deviation_pct=Decimal("1.5"),
+            )
+        )
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(set(check.source_values), {"source-a", "source-b"})
+        self.assertIn("rejected outlier", check.reason)
+
     def test_x10_unit_jump_blocks(self):
         check = evaluate_observation(
             SafetyObservation(
