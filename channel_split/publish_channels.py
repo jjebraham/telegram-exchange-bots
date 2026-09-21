@@ -399,6 +399,7 @@ def main() -> int:
         tuple[str, str, str, str | None, PostSafetyAssessment | None]
     ] = []
     sent_market_posts: set[str] = set()
+    verified_sent_market_posts: set[str] = set()
     rates_cache: dict[str, Decimal] | None = None
     usd_quotes_cache: list[Any] | None = None
     eur_quotes_cache: list[Any] | None = None
@@ -1122,6 +1123,8 @@ def main() -> int:
 
         if post_key is not None:
             sent_market_posts.add(post_key)
+            if safety is None or safety.decision == "VERIFIED":
+                verified_sent_market_posts.add(post_key)
 
         if safety is not None:
             record_assessment(
@@ -1155,25 +1158,31 @@ def main() -> int:
     # Save bank-market snapshots only after successful Telegram delivery.
     # Dry runs never mutate history. On the next daily post, the snapshot
     # closest to 24 hours old is used for Δ24H.
-    if "bank-usd" in sent_market_posts and "fx-pulse" not in sent_market_posts:
+    if (
+        "bank-usd" in verified_sent_market_posts
+        and "fx-pulse" not in verified_sent_market_posts
+    ):
         timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
         print(f"recorded USD/TRY bank snapshot -> {timestamp}")
 
-    if "bank-eur" in sent_market_posts and "fx-pulse" not in sent_market_posts:
+    if (
+        "bank-eur" in verified_sent_market_posts
+        and "fx-pulse" not in verified_sent_market_posts
+    ):
         timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
         print(f"recorded EUR/TRY bank snapshot -> {timestamp}")
 
-    if "fx-pulse" in sent_market_posts:
+    if "fx-pulse" in verified_sent_market_posts:
         usd_timestamp = record_bank_fx_quotes(history_db, "USD/TRY", get_usd_quotes())
         eur_timestamp = record_bank_fx_quotes(history_db, "EUR/TRY", get_eur_quotes())
         print(f"recorded USD/TRY daily FX snapshot -> {usd_timestamp}")
         print(f"recorded EUR/TRY daily FX snapshot -> {eur_timestamp}")
 
-    if "turkey-gold" in sent_market_posts:
+    if "turkey-gold" in verified_sent_market_posts:
         timestamp = record_turkey_gold_quotes(history_db, get_turkey_gold())
         print(f"recorded Turkey gold snapshot -> {timestamp}")
 
-    if "iran-gold" in sent_market_posts:
+    if "iran-gold" in verified_sent_market_posts:
         timestamp = record_iran_gold_market(history_db, get_iran_gold())
         print(f"recorded Iran gold snapshot -> {timestamp}")
 
