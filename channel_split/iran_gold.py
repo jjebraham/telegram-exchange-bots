@@ -8,6 +8,7 @@ the Telegram post converts them to toman.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -18,7 +19,18 @@ from typing import Mapping
 from zoneinfo import ZoneInfo
 
 TGJU_HOME_URL = "https://www.tgju.org/home"
+TGJU_PROFILE_BASE = "https://www.tgju.org/profile"
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+
+PROFILE_SLUGS = {
+    "سکه امامی": "sekee",
+    "سکه بهار آزادی": "sekeb",
+    "نیم سکه": "nim",
+    "ربع سکه": "rob",
+    "سکه گرمی": "gerami",
+    "طلای ۱۸ عیار": "geram18",
+    "مثقال طلا": "mesghal",
+}
 
 COIN_LABELS = (
     "سکه امامی",
@@ -133,6 +145,92 @@ def _extract_summary_value(text: str, labels: tuple[str, ...]) -> Decimal | None
     return None
 
 
+def _extract_bubbles(html: str) -> dict[str, Decimal]:
+    parser = _TGJUParser()
+    parser.feed(html)
+    bubbles: dict[str, Decimal] = {}
+    for row in parser.rows:
+        if len(row) < 2:
+            continue
+        label = row[0].strip()
+        if label not in BUBBLE_LABELS or label in bubbles:
+            continue
+        try:
+            bubbles[label] = _parse_number(row[1], allow_negative=True)
+        except ValueError:
+            continue
+    return bubbles
+
+
+def parse_tgju_profile_current(html: str) -> Decimal:
+    """Extract TGJU's server-rendered current profile value in rials."""
+    parser = _TGJUParser()
+    parser.feed(html)
+    text = _ascii_digits(" ".join(parser.text_parts))
+    patterns = (
+        r"نرخ فعلی\s*::?\s*([0-9][0-9,٬]*)",
+        r"نرخ فعلی\s*:?\s*([0-9][0-9,٬]*)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return _parse_number(match.group(1))
+    raise ValueError("TGJU profile page does not expose a current rate")
+
+
+def _fetch_tgju_html(url: str, timeout: int) -> str:
+    request = Request(
+        url,
+        headers={
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.6",
+            "User-Agent": "AlanChande-IranGoldPublisher/1.1",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return response.read().decode(charset, errors="replace")
+    except HTTPError as exc:
+        raise RuntimeError(f"TGJU returned HTTP {exc.code} for {url}") from exc
+    except (URLError, TimeoutError) as exc:
+        raise RuntimeError(f"Could not load TGJU {url}: {exc}") from exc
+
+
+def _fetch_profile_values(timeout: int) -> dict[str, Decimal]:
+    values: dict[str, Decimal] = {}
+    errors: list[str] = []
+
+    def fetch_one(label: str, slug: str) -> tuple[str, Decimal]:
+        html = _fetch_tgju_html(f"{TGJU_PROFILE_BASE}/{slug}", timeout)
+        return label, parse_tgju_profile_current(html)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(fetch_one, label, slug): label
+            for label, slug in PROFILE_SLUGS.items()
+        }
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                resolved_label, value = future.result()
+                values[resolved_label] = value
+            except Exception as exc:
+                errors.append(f"{label}: {type(exc).__name__}: {exc}")
+
+    missing_required = [label for label in COIN_LABELS if label not in values]
+    if missing_required:
+        detail = "; ".join(errors[:4])
+        if len(errors) > 4:
+            detail += f"; +{len(errors) - 4} more"
+        raise RuntimeError(
+            "TGJU profile fallback is missing required coin rates: "
+            + ", ".join(missing_required)
+            + (f" ({detail})" if detail else "")
+        )
+    return values
+
+
 def parse_tgju_home(html: str) -> IranGoldMarket:
     parser = _TGJUParser()
     parser.feed(html)
@@ -184,26 +282,48 @@ def parse_tgju_home(html: str) -> IranGoldMarket:
     )
 
 
-def fetch_iran_gold_market(url: str = TGJU_HOME_URL, timeout: int = 25) -> IranGoldMarket:
-    request = Request(
-        url,
-        headers={
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.6",
-            "User-Agent": "AlanChande-IranGoldPublisher/1.0",
-        },
-    )
+def fetch_iran_gold_market(
+    url: str = TGJU_HOME_URL,
+    timeout: int = 25,
+) -> IranGoldMarket:
+    """Fetch Iran gold data with a dedicated-profile fallback.
+
+    TGJU occasionally changes or partially server-renders its homepage tables.
+    When the complete homepage parser fails, fetch the seven dedicated profile
+    pages instead. Bubble values remain optional in that fallback; stale or
+    missing bubbles are safer to omit than to invent.
+    """
+    home_html: str | None = None
+    home_error: Exception | None = None
+
     try:
-        with urlopen(request, timeout=timeout) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            html = response.read().decode(charset, errors="replace")
-    except HTTPError as exc:
-        raise RuntimeError(f"TGJU returned HTTP {exc.code}") from exc
-    except (URLError, TimeoutError) as exc:
-        raise RuntimeError(f"Could not load TGJU: {exc}") from exc
+        home_html = _fetch_tgju_html(url, timeout)
+        try:
+            return parse_tgju_home(home_html)
+        except ValueError as exc:
+            home_error = exc
+    except Exception as exc:
+        home_error = exc
 
-    return parse_tgju_home(html)
+    try:
+        values = _fetch_profile_values(timeout)
+    except Exception as fallback_exc:
+        raise RuntimeError(
+            "TGJU Iran-gold primary and profile fallback both failed: "
+            f"primary={type(home_error).__name__}: {home_error}; "
+            f"fallback={type(fallback_exc).__name__}: {fallback_exc}"
+        ) from fallback_exc
 
+    bubbles = _extract_bubbles(home_html) if home_html else {}
+    return IranGoldMarket(
+        coin_prices_rial={
+            label: values[label]
+            for label in COIN_LABELS
+        },
+        bubble_values_rial=bubbles,
+        gold18_rial=values.get("طلای ۱۸ عیار"),
+        mesghal_rial=values.get("مثقال طلا"),
+    )
 
 def _toman(rial: Decimal) -> Decimal:
     return rial / Decimal("10")
@@ -272,20 +392,26 @@ def build_iran_gold_post(
                 f"<code>{_fmt_change_pct(market.mesghal_rial, previous.get('مثقال طلا'))}</code>"
             )
 
+    if all(label in bubbles for label in BUBBLE_LABELS):
+        lines.extend(
+            [
+                "",
+                "🎈 <b>حباب سکه</b>",
+                f"🌕 امامی　<code>{_fmt_signed_toman(bubbles['حباب سکه امامی'])}</code>　"
+                f"<code>{_bubble_pct(bubbles['حباب سکه امامی'], prices['سکه امامی'])}%</code>",
+                f"🌕 بهار آزادی　<code>{_fmt_signed_toman(bubbles['حباب سکه بهار آزادی'])}</code>　"
+                f"<code>{_bubble_pct(bubbles['حباب سکه بهار آزادی'], prices['سکه بهار آزادی'])}%</code>",
+                f"🟡 نیم سکه　<code>{_fmt_signed_toman(bubbles['حباب نیم سکه'])}</code>　"
+                f"<code>{_bubble_pct(bubbles['حباب نیم سکه'], prices['نیم سکه'])}%</code>",
+                f"🟡 ربع سکه　<code>{_fmt_signed_toman(bubbles['حباب ربع سکه'])}</code>　"
+                f"<code>{_bubble_pct(bubbles['حباب ربع سکه'], prices['ربع سکه'])}%</code>",
+                f"🪙 سکه گرمی　<code>{_fmt_signed_toman(bubbles['حباب سکه گرمی'])}</code>　"
+                f"<code>{_bubble_pct(bubbles['حباب سکه گرمی'], prices['سکه گرمی'])}%</code>",
+            ]
+        )
+
     lines.extend(
         [
-            "",
-            "🎈 <b>حباب سکه</b>",
-            f"🌕 امامی　<code>{_fmt_signed_toman(bubbles['حباب سکه امامی'])}</code>　"
-            f"<code>{_bubble_pct(bubbles['حباب سکه امامی'], prices['سکه امامی'])}%</code>",
-            f"🌕 بهار آزادی　<code>{_fmt_signed_toman(bubbles['حباب سکه بهار آزادی'])}</code>　"
-            f"<code>{_bubble_pct(bubbles['حباب سکه بهار آزادی'], prices['سکه بهار آزادی'])}%</code>",
-            f"🟡 نیم سکه　<code>{_fmt_signed_toman(bubbles['حباب نیم سکه'])}</code>　"
-            f"<code>{_bubble_pct(bubbles['حباب نیم سکه'], prices['نیم سکه'])}%</code>",
-            f"🟡 ربع سکه　<code>{_fmt_signed_toman(bubbles['حباب ربع سکه'])}</code>　"
-            f"<code>{_bubble_pct(bubbles['حباب ربع سکه'], prices['ربع سکه'])}%</code>",
-            f"🪙 سکه گرمی　<code>{_fmt_signed_toman(bubbles['حباب سکه گرمی'])}</code>　"
-            f"<code>{_bubble_pct(bubbles['حباب سکه گرمی'], prices['سکه گرمی'])}%</code>",
             "",
             f"🕒 <code>{now}</code> تهران",
             "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
