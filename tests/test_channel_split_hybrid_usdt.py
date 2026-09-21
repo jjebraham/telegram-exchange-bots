@@ -1,12 +1,14 @@
 import sys
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
 from direct_usdt_compare import DirectUsdtQuote  # noqa: E402
+import hybrid_usdt_compare  # noqa: E402
 from hybrid_usdt_compare import (  # noqa: E402
     build_hybrid_usdt_post,
     merge_hybrid_usdt_quotes,
@@ -88,6 +90,46 @@ class HybridUsdtComparisonTests(unittest.TestCase):
         self.assertEqual(tabdeal.buy_toman, Decimal("229500"))
         self.assertEqual(tabdeal.sell_toman, Decimal("229260"))
         self.assertLess(tabdeal.sell_toman, tabdeal.buy_toman)
+
+    def test_snapshot_exposes_degraded_redundant_source(self):
+        direct = [
+            DirectUsdtQuote("والکس", Decimal("229100"), Decimal("229000")),
+            DirectUsdtQuote("رمزینکس", Decimal("229200"), Decimal("229100")),
+            DirectUsdtQuote("اکسیر", Decimal("229300"), Decimal("229200")),
+        ]
+        tgju = [
+            UsdtExchangeQuote("نوبیتکس", Decimal("2293000"), Decimal("2292000"), None, None, None),
+            UsdtExchangeQuote("بیت پین", Decimal("2294000"), Decimal("2293000"), None, None, None),
+            UsdtExchangeQuote("آبان تتر", Decimal("2295000"), Decimal("2294000"), None, None, None),
+            UsdtExchangeQuote("تبدیل", Decimal("2296000"), Decimal("2295000"), None, None, None),
+        ]
+
+        with (
+            patch.object(
+                hybrid_usdt_compare,
+                "_safe_direct",
+                return_value=(direct, {}),
+            ),
+            patch.object(
+                hybrid_usdt_compare,
+                "_safe_tgju",
+                return_value=(tgju, None),
+            ),
+            patch.object(
+                hybrid_usdt_compare,
+                "_safe_ramzarz",
+                return_value=([], "certificate expired"),
+            ),
+        ):
+            snapshot = hybrid_usdt_compare.collect_hybrid_usdt_snapshot()
+
+        self.assertEqual(len(snapshot.quotes), 7)
+        self.assertIsNone(snapshot.source_health["usdt:direct:Wallex"])
+        self.assertIsNone(snapshot.source_health["usdt:tgju"])
+        self.assertEqual(
+            snapshot.source_health["usdt:ramzarz"],
+            "certificate expired",
+        )
 
     def test_post_shows_direct_and_fallback_counts(self):
         quotes = [
