@@ -78,8 +78,11 @@ class DailyBundleCommandTests(unittest.TestCase):
             stack.enter_context(
                 patch.object(
                     publish_channels,
-                    "collect_hybrid_usdt_quotes",
-                    return_value=["USDT"],
+                    "collect_hybrid_usdt_snapshot",
+                    return_value=SimpleNamespace(
+                        quotes=["USDT"],
+                        source_health={},
+                    ),
                 )
             )
             stack.enter_context(
