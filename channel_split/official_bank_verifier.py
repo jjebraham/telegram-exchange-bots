@@ -8,7 +8,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 ISBANK_URL = "https://www.isbank.com.tr/doviz-kurlari"
@@ -290,10 +290,10 @@ def _discover_garanti_expanded_rate_url(timeout: int = 20) -> str:
         config,
         "expandedCurrRateServicePath",
     )
-    if not endpoint.startswith(
-        "https://customers.garantibbva.com.tr:"
-    ) and not endpoint.startswith(
-        "https://customers.garantibbva.com.tr/"
+    parsed = urlparse(endpoint)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "customers.garantibbva.com.tr"
     ):
         raise ValueError(
             "Garanti expanded-rate endpoint escaped official host: "
