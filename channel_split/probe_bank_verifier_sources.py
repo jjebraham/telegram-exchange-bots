@@ -14,6 +14,7 @@ validated first.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
@@ -23,6 +24,10 @@ from urllib.request import Request, urlopen
 GARANTI_APP = (
     "https://webforms.garantibbva.com.tr/"
     "currency-convertor-app-v3/?lang=tr"
+)
+GARANTI_CONFIG = (
+    "https://webforms.garantibbva.com.tr/"
+    "currency-convertor-app-v3/config"
 )
 KUVEYT_PORTAL = "https://www.kuveytturk.com.tr/finans-portali"
 KUVEYT_CONVERTER = (
@@ -215,6 +220,167 @@ def extract_context_snippets(
     return snippets
 
 
+
+def _flatten_json(value, prefix: str = "") -> list[tuple[str, object]]:
+    rows: list[tuple[str, object]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            rows.extend(_flatten_json(child, child_prefix))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            rows.extend(_flatten_json(child, f"{prefix}[{index}]"))
+    else:
+        rows.append((prefix, value))
+    return rows
+
+
+def inspect_garanti_config(*, max_bytes: int) -> None:
+    print("\n===== GARANTI FOCUSED CONFIG =====")
+    print(f"config: {GARANTI_CONFIG}")
+    try:
+        text = _fetch_text(GARANTI_CONFIG, max_bytes=max_bytes)
+    except Exception as exc:
+        print(f"CONFIG ERROR: {type(exc).__name__}: {exc}")
+        return
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        print("config is not JSON; first 4000 chars:")
+        print(text[:4000])
+        return
+
+    interesting_keys = (
+        "path",
+        "url",
+        "service",
+        "api",
+        "currency",
+        "exchange",
+        "rate",
+        "overview",
+        "chart",
+    )
+    for key, value in _flatten_json(payload):
+        lowered = key.lower()
+        if any(term in lowered for term in interesting_keys):
+            print(f"{key} = {value!r}")
+
+
+def extract_kuveyt_api_tokens(text: str) -> dict[str, str]:
+    wanted = ("exchangeRates", "financePortal", "parities")
+    result: dict[str, str] = {}
+    for name in wanted:
+        match = re.search(
+            rf"""\b{name}\s*:\s*["']([^"']+)["']""",
+            text,
+            re.IGNORECASE,
+        )
+        if match:
+            result[name] = match.group(1)
+    return result
+
+
+def _context_around(
+    text: str,
+    needle: str,
+    *,
+    radius: int = 800,
+) -> str | None:
+    index = text.find(needle)
+    if index < 0:
+        return None
+    return " ".join(
+        text[max(0, index - radius): index + len(needle) + radius].split()
+    )
+
+
+def inspect_kuveyt_core(
+    *,
+    max_bytes: int,
+    probe_endpoint: bool,
+) -> None:
+    print("\n===== KUVEYT FOCUSED API MAP =====")
+    page = _fetch_text(KUVEYT_PORTAL, max_bytes=max_bytes)
+    parser = AssetParser()
+    parser.feed(page)
+
+    core_asset = next(
+        (
+            urljoin(KUVEYT_PORTAL, src)
+            for src in parser.assets
+            if "magiclick.core" in src
+        ),
+        None,
+    )
+    sub_asset = next(
+        (
+            urljoin(KUVEYT_PORTAL, src)
+            for src in parser.assets
+            if "magiclick.sub" in src
+        ),
+        None,
+    )
+
+    if not core_asset:
+        print("magiclick.core asset not found")
+        return
+
+    print(f"core asset: {core_asset}")
+    core = _fetch_text(core_asset, max_bytes=max_bytes)
+    tokens = extract_kuveyt_api_tokens(core)
+
+    if not tokens:
+        print("No exchangeRates/financePortal/parities API tokens found.")
+    else:
+        for name, token in tokens.items():
+            resolved = urljoin(KUVEYT_PORTAL, token)
+            print(f"{name}: token={token!r}")
+            print(f"{name}: resolved={resolved}")
+
+            if probe_endpoint:
+                try:
+                    body = _fetch_text(
+                        resolved,
+                        max_bytes=min(max_bytes, 2_000_000),
+                    )
+                except Exception as exc:
+                    print(
+                        f"{name}: PROBE ERROR: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                else:
+                    compact = " ".join(body.split())
+                    print(
+                        f"{name}: response chars={len(body)} "
+                        f"preview={compact[:1800]}"
+                    )
+
+    for needle in (
+        "MODULES.Utility.Ajax",
+        "Utility.Ajax=function",
+        "Ajax:function",
+        "ApiEndpoints=",
+    ):
+        context = _context_around(core, needle)
+        if context:
+            print(f"core context [{needle}]: {context[:3000]}")
+
+    if sub_asset:
+        print(f"sub asset: {sub_asset}")
+        sub = _fetch_text(sub_asset, max_bytes=max_bytes)
+        for needle in (
+            "ApiEndpoints.exchangeRates",
+            "BuyRate",
+            "SellRate",
+            "CurrencyCode",
+        ):
+            context = _context_around(sub, needle)
+            if context:
+                print(f"sub context [{needle}]: {context[:2600]}")
+
+
 def discover_page(
     label: str,
     url: str,
@@ -300,10 +466,36 @@ def main() -> int:
         default=12_000_000,
         help="Maximum response size to inspect for each page/asset",
     )
+    parser.add_argument(
+        "--focused",
+        action="store_true",
+        help=(
+            "Run focused Garanti config and Kuveyt API-map diagnostics "
+            "instead of dumping all JavaScript contexts"
+        ),
+    )
+    parser.add_argument(
+        "--probe-endpoints",
+        action="store_true",
+        help=(
+            "With --focused, issue safe GET probes to discovered Kuveyt "
+            "public endpoint tokens and print a short response preview"
+        ),
+    )
     args = parser.parse_args()
 
     max_assets = max(1, min(args.max_assets, 30))
     max_bytes = max(500_000, min(args.max_bytes, 25_000_000))
+
+    if args.focused:
+        if args.bank in {"all", "garanti"}:
+            inspect_garanti_config(max_bytes=max_bytes)
+        if args.bank in {"all", "kuveyt"}:
+            inspect_kuveyt_core(
+                max_bytes=max_bytes,
+                probe_endpoint=args.probe_endpoints,
+            )
+        return 0
 
     if args.bank in {"all", "garanti"}:
         discover_page(
