@@ -410,8 +410,10 @@ def main() -> int:
     hybrid_usdt_cache: list[Any] | None = None
     altinkaynak_currency_cache: dict[str, Decimal] | None = None
     altinkaynak_currency_attempted = False
+    altinkaynak_currency_error: str | None = None
     altinkaynak_gold_cache: dict[str, Decimal] | None = None
     altinkaynak_gold_attempted = False
+    altinkaynak_gold_error: str | None = None
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -511,7 +513,11 @@ def main() -> int:
         return max(value, 1)
 
     def get_altinkaynak_currency_safe() -> dict[str, Decimal]:
-        nonlocal altinkaynak_currency_cache, altinkaynak_currency_attempted
+        nonlocal (
+            altinkaynak_currency_cache,
+            altinkaynak_currency_attempted,
+            altinkaynak_currency_error,
+        )
         if not altinkaynak_currency_attempted:
             altinkaynak_currency_attempted = True
             try:
@@ -520,6 +526,9 @@ def main() -> int:
                 )
             except Exception as exc:
                 altinkaynak_currency_cache = {}
+                altinkaynak_currency_error = (
+                    f"altinkaynak-currency: {type(exc).__name__}: {exc}"
+                )[:240]
                 print(
                     f"WARNING: Altinkaynak currency verifier unavailable: "
                     f"{type(exc).__name__}: {exc}",
@@ -528,7 +537,11 @@ def main() -> int:
         return altinkaynak_currency_cache or {}
 
     def get_altinkaynak_gold_safe() -> dict[str, Decimal]:
-        nonlocal altinkaynak_gold_cache, altinkaynak_gold_attempted
+        nonlocal (
+            altinkaynak_gold_cache,
+            altinkaynak_gold_attempted,
+            altinkaynak_gold_error,
+        )
         if not altinkaynak_gold_attempted:
             altinkaynak_gold_attempted = True
             try:
@@ -537,6 +550,9 @@ def main() -> int:
                 )
             except Exception as exc:
                 altinkaynak_gold_cache = {}
+                altinkaynak_gold_error = (
+                    f"altinkaynak-gold: {type(exc).__name__}: {exc}"
+                )[:240]
                 print(
                     f"WARNING: Altinkaynak gold verifier unavailable: "
                     f"{type(exc).__name__}: {exc}",
@@ -614,7 +630,14 @@ def main() -> int:
         assessment = assess_post(
             history_db,
             "bank-usd" if pair == "USD/TRY" else "bank-eur",
-            bank_fx_observations(pair, quotes, extra),
+            bank_fx_observations(
+                pair,
+                quotes,
+                extra,
+                (altinkaynak_currency_error,)
+                if altinkaynak_currency_error
+                else (),
+            ),
         )
         return text, assessment
 
@@ -632,7 +655,14 @@ def main() -> int:
         assessment = assess_post(
             history_db,
             "fx-pulse",
-            fx_pulse_observations(usd, eur, extra),
+            fx_pulse_observations(
+                usd,
+                eur,
+                extra,
+                (altinkaynak_currency_error,)
+                if altinkaynak_currency_error
+                else (),
+            ),
         )
         return text, assessment
 
@@ -647,7 +677,13 @@ def main() -> int:
         assessment = assess_post(
             history_db,
             "turkey-gold",
-            turkey_gold_observations(quotes, extra),
+            turkey_gold_observations(
+                quotes,
+                extra,
+                (altinkaynak_gold_error,)
+                if altinkaynak_gold_error
+                else (),
+            ),
         )
         return text, assessment
 
