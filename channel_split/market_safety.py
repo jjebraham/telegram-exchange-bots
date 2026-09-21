@@ -231,22 +231,46 @@ def evaluate_observation(
             move_pct=None,
         )
 
-    reference = _median(normalized.values())
-    deviation = _max_deviation_pct(reference, normalized.values())
-    if deviation > observation.max_source_deviation_pct:
+    initial_reference = _median(normalized.values())
+    inliers = {
+        source: value
+        for source, value in normalized.items()
+        if (
+            abs(value - initial_reference) / initial_reference * Decimal("100")
+        )
+        <= observation.max_source_deviation_pct
+    }
+    rejected = {
+        source: value
+        for source, value in normalized.items()
+        if source not in inliers
+    }
+
+    if len(inliers) < observation.min_sources:
+        deviation = _max_deviation_pct(initial_reference, normalized.values())
         return SafetyCheck(
             market_key=observation.market_key,
             decision=BLOCKED,
             reason=(
-                "independent sources disagree: max deviation "
-                f"{deviation.quantize(Decimal('0.01'))}% > "
-                f"{observation.max_source_deviation_pct}%"
+                "independent sources disagree and quorum is lost: "
+                f"{len(inliers)} inliers < {observation.min_sources}; "
+                f"max deviation {deviation.quantize(Decimal('0.01'))}%"
             ),
             source_values=normalized,
-            reference_value=reference,
+            reference_value=initial_reference,
             last_accepted_value=last_accepted_value,
             move_pct=None,
         )
+
+    # Recompute the reference from the surviving consensus. A single provider
+    # may be rejected without vetoing two or more agreeing independent sources.
+    reference = _median(inliers.values())
+    consensus_note = ""
+    if rejected:
+        rejected_text = ", ".join(
+            f"{source}={value}" for source, value in sorted(rejected.items())
+        )
+        consensus_note = f"; rejected outlier source(s): {rejected_text}"
 
     move_pct: Decimal | None = None
     if last_accepted_value is not None:
@@ -264,7 +288,7 @@ def evaluate_observation(
         move_pct = abs(_pct_change(last_accepted_value, reference))
         if (
             move_pct > observation.suspicious_move_pct
-            and len(normalized) < observation.strong_quorum
+            and len(inliers) < observation.strong_quorum
         ):
             return SafetyCheck(
                 market_key=observation.market_key,
@@ -273,7 +297,7 @@ def evaluate_observation(
                     "large move versus last accepted value requires stronger quorum: "
                     f"{move_pct.quantize(Decimal('0.01'))}% > "
                     f"{observation.suspicious_move_pct}% with "
-                    f"{len(normalized)}/{observation.strong_quorum} source families"
+                    f"{len(inliers)}/{observation.strong_quorum} source families"
                 ),
                 source_values=normalized,
                 reference_value=reference,
@@ -285,10 +309,10 @@ def evaluate_observation(
         market_key=observation.market_key,
         decision=VERIFIED,
         reason=(
-            f"{len(normalized)} independent source families agree within "
-            f"{observation.max_source_deviation_pct}%"
+            f"{len(inliers)} independent source families agree within "
+            f"{observation.max_source_deviation_pct}%{consensus_note}"
         ),
-        source_values=normalized,
+        source_values=inliers,
         reference_value=reference,
         last_accepted_value=last_accepted_value,
         move_pct=move_pct,
