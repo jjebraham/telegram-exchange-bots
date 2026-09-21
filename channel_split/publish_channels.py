@@ -53,6 +53,10 @@ from hybrid_usdt_compare import (
     fetch_and_build_hybrid_usdt_post,
 )
 from market_pulse import build_turkey_fx_pulse_post
+from official_bank_verifier import (
+    fetch_isbank_midpoint,
+    fetch_ziraat_midpoint,
+)
 from admin_alerts import maybe_notify_admin
 from market_safety import (
     PostSafetyAssessment,
@@ -414,6 +418,8 @@ def main() -> int:
     altinkaynak_gold_cache: dict[str, Decimal] | None = None
     altinkaynak_gold_attempted = False
     altinkaynak_gold_error: str | None = None
+    official_bank_cache: dict[str, dict[str, Decimal]] = {}
+    official_bank_errors: dict[str, dict[str, str]] = {}
 
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
@@ -556,6 +562,71 @@ def main() -> int:
                 )
         return altinkaynak_gold_cache or {}
 
+    def get_official_bank_verifiers(
+        pair: str,
+        quotes: list[Any],
+    ) -> tuple[dict[str, Mapping[str, Decimal]], dict[str, tuple[str, ...]]]:
+        if pair not in official_bank_cache:
+            values: dict[str, Decimal] = {}
+            errors: dict[str, str] = {}
+
+            try:
+                values["İş Bankası"] = fetch_isbank_midpoint(pair)
+            except Exception as exc:
+                errors["İş Bankası"] = (
+                    f"isbank-official: {type(exc).__name__}: {exc}"
+                )[:240]
+                print(
+                    f"WARNING: Isbank official verifier unavailable: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+
+            ziraat = next(
+                (quote for quote in quotes if quote.name == "Ziraat Bankası"),
+                None,
+            )
+            if ziraat is None:
+                errors["Ziraat Bankası"] = "ziraat-official: displayed row missing"
+            else:
+                primary_midpoint = (
+                    Decimal(str(ziraat.buy)) + Decimal(str(ziraat.sell))
+                ) / Decimal("2")
+                try:
+                    values["Ziraat Bankası"] = fetch_ziraat_midpoint(
+                        pair,
+                        primary_midpoint=primary_midpoint,
+                    )
+                except Exception as exc:
+                    errors["Ziraat Bankası"] = (
+                        f"ziraat-official: {type(exc).__name__}: {exc}"
+                    )[:240]
+                    print(
+                        f"WARNING: Ziraat official verifier unavailable: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+
+            official_bank_cache[pair] = values
+            official_bank_errors[pair] = errors
+
+        source_map: dict[str, Mapping[str, Decimal]] = {}
+        values = official_bank_cache[pair]
+        if "İş Bankası" in values:
+            source_map["isbank-official"] = {
+                "İş Bankası": values["İş Bankası"],
+            }
+        if "Ziraat Bankası" in values:
+            source_map["ziraat-official"] = {
+                "Ziraat Bankası": values["Ziraat Bankası"],
+            }
+
+        unavailable = {
+            name: (error,)
+            for name, error in official_bank_errors[pair].items()
+        }
+        return source_map, unavailable
+
     def current_history_snapshot():
         # AlanChande history intentionally depends only on neutral market feeds.
         return build_snapshot(get_usd_quotes(), get_eur_quotes())
@@ -613,16 +684,21 @@ def main() -> int:
             else build_eur_comparison_post(quotes, previous)
         )
         altinkaynak = get_altinkaynak_currency_safe()
-        extra = {}
+        extra: dict[str, Mapping[str, Decimal]] = {}
         if pair in altinkaynak:
             # Altinkaynak is a market-level verifier. It can independently
             # verify the Kapalicarsi row but must not be treated as proof of a
             # specific bank's own customer quote.
-            extra = {
-                "altinkaynak": {
-                    "Kapalıçarşı": altinkaynak[pair],
-                }
+            extra["altinkaynak"] = {
+                "Kapalıçarşı": altinkaynak[pair],
             }
+
+        official_sources, unavailable_by_name = get_official_bank_verifiers(
+            pair,
+            quotes,
+        )
+        extra.update(official_sources)
+
         assessment = assess_post(
             history_db,
             "bank-usd" if pair == "USD/TRY" else "bank-eur",
@@ -633,6 +709,7 @@ def main() -> int:
                 (altinkaynak_currency_error,)
                 if altinkaynak_currency_error
                 else (),
+                unavailable_by_name,
             ),
         )
         return text, assessment
