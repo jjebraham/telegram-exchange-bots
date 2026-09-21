@@ -13,12 +13,17 @@ from market_safety import (  # noqa: E402
     SUSPICIOUS,
     VERIFIED,
     SafetyObservation,
+    SourceHealthEvent,
     alert_action,
     assess_post,
     evaluate_observation,
     mark_alert_sent,
+    mark_source_health_alert_sent,
     publication_allowed,
+    record_source_health_event,
     record_assessment,
+    recent_source_health_status,
+    source_health_action,
     turkey_gold_observations,
     usdt_observations,
 )
@@ -421,6 +426,62 @@ class MarketSafetyTests(unittest.TestCase):
         )()
         self.assertFalse(publication_allowed("enforce", assessment))
         self.assertTrue(publication_allowed("shadow", assessment))
+
+    def test_source_health_degradation_is_deduplicated_and_recovers(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "safety.sqlite3"
+            degraded = SourceHealthEvent(
+                source_key="usdt:ramzarz",
+                healthy=False,
+                detail="certificate expired",
+            )
+            now = datetime(2026, 9, 22, 8, 0, tzinfo=timezone.utc)
+
+            self.assertEqual(
+                source_health_action(db, degraded, now=now),
+                "degraded",
+            )
+            mark_source_health_alert_sent(
+                db,
+                degraded,
+                action="degraded",
+                now=now,
+            )
+            self.assertIsNone(
+                source_health_action(
+                    db,
+                    degraded,
+                    now=now + timedelta(minutes=20),
+                    repeat_minutes=60,
+                )
+            )
+
+            healthy = SourceHealthEvent(
+                source_key="usdt:ramzarz",
+                healthy=True,
+            )
+            self.assertEqual(
+                source_health_action(
+                    db,
+                    healthy,
+                    now=now + timedelta(minutes=21),
+                ),
+                "recovery",
+            )
+
+    def test_source_health_audit_records_degraded_provider(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "safety.sqlite3"
+            event = SourceHealthEvent(
+                source_key="usdt:ramzarz",
+                healthy=False,
+                detail="certificate expired",
+            )
+            record_source_health_event(db, event)
+            status = recent_source_health_status(db)
+            self.assertIn("usdt:ramzarz", status)
+            self.assertIn("DEGRADED", status)
+            self.assertIn("certificate expired", status)
 
     def test_alerts_are_deduplicated_then_recover(self):
         with tempfile.TemporaryDirectory() as tempdir:
