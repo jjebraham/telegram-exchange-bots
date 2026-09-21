@@ -179,15 +179,24 @@ Current verifier coverage:
 - Kuveyt Turk: official Kuveyt Finance Portal exchange-rates endpoint. The
   bank's own converter JavaScript consumes CurrencyCode, BuyRate and SellRate
   from this endpoint, so both displayed sides are verified independently;
-- Garanti BBVA: official currency-converter config is read live to discover
-  the current expanded-rate endpoint. The verifier POSTs the same DOVIZ_PUBLIC
-  / CURRENCIES request object used by Garanti's own public app and validates
-  the USD/EUR currCode rows using exchBuyRate and exchSellRate.
+- Garanti BBVA: verification is quorum-based rather than dependent on one
+  fragile official web app. The official currency-converter endpoint remains
+  an optional source when available. A separate external Garanti-rate family
+  currently uses CanliDoviz with timestamp freshness checks. Doviz is still the
+  displayed source, so Doviz plus the external family can verify the row even
+  when the Garanti official app is degraded. The official source, when healthy,
+  adds a third independent vote.
 
-The complete bank board can reach VERIFIED when all five displayed rows are
-fresh, structurally valid, and each official/independent verifier agrees with
-the Doviz display within the configured tolerance. Any unavailable or
-disagreeing bank-specific verifier still blocks the complete board.
+Third-party domains do not automatically become separate source families.
+CanliDoviz is currently one conservative external family; additional sites may
+be used as cross-checks without increasing quorum until upstream independence
+has been established.
+
+The complete bank board can reach VERIFIED when every displayed row has at
+least two agreeing source families and all structural/historical checks pass.
+For Garanti this means the displayed Doviz quote plus at least one healthy
+independent Garanti-rate family. A degraded optional source generates a health
+warning but does not block a row when quorum is still satisfied.
 
 ### Iran gold and coin
 
