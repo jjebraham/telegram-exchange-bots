@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 
 import publish_channels  # noqa: E402
 from bank_compare import BankQuote  # noqa: E402
+from iran_gold import IranGoldMarket  # noqa: E402
 from market_safety import load_last_accepted, recent_safety_status  # noqa: E402
 
 
@@ -106,6 +107,78 @@ class PublisherSafetyModeTests(unittest.TestCase):
             )
             status = recent_safety_status(db)
             self.assertIn("BLOCKED", status)
+            self.assertIn("published=1", status)
+
+    def test_iran_gold_external_consensus_allows_enforce_publish(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = [
+                "publish_channels.py",
+                "--post",
+                "alanchande-iran-gold",
+            ]
+            market = IranGoldMarket(
+                coin_prices_rial={
+                    "سکه امامی": Decimal("2339800000"),
+                    "سکه بهار آزادی": Decimal("2301300000"),
+                    "نیم سکه": Decimal("1200000000"),
+                    "ربع سکه": Decimal("630000000"),
+                    "سکه گرمی": Decimal("330000000"),
+                },
+                bubble_values_rial={},
+                gold18_rial=Decimal("237072000"),
+                mesghal_rial=Decimal("1026980000"),
+            )
+            external = {
+                "سکه امامی": Decimal("234000000"),
+                "سکه بهار آزادی": Decimal("230000000"),
+                "نیم سکه": Decimal("120000000"),
+                "ربع سکه": Decimal("63000000"),
+                "سکه گرمی": Decimal("33000000"),
+                "طلای ۱۸ عیار": Decimal("23731470"),
+                "مثقال طلا": Decimal("102800000"),
+            }
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_iran_gold_market",
+                    return_value=market,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_dolarchand_iran_gold",
+                    return_value=external,
+                ),
+                patch.object(
+                    publish_channels,
+                    "load_iran_gold_near_24h",
+                    return_value={},
+                ),
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                    return_value={"ok": True},
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_iran_gold_market",
+                    return_value="2026-09-22T00:00:00+00:00",
+                ) as record_iran_gold_market,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_called_once()
+            record_iran_gold_market.assert_called_once()
+
+            status = recent_safety_status(db)
+            self.assertIn("iran-gold", status)
+            self.assertIn("VERIFIED", status)
             self.assertIn("published=1", status)
 
     def test_garanti_external_consensus_can_verify_when_official_is_down(self):
