@@ -7,7 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
 from gold_prices import GoldQuote, build_turkish_gold_post, parse_buy_sell  # noqa: E402
-from iran_gold import build_iran_gold_post, parse_tgju_home  # noqa: E402
+from iran_gold import (  # noqa: E402
+    IranGoldMarket,
+    build_iran_gold_post,
+    parse_tgju_home,
+    parse_tgju_profile_current,
+)
 from iran_usdt import (  # noqa: E402
     build_usdt_exchange_post,
     parse_usdt_comparison_html,
@@ -70,6 +75,39 @@ class MarketPostTests(unittest.TestCase):
         post = build_turkish_gold_post(quotes, previous)
         # Previous midpoint 6810 -> current midpoint 7010 = +2.936...%
         self.assertIn("+2.94%", post)
+
+    def test_iran_gold_profile_parser_reads_current_rate(self):
+        html = """
+        <html><body>
+          <h1>سکه امامی</h1>
+          <div>نرخ فعلی:: 2,390,050,000 -</div>
+          <div>واحد پولی : ریال</div>
+        </body></html>
+        """
+        self.assertEqual(
+            parse_tgju_profile_current(html),
+            Decimal("2390050000"),
+        )
+
+    def test_iran_gold_post_omits_bubbles_when_fallback_has_none(self):
+        market = IranGoldMarket(
+            coin_prices_rial={
+                "سکه امامی": Decimal("2390050000"),
+                "سکه بهار آزادی": Decimal("2351000000"),
+                "نیم سکه": Decimal("1220000000"),
+                "ربع سکه": Decimal("650000000"),
+                "سکه گرمی": Decimal("330000000"),
+            },
+            bubble_values_rial={},
+            gold18_rial=Decimal("241814000"),
+            mesghal_rial=Decimal("1047490000"),
+        )
+
+        post = build_iran_gold_post(market)
+
+        self.assertIn("سکه امامی", post)
+        self.assertIn("طلای ۱۸ عیار", post)
+        self.assertNotIn("🎈 <b>حباب سکه</b>", post)
 
     def test_iran_gold_parses_rial_rows_and_builds_toman_post(self):
         html = """
