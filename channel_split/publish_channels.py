@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -570,25 +570,28 @@ def main() -> int:
             values: dict[str, Decimal] = {}
             errors: dict[str, str] = {}
 
-            try:
-                values["İş Bankası"] = fetch_isbank_midpoint(pair)
-            except Exception as exc:
-                errors["İş Bankası"] = (
-                    f"isbank-official: {type(exc).__name__}: {exc}"
-                )[:240]
-                print(
-                    f"WARNING: Isbank official verifier unavailable: "
-                    f"{type(exc).__name__}: {exc}",
-                    file=sys.stderr,
-                )
+            isbank = next(
+                (quote for quote in quotes if quote.name == "İş Bankası"),
+                None,
+            )
+            if isbank is not None:
+                try:
+                    values["İş Bankası"] = fetch_isbank_midpoint(pair)
+                except Exception as exc:
+                    errors["İş Bankası"] = (
+                        f"isbank-official: {type(exc).__name__}: {exc}"
+                    )[:240]
+                    print(
+                        f"WARNING: Isbank official verifier unavailable: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
 
             ziraat = next(
                 (quote for quote in quotes if quote.name == "Ziraat Bankası"),
                 None,
             )
-            if ziraat is None:
-                errors["Ziraat Bankası"] = "ziraat-official: displayed row missing"
-            else:
+            if ziraat is not None:
                 primary_midpoint = (
                     Decimal(str(ziraat.buy)) + Decimal(str(ziraat.sell))
                 ) / Decimal("2")
