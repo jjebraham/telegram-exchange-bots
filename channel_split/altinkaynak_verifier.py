@@ -63,7 +63,7 @@ def _assert_fresh(
         )
 
 
-def _mid(row: dict[str, object]) -> Decimal:
+def _quote(row: dict[str, object]) -> tuple[Decimal, Decimal]:
     buy = _tr_decimal(str(row["Alis"]))
     sell = _tr_decimal(str(row["Satis"]))
     if sell < buy:
@@ -71,6 +71,11 @@ def _mid(row: dict[str, object]) -> Decimal:
             f"Altinkaynak crossed quote for {row.get('Kod')}: "
             f"buy={buy} sell={sell}"
         )
+    return buy, sell
+
+
+def _mid(row: dict[str, object]) -> Decimal:
+    buy, sell = _quote(row)
     return (buy + sell) / Decimal("2")
 
 
@@ -98,14 +103,14 @@ def _fetch_json(url: str, timeout: int = 15) -> list[dict[str, object]]:
     return rows
 
 
-def parse_currency_rows(
+def parse_currency_quote_rows(
     rows: list[dict[str, object]],
     *,
     now: datetime | None = None,
     max_age_minutes: int = 90,
-) -> dict[str, Decimal]:
+) -> dict[str, tuple[Decimal, Decimal]]:
     by_code = {str(row.get("Kod", "")).strip(): row for row in rows}
-    result: dict[str, Decimal] = {}
+    result: dict[str, tuple[Decimal, Decimal]] = {}
     for code, pair in (("USD", "USD/TRY"), ("EUR", "EUR/TRY")):
         row = by_code.get(code)
         if row is None:
@@ -116,18 +121,35 @@ def parse_currency_rows(
             now=now,
             max_age_minutes=max_age_minutes,
         )
-        result[pair] = _mid(row)
+        result[pair] = _quote(row)
     return result
 
 
-def parse_gold_rows(
+def parse_currency_rows(
     rows: list[dict[str, object]],
     *,
     now: datetime | None = None,
     max_age_minutes: int = 90,
 ) -> dict[str, Decimal]:
+    quotes = parse_currency_quote_rows(
+        rows,
+        now=now,
+        max_age_minutes=max_age_minutes,
+    )
+    return {
+        pair: (buy + sell) / Decimal("2")
+        for pair, (buy, sell) in quotes.items()
+    }
+
+
+def parse_gold_quote_rows(
+    rows: list[dict[str, object]],
+    *,
+    now: datetime | None = None,
+    max_age_minutes: int = 90,
+) -> dict[str, tuple[Decimal, Decimal]]:
     by_code = {str(row.get("Kod", "")).strip(): row for row in rows}
-    result: dict[str, Decimal] = {}
+    result: dict[str, tuple[Decimal, Decimal]] = {}
     for asset_key, code in GOLD_CODES.items():
         row = by_code.get(code)
         if row is None:
@@ -140,8 +162,51 @@ def parse_gold_rows(
             now=now,
             max_age_minutes=max_age_minutes,
         )
-        result[asset_key] = _mid(row)
+        result[asset_key] = _quote(row)
     return result
+
+
+def parse_gold_rows(
+    rows: list[dict[str, object]],
+    *,
+    now: datetime | None = None,
+    max_age_minutes: int = 90,
+) -> dict[str, Decimal]:
+    quotes = parse_gold_quote_rows(
+        rows,
+        now=now,
+        max_age_minutes=max_age_minutes,
+    )
+    return {
+        asset_key: (buy + sell) / Decimal("2")
+        for asset_key, (buy, sell) in quotes.items()
+    }
+
+
+def fetch_altinkaynak_currency_quotes(
+    *,
+    timeout: int = 15,
+    now: datetime | None = None,
+    max_age_minutes: int = 90,
+) -> dict[str, tuple[Decimal, Decimal]]:
+    return parse_currency_quote_rows(
+        _fetch_json(CURRENCY_URL, timeout),
+        now=now,
+        max_age_minutes=max_age_minutes,
+    )
+
+
+def fetch_altinkaynak_gold_quotes(
+    *,
+    timeout: int = 15,
+    now: datetime | None = None,
+    max_age_minutes: int = 90,
+) -> dict[str, tuple[Decimal, Decimal]]:
+    return parse_gold_quote_rows(
+        _fetch_json(GOLD_URL, timeout),
+        now=now,
+        max_age_minutes=max_age_minutes,
+    )
 
 
 def fetch_altinkaynak_currency(
