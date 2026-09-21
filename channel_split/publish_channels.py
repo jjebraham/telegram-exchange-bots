@@ -37,6 +37,7 @@ from bank_compare import (
 from gold_prices import build_turkish_gold_post, fetch_turkish_gold_quotes
 from gold_history import load_turkey_gold_near_24h, record_turkey_gold_quotes
 from iran_gold import build_iran_gold_post, fetch_iran_gold_market
+from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from nobitex_usdt import build_nobitex_usdt_post, fetch_nobitex_usdt
@@ -408,6 +409,9 @@ def main() -> int:
     eur_quotes_cache: list[Any] | None = None
     turkey_gold_cache: list[Any] | None = None
     iran_gold_cache: Any | None = None
+    iran_gold_external_cache: dict[str, Decimal] | None = None
+    iran_gold_external_attempted = False
+    iran_gold_external_error: str | None = None
     iran_usdt_cache: list[Any] | None = None
     nobitex_usdt_cache: Any | None = None
     wallex_usdt_cache: Any | None = None
@@ -510,6 +514,48 @@ def main() -> int:
                 )
                 raise
         return iran_gold_cache
+
+    def _iran_gold_external_max_age_minutes() -> int:
+        try:
+            value = int(
+                os.environ.get(
+                    "IRAN_GOLD_EXTERNAL_MAX_AGE_MINUTES",
+                    "240",
+                )
+            )
+        except ValueError:
+            value = 240
+        return max(value, 1)
+
+    def get_iran_gold_external_safe() -> dict[str, Decimal]:
+        nonlocal iran_gold_external_cache
+        nonlocal iran_gold_external_attempted
+        nonlocal iran_gold_external_error
+
+        if not iran_gold_external_attempted:
+            iran_gold_external_attempted = True
+            try:
+                iran_gold_external_cache = fetch_dolarchand_iran_gold(
+                    max_age_minutes=_iran_gold_external_max_age_minutes()
+                )
+                note_source_health("iran:dolarchand-gold", True)
+            except Exception as exc:
+                iran_gold_external_cache = {}
+                iran_gold_external_error = (
+                    f"dolarchand-gold: {type(exc).__name__}: {exc}"
+                )[:240]
+                note_source_health(
+                    "iran:dolarchand-gold",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                print(
+                    f"WARNING: Dolarchand Iran-gold verifier unavailable: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+
+        return iran_gold_external_cache or {}
 
     def get_iran_usdt() -> list[Any]:
         nonlocal iran_usdt_cache
@@ -992,13 +1038,22 @@ def main() -> int:
             market,
             load_iran_gold_near_24h(history_db),
         )
+        external = get_iran_gold_external_safe()
+        extra_sources = (
+            {"dolarchand": external}
+            if external
+            else {}
+        )
         assessment = assess_post(
             history_db,
             "iran-gold",
             iran_gold_observations(
                 market,
+                extra_sources=extra_sources,
                 unavailable_sources=(
-                    "independent-iran-gold-verifier:not-configured",
+                    (iran_gold_external_error,)
+                    if iran_gold_external_error
+                    else ()
                 ),
             ),
         )
