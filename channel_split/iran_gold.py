@@ -359,7 +359,6 @@ def build_iran_gold_post(
 ) -> str:
     now = datetime.now(TEHRAN_TZ).strftime("%H:%M")
     prices = market.coin_prices_rial
-    bubbles = market.bubble_values_rial
     previous = previous or {}
 
     lines = [
@@ -392,23 +391,6 @@ def build_iran_gold_post(
                 f"<code>{_fmt_change_pct(market.mesghal_rial, previous.get('مثقال طلا'))}</code>"
             )
 
-    if all(label in bubbles for label in BUBBLE_LABELS):
-        lines.extend(
-            [
-                "",
-                "🎈 <b>حباب سکه</b>",
-                f"🌕 امامی　<code>{_fmt_signed_toman(bubbles['حباب سکه امامی'])}</code>　"
-                f"<code>{_bubble_pct(bubbles['حباب سکه امامی'], prices['سکه امامی'])}%</code>",
-                f"🌕 بهار آزادی　<code>{_fmt_signed_toman(bubbles['حباب سکه بهار آزادی'])}</code>　"
-                f"<code>{_bubble_pct(bubbles['حباب سکه بهار آزادی'], prices['سکه بهار آزادی'])}%</code>",
-                f"🟡 نیم سکه　<code>{_fmt_signed_toman(bubbles['حباب نیم سکه'])}</code>　"
-                f"<code>{_bubble_pct(bubbles['حباب نیم سکه'], prices['نیم سکه'])}%</code>",
-                f"🟡 ربع سکه　<code>{_fmt_signed_toman(bubbles['حباب ربع سکه'])}</code>　"
-                f"<code>{_bubble_pct(bubbles['حباب ربع سکه'], prices['ربع سکه'])}%</code>",
-                f"🪙 سکه گرمی　<code>{_fmt_signed_toman(bubbles['حباب سکه گرمی'])}</code>　"
-                f"<code>{_bubble_pct(bubbles['حباب سکه گرمی'], prices['سکه گرمی'])}%</code>",
-            ]
-        )
 
     lines.extend(
         [
