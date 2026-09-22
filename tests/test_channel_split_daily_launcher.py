@@ -65,6 +65,38 @@ class DailyLauncherTests(unittest.TestCase):
         self.assertIn("OnCalendar=*-*-* *:10:00 Europe/Istanbul", usdt_timer)
         self.assertIn("OnCalendar=*-*-* 00/2:30:00 Europe/Istanbul", iran_fx_timer)
 
+    def test_rapid_rotation_is_test_only_and_covers_all_posts(self):
+        script = (
+            ROOT / "channel_split" / "run_channel_split_rapid_test.sh"
+        ).read_text(encoding="utf-8")
+        timer = (
+            ROOT / "deploy" / "systemd" / "channel-split-rapid-test.timer"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("ALANCHANDE_CHANNEL_ID=@alanchandetest", script)
+        self.assertIn("KIANI_CHANNEL_ID=@kianiexchangetest", script)
+        self.assertIn("MARKET_SAFETY_MODE=shadow", script)
+        self.assertIn("MARKET_HISTORY_DB=market_history_shadow.sqlite3", script)
+        self.assertIn("flock -n 9", script)
+        for post in (
+            "bank-comparison",
+            "kiani-try",
+            "alanchande-iran-fx",
+            "kiani-rates",
+            "alanchande-turkey-gold",
+            "kiani-examples",
+            "alanchande-usdt-exchanges",
+            "kiani-examples-reverse",
+            "alanchande-fx-pulse",
+            "alanchande-iran-gold",
+        ):
+            self.assertIn(f'post="{post}"', script)
+
+        self.assertIn(
+            "OnCalendar=*-*-* *:00/3:00 Europe/Istanbul",
+            timer,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
