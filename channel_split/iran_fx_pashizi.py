@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import html
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
@@ -48,7 +49,22 @@ def _positive_decimal(value: str) -> Decimal:
     return number
 
 
+def _parse_update_text(text: str) -> str | None:
+    match = re.search(
+        r"last\s+update\s*:\s*"
+        r"(Mon|Tue|Wed|Thu|Fri|Sat|Sun)"
+        r"(?:,?\s+[A-Za-z]+\s+[0-9]{1,2})?"
+        r"\s+([0-2][0-9]):([0-5][0-9])",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return f"{match.group(1).title()} {match.group(2)}:{match.group(3)}"
+
+
 def parse_pashizi_fx_page(raw_html: str) -> tuple[dict[str, Decimal], str | None]:
+    """Parse Pashizi's all-rates page when the table is server-rendered."""
     text = _text_from_html(raw_html)
     rates: dict[str, Decimal] = {}
 
@@ -72,17 +88,57 @@ def parse_pashizi_fx_page(raw_html: str) -> tuple[dict[str, Decimal], str | None
             "Pashizi is missing required currencies: " + ", ".join(missing)
         )
 
-    update_match = re.search(
-        r"last\s+update\s*:\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([0-2][0-9]):([0-5][0-9])",
-        text,
+    return rates, _parse_update_text(text)
+
+
+def parse_pashizi_currency_detail(
+    raw_html: str,
+    code: str,
+) -> tuple[Decimal, str | None]:
+    """Parse one Pashizi currency detail page.
+
+    The detail page labels its headline price as the current IRR free-market
+    rate and its converter says it is based on the sell rate. Using that sell
+    rate as the independent verifier is intentionally conservative; TGJU
+    remains the display source.
+    """
+    normalized_code = code.upper()
+    if normalized_code not in TARGET_CODES:
+        raise ValueError(f"Unsupported Pashizi currency: {code}")
+
+    title_match = re.search(
+        r"(?is)<title[^>]*>(.*?)</title>",
+        raw_html,
+    )
+    title = (
+        " ".join(html.unescape(title_match.group(1)).split())
+        if title_match
+        else ""
+    )
+    visible = _text_from_html(raw_html)
+    search_text = f"{title} {visible}".strip()
+
+    exact = re.search(
+        rf"(?<![A-Z0-9]){re.escape(normalized_code)}(?![A-Z0-9])"
+        rf"\s+Price\s+Today\s*:\s*"
+        rf"([0-9][0-9,]*)\s*IRR",
+        search_text,
         re.IGNORECASE,
     )
-    update_text = (
-        f"{update_match.group(1).title()} {update_match.group(2)}:{update_match.group(3)}"
-        if update_match
-        else None
-    )
-    return rates, update_text
+    if exact is None:
+        exact = re.search(
+            rf"(?<![A-Z0-9]){re.escape(normalized_code)}(?![A-Z0-9])"
+            rf".{{0,120}}?([0-9][0-9,]*)\s*IRR",
+            search_text,
+            re.IGNORECASE,
+        )
+    if exact is None:
+        raise ValueError(
+            f"Pashizi detail page has no current {normalized_code}/IRR rate"
+        )
+
+    rate_toman = _positive_decimal(exact.group(1)) / Decimal("10")
+    return rate_toman, _parse_update_text(visible)
 
 
 def _age_minutes(update_text: str, now: datetime | None = None) -> float:
@@ -107,37 +163,124 @@ def _age_minutes(update_text: str, now: datetime | None = None) -> float:
     return (current - candidate).total_seconds() / 60
 
 
+def _fetch_html(url: str, timeout: int) -> str:
+    request = Request(
+        url,
+        headers={
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": "AlanChande-PashiziVerifier/1.1",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return response.read().decode(charset, errors="replace")
+    except HTTPError as exc:
+        raise RuntimeError(f"Pashizi returned HTTP {exc.code} for {url}") from exc
+    except (URLError, TimeoutError) as exc:
+        raise RuntimeError(f"Could not load Pashizi {url}: {exc}") from exc
+
+
+def _ensure_fresh(
+    update_texts: list[str],
+    *,
+    max_age_minutes: int,
+) -> None:
+    if not update_texts:
+        raise ValueError("Pashizi has no parseable last-update time")
+
+    oldest_age = max(_age_minutes(value) for value in update_texts)
+    if oldest_age > max(max_age_minutes, 1):
+        raise ValueError(
+            f"Pashizi data is stale: oldest rate is {oldest_age:.0f} minutes old "
+            f"(limit {max_age_minutes})"
+        )
+
+
+def _fetch_detail_rates(
+    base_url: str,
+    *,
+    timeout: int,
+    max_workers: int = 6,
+) -> tuple[dict[str, Decimal], list[str]]:
+    rates: dict[str, Decimal] = {}
+    updates: list[str] = []
+    errors: dict[str, str] = {}
+
+    def fetch_one(code: str) -> tuple[str, Decimal, str | None]:
+        raw = _fetch_html(
+            f"{base_url.rstrip('/')}/currency/{code.lower()}",
+            timeout,
+        )
+        rate, updated = parse_pashizi_currency_detail(raw, code)
+        return code, rate, updated
+
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, 8))) as pool:
+        futures = {
+            pool.submit(fetch_one, code): code
+            for code in TARGET_CODES
+        }
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                parsed_code, rate, updated = future.result()
+            except Exception as exc:
+                errors[code] = f"{type(exc).__name__}: {exc}"
+                continue
+            rates[parsed_code] = rate
+            if updated:
+                updates.append(updated)
+
+    missing = [code for code in TARGET_CODES if code not in rates]
+    if missing:
+        details = "; ".join(
+            f"{code}={errors.get(code, 'missing')}"
+            for code in missing[:5]
+        )
+        raise ValueError(
+            "Pashizi detail fallback is missing required currencies: "
+            + ", ".join(missing)
+            + (f" | {details}" if details else "")
+        )
+
+    return rates, updates
+
+
 def fetch_pashizi_iran_fx(
     url: str = PASHIZI_URL,
     *,
     timeout: int = 25,
     max_age_minutes: int = 900,
 ) -> dict[str, Decimal]:
-    request = Request(
-        url,
-        headers={
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": "AlanChande-PashiziVerifier/1.0",
-        },
-    )
+    raw_html = _fetch_html(url, timeout)
+    landing_update = _parse_update_text(_text_from_html(raw_html))
+
     try:
-        with urlopen(request, timeout=timeout) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            raw_html = response.read().decode(charset, errors="replace")
-    except HTTPError as exc:
-        raise RuntimeError(f"Pashizi returned HTTP {exc.code}") from exc
-    except (URLError, TimeoutError) as exc:
-        raise RuntimeError(f"Could not load Pashizi: {exc}") from exc
-
-    rates, update_text = parse_pashizi_fx_page(raw_html)
-    if update_text is None:
-        raise ValueError("Pashizi page has no parseable last-update time")
-
-    age = _age_minutes(update_text)
-    if age > max(max_age_minutes, 1):
-        raise ValueError(
-            f"Pashizi data is stale: {age:.0f} minutes old "
-            f"(limit {max_age_minutes})"
+        rates, parsed_update = parse_pashizi_fx_page(raw_html)
+        updates = [
+            value
+            for value in (parsed_update, landing_update)
+            if value is not None
+        ]
+        _ensure_fresh(updates, max_age_minutes=max_age_minutes)
+        return rates
+    except ValueError as landing_error:
+        # The public site sometimes sends a client-rendered shell to urllib
+        # even though browsers/search crawlers see the full table. Detail
+        # pages are separately addressable and expose the current sell rate.
+        rates, detail_updates = _fetch_detail_rates(
+            url,
+            timeout=timeout,
         )
-    return rates
+        updates = (
+            [landing_update] if landing_update is not None else detail_updates
+        )
+        try:
+            _ensure_fresh(updates, max_age_minutes=max_age_minutes)
+        except ValueError as freshness_error:
+            raise ValueError(
+                f"Pashizi landing parse failed ({landing_error}); "
+                f"detail fallback freshness failed ({freshness_error})"
+            ) from freshness_error
+        return rates
