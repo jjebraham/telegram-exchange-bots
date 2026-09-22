@@ -192,10 +192,14 @@ def build_iran_fx_post(
     change_24h = change_24h or {}
     change_1m = change_1m or {}
 
-    table = [f"{'CURRENCY':<8} {'TOMAN':>10} {'Δ24H':>8} {'Δ1M':>8}"]
+    ltr = "\u200e"
+    table = [
+        ltr + f"{'CURRENCY':<8} {'TOMAN':>10} {'Δ24H':>8} {'Δ1M':>8}"
+    ]
     for code, flag, _name, _labels in CURRENCY_ROWS:
         table.append(
-            f"{flag} {code:<3} "
+            ltr
+            + f"{flag} {code:<3} "
             f"{_fmt_toman(rates_toman[code]):>10} "
             f"{_fmt_pct(change_24h.get(code)):>8} "
             f"{_fmt_pct(change_1m.get(code)):>8}"
