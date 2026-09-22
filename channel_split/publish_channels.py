@@ -39,6 +39,7 @@ from gold_history import load_turkey_gold_near_24h, record_turkey_gold_quotes
 from iran_gold import build_iran_gold_post, fetch_iran_gold_market
 from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
+from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from nobitex_usdt import build_nobitex_usdt_post, fetch_nobitex_usdt
 from wallex_usdt import build_wallex_usdt_post, fetch_wallex_usdt
@@ -64,6 +65,7 @@ from official_bank_verifier import (
 from admin_alerts import maybe_notify_admin, maybe_notify_source_health
 from market_safety import (
     PostSafetyAssessment,
+    SafetyObservation,
     SourceHealthEvent,
     assess_post,
     bank_fx_observations,
@@ -354,6 +356,7 @@ def main() -> int:
             "alanchande-snapshot",
             "alanchande-daily-change",
             "alanchande-fx-pulse",
+            "alanchande-iran-fx",
             "alanchande-turkey-gold",
             "alanchande-iran-gold",
             "alanchande-usdt-exchanges",
@@ -408,6 +411,7 @@ def main() -> int:
     usd_quotes_cache: list[Any] | None = None
     eur_quotes_cache: list[Any] | None = None
     turkey_gold_cache: list[Any] | None = None
+    iran_fx_cache: dict[str, Decimal] | None = None
     iran_gold_cache: Any | None = None
     iran_gold_external_cache: dict[str, Decimal] | None = None
     iran_gold_external_attempted = False
@@ -499,6 +503,25 @@ def main() -> int:
                 )
                 raise
         return turkey_gold_cache
+
+    def get_iran_fx() -> dict[str, Decimal]:
+        nonlocal iran_fx_cache
+        if iran_fx_cache is None:
+            try:
+                iran_fx_cache = fetch_iran_open_market_fx()
+                note_source_health(
+                    "iran:tgju-fx",
+                    True,
+                    "parsed 25 free-market currency rows; independent verifier pending",
+                )
+            except Exception as exc:
+                note_source_health(
+                    "iran:tgju-fx",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
+        return iran_fx_cache
 
     def get_iran_gold() -> Any:
         nonlocal iran_gold_cache
@@ -1011,6 +1034,28 @@ def main() -> int:
         )
         return text, assessment
 
+    def build_safe_iran_fx() -> tuple[str, PostSafetyAssessment]:
+        rates = get_iran_fx()
+        text = build_iran_fx_post(rates)
+        observations = [
+            SafetyObservation(
+                market_key=f"iran-fx:{code}/TOMAN",
+                source_values={"tgju": value},
+                min_sources=2,
+                max_source_deviation_pct=Decimal("2.00"),
+                suspicious_move_pct=Decimal("6.00"),
+                strong_quorum=3,
+                unavailable_sources=("independent Iran-FX verifier pending",),
+            )
+            for code, value in rates.items()
+        ]
+        assessment = assess_post(
+            history_db,
+            "iran-fx",
+            observations,
+        )
+        return text, assessment
+
     def build_safe_turkey_gold() -> tuple[str, PostSafetyAssessment]:
         quotes = get_turkey_gold()
         text = build_turkish_gold_post(
@@ -1092,6 +1137,10 @@ def main() -> int:
         text, safety = build_safe_fx_pulse()
         add_alanchande(text, "fx-pulse", safety)
 
+    if args.post == "alanchande-iran-fx":
+        text, safety = build_safe_iran_fx()
+        add_alanchande(text, "iran-fx", safety)
+
     if args.post == "alanchande-turkey-gold":
         text, safety = build_safe_turkey_gold()
         add_alanchande(text, "turkey-gold", safety)
@@ -1129,6 +1178,7 @@ def main() -> int:
     if args.post == "alanchande-daily":
         safe_builders = [
             ("bank-usd", lambda: build_safe_bank("USD/TRY")),
+            ("iran-fx", build_safe_iran_fx),
             ("fx-pulse", build_safe_fx_pulse),
             ("turkey-gold", build_safe_turkey_gold),
             ("iran-gold", build_safe_iran_gold),
