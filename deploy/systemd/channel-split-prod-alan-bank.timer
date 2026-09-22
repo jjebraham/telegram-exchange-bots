@@ -1,0 +1,10 @@
+[Unit]
+Description=AlanChande Turkey bank comparison daily
+
+[Timer]
+OnCalendar=*-*-* 09:20:00 Asia/Tehran
+Persistent=true
+Unit=channel-split-production@bank-comparison.service
+
+[Install]
+WantedBy=timers.target
