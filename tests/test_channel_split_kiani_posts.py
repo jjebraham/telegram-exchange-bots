@@ -72,8 +72,9 @@ class KianiPostTests(unittest.TestCase):
             post,
         )
         self.assertIn("<pre>", post)
-        self.assertIn("TRY", post)
+        self.assertIn("TL", post)
         self.assertIn("TOMAN", post)
+        self.assertNotIn("TRY", post)
         self.assertIn("10,000", post)
         self.assertIn("47,700,000", post)
         self.assertNotIn("≈", post)
