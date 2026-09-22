@@ -36,9 +36,9 @@ Available post names:
 - `alanchande-snapshot` — compact market snapshot.
 - `alanchande-daily-change` — intraday USD/EUR movement from local SQLite history.
 - `alanchande-turkey-gold` — Turkish Kapalıçarşı gold products.
-- `alanchande-iran-fx` — Iran open-market currency board (25 currencies), normalized from TGJU rial values to toman. During the current shadow rollout it intentionally remains safety-BLOCKED until an independent second verifier family is added.
+- `alanchande-iran-fx` — Iran open-market currency board (25 currencies), normalized from TGJU rial values to toman, with Δ24H and Δ1M trusted-history columns. During the current shadow rollout it intentionally remains safety-BLOCKED until an independent second verifier family is added.
 - `alanchande-iran-gold` — Iranian coin/gold prices, converted from rial to toman.
-- `alanchande-usdt-exchanges` — production 7-exchange hybrid USDT board. It combines direct exchange APIs where available with TGJU/Ramzarz fallbacks per exchange.
+- `alanchande-usdt-exchanges` — production 7-exchange hybrid USDT board with Δ24H and Δ1M columns. It combines direct exchange APIs where available with TGJU/Ramzarz fallbacks per exchange.
 - `alanchande-usdt-direct` — direct-source-only USDT comparison for diagnostics.
 - `alanchande-usdt-tgju` — legacy TGJU comparison for diagnostics/fallback validation.
 - `alanchande-markets` — resilient bundle of Turkey gold, Iran gold/coins and the 7-exchange USDT board. One failed market source does not block the healthy posts.
@@ -62,6 +62,13 @@ remain available for diagnostics and source validation, but
 `alanchande-usdt-exchanges` and `alanchande-markets` use the hybrid board.
 
 ### Kiani Exchange
+
+Available transaction-format commands:
+
+- `kiani-rates` — compact current TRY + USDT customer buy/sell board.
+- `kiani-try` — TRY/Toman BUY/SELL board with contact links.
+- `kiani-examples` — fixed TRY amounts → required toman deposit.
+- `kiani-examples-reverse` — fixed toman amounts → required TRY deposit.
 
 `kiani-rates`
 
