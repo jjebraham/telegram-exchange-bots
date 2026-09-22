@@ -198,6 +198,22 @@ Production cadence is not locked to the test cadence. The test schedule is
 deliberately frequent so we can measure intraday movement and later decide
 whether to publish every hour, every two hours, or only on significant changes.
 
+## Rapid burn-in test rotation
+
+For short pre-production burn-in, `channel-split-rapid-test.timer` runs one
+test-channel post every three minutes and cycles through all 10 current formats.
+Each format therefore appears about twice per hour.
+
+The launcher hard-fails unless both destinations are exactly:
+
+    ALANCHANDE_CHANNEL_ID=@alanchandetest
+    KIANI_CHANNEL_ID=@kianiexchangetest
+
+It also forces AlanChande market safety to `shadow` and uses
+`market_history_shadow.sqlite3`. The rapid timer is temporary: while it is
+enabled, disable the slower AlanChande shadow timers to avoid duplicate test
+posts. Never reuse this timer for production.
+
 ## Production cut-over
 
 The publisher auto-loads `channel_split/.env` on the server. Do not commit that
