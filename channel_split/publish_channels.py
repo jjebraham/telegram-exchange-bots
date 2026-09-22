@@ -41,6 +41,7 @@ from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
+from kiani_posts import build_kiani_try_post
 from nobitex_usdt import build_nobitex_usdt_post, fetch_nobitex_usdt
 from wallex_usdt import build_wallex_usdt_post, fetch_wallex_usdt
 from tabdeal_usdt import build_tabdeal_usdt_post, fetch_tabdeal_usdt
@@ -264,20 +265,6 @@ def build_alanchande_snapshot_post(rates: dict[str, Decimal], quotes: list[Any])
             f"🔄 تتر/لیر: <b>{_fmt_cross(rates['lira_to_usdt'])}</b> لیر",
             "",
             f"🕒 {_now_text()} استانبول",
-        ]
-    )
-
-
-def build_kiani_try_post(rates: dict[str, Decimal]) -> str:
-    return "\n".join(
-        [
-            "🇹🇷 <b>نرخ لیر | صرافی کیانی</b>",
-            "",
-            f"فروش به شما: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
-            f"خرید از شما: <b>{_fmt_int(rates['sell_lira'])}</b> تومان",
-            "",
-            f"🕒 {_now_text()} استانبول",
-            "🤖 ثبت سفارش: @Kianiexchangebot",
         ]
     )
 
@@ -1238,7 +1225,21 @@ def main() -> int:
         add_kiani(build_kiani_rate_post(get_rates()))
 
     if args.post in {"kiani-try", "demo-formats"}:
-        add_kiani(build_kiani_try_post(get_rates()))
+        add_kiani(
+            build_kiani_try_post(
+                get_rates(),
+                telegram_url=os.environ.get(
+                    "KIANI_CONTACT_TELEGRAM",
+                    "https://t.me/TL905411603664",
+                ).strip()
+                or "https://t.me/TL905411603664",
+                whatsapp_url=os.environ.get(
+                    "KIANI_CONTACT_WHATSAPP",
+                    "https://wa.me/905392905686",
+                ).strip()
+                or "https://wa.me/905392905686",
+            )
+        )
 
     if args.post in {"kiani-examples", "demo-formats"}:
         add_kiani(build_kiani_examples_post(get_rates()))
