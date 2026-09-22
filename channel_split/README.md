@@ -154,30 +154,42 @@ Recent non-dry-run safety decisions can be inspected with:
 
 ## Staggered shadow-test scheduler
 
-The test rollout has a dedicated systemd service/timer that is deliberately
-separate from production scheduling. It posts **one** board every four hours to
-avoid dumping multiple posts at once:
+The test rollout separates fast IRR-denominated boards from slower market
+boards so volatile toman/rial markets can be observed without dumping unrelated
+posts together.
 
-- 00:10 Istanbul — USD/TRY bank comparison
-- 04:10 — Iran open-market FX
-- 08:10 — Turkey gold
-- 12:10 — Iran USDT comparison
-- 16:10 — Turkey FX pulse
-- 20:10 — Iran gold/coin
+Fast boards:
 
-The launcher hard-checks that `channel_split/.env` still contains exactly:
+- every hour at :10 Istanbul — Iran USDT comparison
+- every two hours at :30 — Iran open-market FX (25 currencies)
+
+Slower boards:
+
+- 00:50 Istanbul — USD/TRY bank comparison
+- 06:50 — Turkey gold
+- 12:50 — Turkey FX pulse
+- 18:50 — Iran gold/coin
+
+All shadow launchers hard-check that `channel_split/.env` still contains exactly:
 
     ALANCHANDE_CHANNEL_ID=@alanchandetest
 
-and forces `MARKET_SAFETY_MODE=shadow` plus
+and force `MARKET_SAFETY_MODE=shadow` plus
 `MARKET_HISTORY_DB=market_history_shadow.sqlite3`. If the destination changes,
-the test scheduler refuses to run.
+the test schedulers refuse to run.
+
+The fast boards and slow rotation share the same lock, so two shadow publishers
+cannot run concurrently.
 
 The Iran open-market FX board currently has only TGJU as a verifier family.
 That is intentional during shadow observation: it will still appear in the test
 channel, but safety will report `BLOCKED` and the private admin alert group
 should receive the corresponding alert. Do not enable this board in production
 enforce mode until an independent second verifier is added and validated.
+
+Production cadence is not locked to the test cadence. The test schedule is
+deliberately frequent so we can measure intraday movement and later decide
+whether to publish every hour, every two hours, or only on significant changes.
 
 ## Production cut-over
 
