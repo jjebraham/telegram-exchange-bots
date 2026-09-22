@@ -170,11 +170,13 @@ class HybridUsdtComparisonTests(unittest.TestCase):
         self.assertIn("+1.00%", post)
         self.assertIn("+12.34%", post)
         self.assertIn("-4.50%", post)
-        self.assertIn("🌐 مستقیم <b>1</b>", post)
-        self.assertIn("🧩 پشتیبان <b>1</b>", post)
-        self.assertIn("🔎 منابع مستقل <b>2</b>", post)
+        self.assertNotIn("🌐 مستقیم", post)
+        self.assertNotIn("🧩 پشتیبان", post)
+        self.assertNotIn("🔎 منابع مستقل", post)
         self.assertNotIn("میانگین", post)
-        self.assertIn("🔴 SELL = فروش　•　🟢 BUY = خرید", post)
+        self.assertNotIn("🔴 SELL = فروش", post)
+        self.assertIn("⚖️ میانگین قیمت خرید:", post)
+        self.assertIn("⚖️ میانگین قیمت فروش:", post)
         self.assertIn(
             "🛒 کمترین قیمت خرید: <b>والکس</b> <code>229,100</code> تومان",
             post,
