@@ -15,7 +15,7 @@ from market_safety import PostSafetyAssessment, VERIFIED  # noqa: E402
 
 
 class DailyBundleCommandTests(unittest.TestCase):
-    def test_daily_dry_run_builds_five_independent_posts(self):
+    def test_daily_dry_run_builds_six_independent_posts(self):
         argv = [
             "publish_channels.py",
             "--post",
@@ -66,6 +66,13 @@ class DailyBundleCommandTests(unittest.TestCase):
                     publish_channels,
                     "fetch_turkish_gold_quotes",
                     return_value=["TGOLD"],
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    publish_channels,
+                    "fetch_iran_open_market_fx",
+                    return_value={"USD": Decimal("228600")},
                 )
             )
             stack.enter_context(
@@ -144,6 +151,13 @@ class DailyBundleCommandTests(unittest.TestCase):
             stack.enter_context(
                 patch.object(
                     publish_channels,
+                    "build_iran_fx_post",
+                    return_value="IRAN-FX",
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    publish_channels,
                     "build_iran_gold_post",
                     return_value="IRAN-GOLD",
                 )
@@ -207,6 +221,7 @@ class DailyBundleCommandTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("BANK", output)
         self.assertIn("PULSE", output)
+        self.assertIn("IRAN-FX", output)
         self.assertIn("TURKEY-GOLD", output)
         self.assertIn("IRAN-GOLD", output)
         self.assertIn("USDT", output)
