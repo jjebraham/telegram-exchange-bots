@@ -97,6 +97,50 @@ class DailyLauncherTests(unittest.TestCase):
             timer,
         )
 
+    def test_production_launcher_is_guarded_and_enforced(self):
+        script = (
+            ROOT / "channel_split" / "run_channel_split_production.sh"
+        ).read_text(encoding="utf-8")
+        service = (
+            ROOT / "deploy" / "systemd" / "channel-split-production@.service"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("ALANCHANDE_CHANNEL_ID=@alanchande_com", script)
+        self.assertIn("KIANI_CHANNEL_ID=@ExchangeKiani", script)
+        self.assertIn("MARKET_SAFETY_MODE=enforce", script)
+        self.assertIn("MARKET_HISTORY_DB=market_history.sqlite3", script)
+        self.assertIn("flock -n 9", script)
+        self.assertIn("ExecStart=/bin/bash", service)
+
+    def test_production_timers_match_requested_cadence(self):
+        expected = {
+            "channel-split-prod-alan-iran-fx.timer":
+                "OnCalendar=*-*-* 09..21:00:00 Asia/Tehran",
+            "channel-split-prod-alan-usdt.timer":
+                "OnCalendar=*-*-* 09..21:30:00 Asia/Tehran",
+            "channel-split-prod-kiani-try.timer":
+                "OnCalendar=*-*-* 09..21:10:00 Asia/Tehran",
+            "channel-split-prod-kiani-rates.timer":
+                "OnCalendar=*-*-* 09..21:40:00 Asia/Tehran",
+            "channel-split-prod-alan-bank.timer":
+                "OnCalendar=*-*-* 09:20:00 Asia/Tehran",
+            "channel-split-prod-alan-turkey-gold.timer":
+                "OnCalendar=*-*-* 11:50:00 Asia/Tehran",
+            "channel-split-prod-alan-fx-pulse.timer":
+                "OnCalendar=*-*-* 16:20:00 Asia/Tehran",
+            "channel-split-prod-alan-iran-gold.timer":
+                "OnCalendar=*-*-* 20:20:00 Asia/Tehran",
+            "channel-split-prod-kiani-try-example.timer":
+                "OnCalendar=*-*-* 11:15:00 Asia/Tehran",
+            "channel-split-prod-kiani-toman-example.timer":
+                "OnCalendar=*-*-* 17:15:00 Asia/Tehran",
+        }
+        for filename, schedule in expected.items():
+            timer = (
+                ROOT / "deploy" / "systemd" / filename
+            ).read_text(encoding="utf-8")
+            self.assertIn(schedule, timer)
+
 
 if __name__ == "__main__":
     unittest.main()
