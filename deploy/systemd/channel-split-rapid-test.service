@@ -1,0 +1,11 @@
+[Unit]
+Description=AlanChande/Kiani rapid test-channel rotation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kianirad2020
+WorkingDirectory=/home/kianirad2020/telegram_bot_repo/channel_split
+ExecStart=/bin/bash /home/kianirad2020/telegram_bot_repo/channel_split/run_channel_split_rapid_test.sh
+TimeoutStartSec=180
