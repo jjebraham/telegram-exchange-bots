@@ -41,6 +41,10 @@ def _fmt_int(value: Decimal) -> str:
     return f"{int(value.quantize(Decimal('1'))):,}"
 
 
+def _fmt_cross(value: Decimal) -> str:
+    return f"{value.quantize(Decimal('0.01')):.2f}".rstrip("0").rstrip(".")
+
+
 def gregorian_to_jalali(gy: int, gm: int, gd: int) -> tuple[int, int, int]:
     """Convert a Gregorian date to Jalali without a third-party dependency."""
     g_days_in_month = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
@@ -103,17 +107,100 @@ def build_kiani_try_post(
         [
             f"📆 <b>{html.escape(_jalali_timestamp(now))}</b>",
             "",
-            "🇹🇷 <b>نرخ لیر ترکیه</b>",
+            "🇹🇷 <b>نرخ لیر ترکیه</b> به تومان 🇮🇷",
             "",
             "<pre>",
-            f"💸 BUY   TL {_fmt_int(buy_from_us)} = خرید لیر از ما",
-            f"💵 SELL  TL {_fmt_int(sell_to_us)} = فروش لیر به ما",
+            f"🟩 BUY   TL {_fmt_int(buy_from_us)} = خرید لیر از ما",
+            f"🟥 SELL  TL {_fmt_int(sell_to_us)} = فروش لیر به ما",
             "</pre>",
             "",
             "⚠️ <b>لطفاً قبل از واریز هماهنگ کنید:</b>",
             f'🔹 تلگرام: <a href="{telegram_link}">{telegram_link}</a>',
             f'🔹 واتس‌اپ: <a href="{whatsapp_link}">{whatsapp_link}</a>',
+        ]
+    )
+
+
+def build_kiani_rate_post(
+    rates: dict[str, Decimal],
+    *,
+    now: datetime | None = None,
+    order_handle: str = "@Kianiexchangebot",
+) -> str:
+    """Compact Kiani customer transaction board."""
+    local = (now or datetime.now(ISTANBUL_TZ)).astimezone(ISTANBUL_TZ)
+    return "\n".join(
+        [
+            "💱 <b>صرافی کیانی | نرخ امروز</b>",
             "",
-            "💵 واحد: تومان 🇮🇷",
+            "🇹🇷 <b>لیر</b>",
+            f"🟢 می‌خرید: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
+            f"🔵 می‌فروشید: <b>{_fmt_int(rates['sell_lira'])}</b> تومان",
+            "",
+            "💵 <b>تتر</b>",
+            f"🟢 می‌خرید: <b>{_fmt_int(rates['buy_usdt'])}</b> تومان",
+            f"🔵 می‌فروشید: <b>{_fmt_int(rates['sell_usdt'])}</b> تومان",
+            "",
+            f"🔁 لیر ← تتر: <b>{_fmt_cross(rates['lira_to_usdt'])}</b> لیر",
+            f"🔁 تتر ← لیر: <b>{_fmt_cross(rates['usdt_to_lira'])}</b> لیر",
+            "",
+            f"🕰 <code>{local.strftime('%H:%M')}</code> استانبول",
+            f"👇 سفارش: {html.escape(order_handle)}",
+        ]
+    )
+
+
+def build_kiani_try_receive_post(
+    rates: dict[str, Decimal],
+    *,
+    order_handle: str = "@Kianiexchangebot",
+) -> str:
+    """Show toman required when the customer wants to receive fixed TRY amounts."""
+    buy_try = rates["buy_lira"]
+    amounts = (Decimal("10000"), Decimal("50000"), Decimal("100000"))
+
+    table = [f"{'TRY':>10} {'TOMAN':>16}"]
+    for try_amount in amounts:
+        toman = try_amount * buy_try
+        table.append(f"{_fmt_int(try_amount):>10} {_fmt_int(toman):>16}")
+
+    return "\n".join(
+        [
+            "🧮 <b>برای دریافت این مقدار لیر چند تومان باید واریز بشود؟</b>",
+            "",
+            "<pre>" + "\n".join(table) + "</pre>",
+            "",
+            f"بر اساس نرخ فروش فعلی: <b>{_fmt_int(buy_try)}</b> تومان",
+            f"🤖 ثبت سفارش: {html.escape(order_handle)}",
+        ]
+    )
+
+
+def build_kiani_toman_receive_post(
+    rates: dict[str, Decimal],
+    *,
+    order_handle: str = "@Kianiexchangebot",
+) -> str:
+    """Show TRY required when the customer wants to receive fixed toman amounts."""
+    sell_try = rates["sell_lira"]
+    amounts = (
+        Decimal("10000000"),
+        Decimal("50000000"),
+        Decimal("100000000"),
+    )
+
+    table = [f"{'TOMAN':>16} {'TRY':>10}"]
+    for toman in amounts:
+        try_amount = toman / sell_try
+        table.append(f"{_fmt_int(toman):>16} {_fmt_int(try_amount):>10}")
+
+    return "\n".join(
+        [
+            "🧮 <b>برای دریافت این مقدار تومان چند لیر باید واریز بشود؟</b>",
+            "",
+            "<pre>" + "\n".join(table) + "</pre>",
+            "",
+            f"بر اساس نرخ خرید فعلی: <b>{_fmt_int(sell_try)}</b> تومان",
+            f"🤖 ثبت سفارش: {html.escape(order_handle)}",
         ]
     )
