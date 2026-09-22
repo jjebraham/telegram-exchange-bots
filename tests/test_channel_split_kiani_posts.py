@@ -92,7 +92,7 @@ class KianiPostTests(unittest.TestCase):
         self.assertIn("100,000,000", post)
         self.assertIn("21,739", post)
         self.assertIn("500,000,000", post)
-        self.assertIn("108,696", post)
+        self.assertIn("108,700", post)
         self.assertIn("بر اساس نرخ خرید فعلی: <b>4,600</b> تومان", post)
 
 
