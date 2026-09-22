@@ -1,0 +1,10 @@
+[Unit]
+Description=Run AlanChande Iran FX shadow board every two hours
+
+[Timer]
+OnCalendar=*-*-* 00/2:30:00 Europe/Istanbul
+Persistent=true
+Unit=alanchande-shadow-iran-fx.service
+
+[Install]
+WantedBy=timers.target
