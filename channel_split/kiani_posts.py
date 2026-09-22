@@ -131,15 +131,15 @@ def build_kiani_rate_post(
     local = (now or datetime.now(ISTANBUL_TZ)).astimezone(ISTANBUL_TZ)
     return "\n".join(
         [
-            "💱 <b>صرافی کیانی | نرخ امروز</b>",
+            "<b>صرافی کیانی | نرخ امروز</b>",
             "",
             "🇹🇷 <b>لیر</b>",
-            f"🟢 می‌خرید: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
-            f"🔵 می‌فروشید: <b>{_fmt_int(rates['sell_lira'])}</b> تومان",
+            f"🟢 از ما می‌خرید: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
+            f"🔵 به ما می‌فروشید: <b>{_fmt_int(rates['sell_lira'])}</b> تومان",
             "",
             "💵 <b>تتر</b>",
-            f"🟢 می‌خرید: <b>{_fmt_int(rates['buy_usdt'])}</b> تومان",
-            f"🔵 می‌فروشید: <b>{_fmt_int(rates['sell_usdt'])}</b> تومان",
+            f"🟢 از ما می‌خرید: <b>{_fmt_int(rates['buy_usdt'])}</b> تومان",
+            f"🔵 به ما می‌فروشید: <b>{_fmt_int(rates['sell_usdt'])}</b> تومان",
             "",
             f"🔁 لیر ← تتر: <b>{_fmt_cross(rates['lira_to_usdt'])}</b> لیر",
             f"🔁 تتر ← لیر: <b>{_fmt_cross(rates['usdt_to_lira'])}</b> لیر",
@@ -184,9 +184,9 @@ def build_kiani_toman_receive_post(
     """Show TRY required when the customer wants to receive fixed toman amounts."""
     sell_try = rates["sell_lira"]
     amounts = (
-        Decimal("10000000"),
         Decimal("50000000"),
         Decimal("100000000"),
+        Decimal("500000000"),
     )
 
     table = [f"{'TOMAN':>16} {'TRY':>10}"]
