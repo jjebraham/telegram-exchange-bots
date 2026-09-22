@@ -13,7 +13,12 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 import publish_channels  # noqa: E402
 from bank_compare import BankQuote  # noqa: E402
 from iran_gold import IranGoldMarket  # noqa: E402
-from market_safety import load_last_accepted, recent_safety_status  # noqa: E402
+from market_safety import (  # noqa: E402
+    BLOCKED,
+    PostSafetyAssessment,
+    load_last_accepted,
+    recent_safety_status,
+)
 
 
 class PublisherSafetyModeTests(unittest.TestCase):
@@ -108,6 +113,53 @@ class PublisherSafetyModeTests(unittest.TestCase):
             status = recent_safety_status(db)
             self.assertIn("BLOCKED", status)
             self.assertIn("published=1", status)
+
+    def test_shadow_blocked_iran_fx_never_records_change_history(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            blocked = PostSafetyAssessment(
+                post_type="iran-fx",
+                decision=BLOCKED,
+                reason="single verifier",
+                checks=(),
+            )
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "shadow"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_iran_open_market_fx",
+                    return_value={"USD": Decimal("230000")},
+                ),
+                patch.object(
+                    publish_channels,
+                    "build_iran_fx_post",
+                    return_value="IRAN-FX",
+                ),
+                patch.object(
+                    publish_channels,
+                    "assess_post",
+                    return_value=blocked,
+                ),
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                    return_value={"ok": True},
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_published_values",
+                ) as record_published_values,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_called_once()
+            record_published_values.assert_not_called()
 
     def test_iran_gold_external_consensus_allows_enforce_publish(self):
         with tempfile.TemporaryDirectory() as tempdir:
