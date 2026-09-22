@@ -36,13 +36,14 @@ Available post names:
 - `alanchande-snapshot` — compact market snapshot.
 - `alanchande-daily-change` — intraday USD/EUR movement from local SQLite history.
 - `alanchande-turkey-gold` — Turkish Kapalıçarşı gold products.
-- `alanchande-iran-gold` — Iranian coin/gold prices + coin bubbles, converted from rial to toman.
+- `alanchande-iran-fx` — Iran open-market currency board (25 currencies), normalized from TGJU rial values to toman. During the current shadow rollout it intentionally remains safety-BLOCKED until an independent second verifier family is added.
+- `alanchande-iran-gold` — Iranian coin/gold prices, converted from rial to toman.
 - `alanchande-usdt-exchanges` — production 7-exchange hybrid USDT board. It combines direct exchange APIs where available with TGJU/Ramzarz fallbacks per exchange.
 - `alanchande-usdt-direct` — direct-source-only USDT comparison for diagnostics.
 - `alanchande-usdt-tgju` — legacy TGJU comparison for diagnostics/fallback validation.
 - `alanchande-markets` — resilient bundle of Turkey gold, Iran gold/coins and the 7-exchange USDT board. One failed market source does not block the healthy posts.
 - `alanchande-fx-pulse` — compact Kapalıçarşı USD/TL + EUR/TL midpoint board with ~24-hour changes.
-- `alanchande-daily` — resilient daily AlanChande package: USD bank comparison, FX pulse, Turkey gold, Iran gold/coins and 7-exchange USDT.
+- `alanchande-daily` — resilient daily AlanChande package: USD bank comparison, Iran open-market FX, Turkey FX pulse, Turkey gold, Iran gold/coins and 7-exchange USDT.
 
 The USD/EUR comparison source layer is isolated in `bank_compare.py`.
 Turkish gold is isolated in `gold_prices.py`. Iran gold/coin is isolated in
@@ -150,6 +151,33 @@ and must not be enabled merely because a source is reachable.
 Recent non-dry-run safety decisions can be inspected with:
 
     python3 publish_channels.py --safety-status
+
+## Staggered shadow-test scheduler
+
+The test rollout has a dedicated systemd service/timer that is deliberately
+separate from production scheduling. It posts **one** board every four hours to
+avoid dumping multiple posts at once:
+
+- 00:10 Istanbul — USD/TRY bank comparison
+- 04:10 — Iran open-market FX
+- 08:10 — Turkey gold
+- 12:10 — Iran USDT comparison
+- 16:10 — Turkey FX pulse
+- 20:10 — Iran gold/coin
+
+The launcher hard-checks that `channel_split/.env` still contains exactly:
+
+    ALANCHANDE_CHANNEL_ID=@alanchandetest
+
+and forces `MARKET_SAFETY_MODE=shadow` plus
+`MARKET_HISTORY_DB=market_history_shadow.sqlite3`. If the destination changes,
+the test scheduler refuses to run.
+
+The Iran open-market FX board currently has only TGJU as a verifier family.
+That is intentional during shadow observation: it will still appear in the test
+channel, but safety will report `BLOCKED` and the private admin alert group
+should receive the corresponding alert. Do not enable this board in production
+enforce mode until an independent second verifier is added and validated.
 
 ## Production cut-over
 
