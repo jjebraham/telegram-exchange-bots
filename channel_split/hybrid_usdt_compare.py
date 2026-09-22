@@ -319,12 +319,17 @@ def build_hybrid_usdt_post(
     change_24h = change_24h or {}
     change_1m = change_1m or {}
 
-    direct_count = sum(1 for q in quotes if q.source == "direct")
-    fallback_count = len(quotes) - direct_count
-    independent_count = independent_source_family_count(quotes)
-
-    buy_average = sum((q.buy_toman for q in quotes), Decimal("0")) / Decimal(len(quotes))
+    buy_average = sum(
+        (q.buy_toman for q in quotes),
+        Decimal("0"),
+    ) / Decimal(len(quotes))
     sell_values = [q.sell_toman for q in quotes if q.sell_toman is not None]
+    sell_average = (
+        sum((value for value in sell_values if value is not None), Decimal("0"))
+        / Decimal(len(sell_values))
+        if sell_values
+        else None
+    )
 
     lowest_buy = min(quotes, key=lambda q: q.buy_toman)
     valid_sell_quotes = [q for q in quotes if q.sell_toman is not None]
@@ -333,20 +338,19 @@ def build_hybrid_usdt_post(
         if valid_sell_quotes
         else None
     )
-    sell_average = (
-        sum((value for value in sell_values if value is not None), Decimal("0"))
-        / Decimal(len(sell_values))
-        if sell_values
-        else None
-    )
 
+    # Telegram clients can choose different bidi directions for a preformatted
+    # block surrounded by Persian text. An invisible LTR mark at the start of
+    # every row keeps the columns in the same order across clients.
+    ltr = "\u200e"
     table_lines = [
-        f"{'EXCHANGE':<10} {'SELL':>7} {'BUY':>7} {'Δ24H':>7} {'Δ1M':>7}",
+        ltr + f"{'EXCHANGE':<10} {'SELL':>7} {'BUY':>7} {'Δ24H':>7} {'Δ1M':>7}",
     ]
     for quote in quotes:
         day_change = change_24h.get(quote.exchange, quote.change_pct)
         table_lines.append(
-            f"{_display_exchange(quote.exchange):<10} "
+            ltr
+            + f"{_display_exchange(quote.exchange):<10} "
             f"{_fmt_toman(quote.buy_toman):>7} "
             f"{_fmt_toman(quote.sell_toman):>7} "
             f"{_fmt_table_pct(day_change):>7} "
@@ -356,13 +360,23 @@ def build_hybrid_usdt_post(
     lines = [
         "💎 <b>قیمت تتر در صرافی‌های ایران</b>",
         "",
-        "🔴 SELL = فروش　•　🟢 BUY = خرید",
-        "",
         "<pre>" + "\n".join(table_lines) + "</pre>",
         "",
-        f"🛒 کمترین قیمت خرید: <b>{lowest_buy.exchange}</b> "
-        f"<code>{_fmt_toman(lowest_buy.buy_toman)}</code> تومان",
+        f"⚖️ میانگین قیمت خرید: <code>{_fmt_toman(buy_average)}</code> تومان",
     ]
+
+    if sell_average is not None:
+        lines.append(
+            f"⚖️ میانگین قیمت فروش: <code>{_fmt_toman(sell_average)}</code> تومان"
+        )
+
+    lines.extend(
+        [
+            "",
+            f"🛒 کمترین قیمت خرید: <b>{lowest_buy.exchange}</b> "
+            f"<code>{_fmt_toman(lowest_buy.buy_toman)}</code> تومان",
+        ]
+    )
 
     if highest_sell is not None:
         lines.append(
@@ -373,9 +387,6 @@ def build_hybrid_usdt_post(
     lines.extend(
         [
             "",
-            f"✅ <b>{len(quotes)}/{len(TARGET_EXCHANGES)}</b>　"
-            f"🌐 مستقیم <b>{direct_count}</b>　🧩 پشتیبان <b>{fallback_count}</b>",
-            f"🔎 منابع مستقل <b>{independent_count}</b>",
             f"🕒 <code>{datetime.now(TEHRAN_TZ).strftime('%H:%M')}</code> تهران",
             "قیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
         ]
