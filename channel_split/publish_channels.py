@@ -41,7 +41,12 @@ from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
-from kiani_posts import build_kiani_try_post
+from kiani_posts import (
+    build_kiani_rate_post,
+    build_kiani_toman_receive_post,
+    build_kiani_try_post,
+    build_kiani_try_receive_post,
+)
 from nobitex_usdt import build_nobitex_usdt_post, fetch_nobitex_usdt
 from wallex_usdt import build_wallex_usdt_post, fetch_wallex_usdt
 from tabdeal_usdt import build_tabdeal_usdt_post, fetch_tabdeal_usdt
@@ -90,6 +95,11 @@ from market_history import (
     load_day,
     record_bank_fx_quotes,
     record_snapshot,
+)
+from rate_change_history import (
+    load_published_values_near_age,
+    percentage_changes,
+    record_published_values,
 )
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
@@ -202,27 +212,6 @@ def build_default_alanchande_usdt_post() -> str:
     return fetch_and_build_hybrid_usdt_post()
 
 
-def build_kiani_rate_post(rates: dict[str, Decimal]) -> str:
-    return "\n".join(
-        [
-            "💱 <b>نرخ معامله صرافی کیانی</b>",
-            "",
-            f"🇹🇷 فروش لیر به شما: <b>{_fmt_int(rates['buy_lira'])}</b> تومان",
-            f"🇹🇷 خرید لیر از شما: <b>{_fmt_int(rates['sell_lira'])}</b> تومان",
-            "",
-            f"🪙 فروش تتر به شما: <b>{_fmt_int(rates['buy_usdt'])}</b> تومان",
-            f"🪙 خرید تتر از شما: <b>{_fmt_int(rates['sell_usdt'])}</b> تومان",
-            "",
-            f"🔄 لیر → تتر: هر ۱ تتر = <b>{_fmt_cross(rates['lira_to_usdt'])}</b> لیر",
-            f"🔄 تتر → لیر: هر ۱ تتر = <b>{_fmt_cross(rates['usdt_to_lira'])}</b> لیر",
-            "",
-            f"🕒 بروزرسانی: {_now_text()} به وقت استانبول",
-            "🤖 ثبت سفارش: @Kianiexchangebot",
-            "📊 نرخ‌های بازار و محتوای تحلیلی: @alanchande_com",
-        ]
-    )
-
-
 def build_alanchande_converter_post(rates: dict[str, Decimal]) -> str:
     sell_try = rates["buy_lira"]
     amounts = (
@@ -267,26 +256,6 @@ def build_alanchande_snapshot_post(rates: dict[str, Decimal], quotes: list[Any])
             f"🕒 {_now_text()} استانبول",
         ]
     )
-
-
-def build_kiani_examples_post(rates: dict[str, Decimal]) -> str:
-    sell_try = rates["buy_lira"]
-    amounts = (Decimal("10000"), Decimal("50000"), Decimal("100000"))
-    lines = [
-        "🧮 <b>برای خرید لیر چقدر تومان لازم است؟</b>",
-        "",
-    ]
-    for try_amount in amounts:
-        toman = try_amount * sell_try
-        lines.append(f"🇹🇷 {_fmt_int(try_amount)} لیر ≈ <b>{_fmt_int(toman)}</b> تومان")
-    lines.extend(
-        [
-            "",
-            f"بر اساس نرخ فروش فعلی: <b>{_fmt_int(sell_try)}</b> تومان",
-            "🤖 ثبت سفارش: @Kianiexchangebot",
-        ]
-    )
-    return "\n".join(lines)
 
 
 def build_resilient_market_bundle(
@@ -363,6 +332,7 @@ def main() -> int:
             "kiani-rates",
             "kiani-try",
             "kiani-examples",
+            "kiani-examples-reverse",
             "demo-formats",
             "all",
         ),
@@ -1023,7 +993,25 @@ def main() -> int:
 
     def build_safe_iran_fx() -> tuple[str, PostSafetyAssessment]:
         rates = get_iran_fx()
-        text = build_iran_fx_post(rates)
+        previous_24h = load_published_values_near_age(
+            history_db,
+            "iran-fx",
+            target_hours=24,
+            min_age_hours=18,
+            max_age_hours=30,
+        )
+        previous_1m = load_published_values_near_age(
+            history_db,
+            "iran-fx",
+            target_hours=24 * 30,
+            min_age_hours=24 * 25,
+            max_age_hours=24 * 35,
+        )
+        text = build_iran_fx_post(
+            rates,
+            percentage_changes(rates, previous_24h),
+            percentage_changes(rates, previous_1m),
+        )
         observations = [
             SafetyObservation(
                 market_key=f"iran-fx:{code}/TOMAN",
@@ -1093,7 +1081,26 @@ def main() -> int:
 
     def build_safe_usdt() -> tuple[str, PostSafetyAssessment]:
         quotes = get_hybrid_usdt()
-        text = build_hybrid_usdt_post(quotes)
+        current_buy = {quote.exchange: quote.buy_toman for quote in quotes}
+        previous_24h = load_published_values_near_age(
+            history_db,
+            "usdt-buy",
+            target_hours=24,
+            min_age_hours=18,
+            max_age_hours=30,
+        )
+        previous_1m = load_published_values_near_age(
+            history_db,
+            "usdt-buy",
+            target_hours=24 * 30,
+            min_age_hours=24 * 25,
+            max_age_hours=24 * 35,
+        )
+        text = build_hybrid_usdt_post(
+            quotes,
+            percentage_changes(current_buy, previous_24h),
+            percentage_changes(current_buy, previous_1m),
+        )
         assessment = assess_post(
             history_db,
             "usdt",
@@ -1242,7 +1249,10 @@ def main() -> int:
         )
 
     if args.post in {"kiani-examples", "demo-formats"}:
-        add_kiani(build_kiani_examples_post(get_rates()))
+        add_kiani(build_kiani_try_receive_post(get_rates()))
+
+    if args.post in {"kiani-examples-reverse", "demo-formats"}:
+        add_kiani(build_kiani_toman_receive_post(get_rates()))
 
     if args.dry_run:
         print(f"MARKET_SAFETY_MODE={safety_mode}")
@@ -1401,6 +1411,22 @@ def main() -> int:
     if "iran-gold" in verified_sent_market_posts:
         timestamp = record_iran_gold_market(history_db, get_iran_gold())
         print(f"recorded Iran gold snapshot -> {timestamp}")
+
+    if "usdt" in verified_sent_market_posts:
+        timestamp = record_published_values(
+            history_db,
+            "usdt-buy",
+            {quote.exchange: quote.buy_toman for quote in get_hybrid_usdt()},
+        )
+        print(f"recorded verified USDT snapshot -> {timestamp}")
+
+    if "iran-fx" in verified_sent_market_posts:
+        timestamp = record_published_values(
+            history_db,
+            "iran-fx",
+            get_iran_fx(),
+        )
+        print(f"recorded verified Iran FX snapshot -> {timestamp}")
 
     return 0
 
