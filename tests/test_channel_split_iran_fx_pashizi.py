@@ -6,7 +6,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
-from iran_fx_pashizi import TARGET_CODES, parse_pashizi_fx_page  # noqa: E402
+from iran_fx_pashizi import (  # noqa: E402
+    TARGET_CODES,
+    parse_pashizi_currency_detail,
+    parse_pashizi_fx_page,
+)
 
 
 class PashiziIranFxTests(unittest.TestCase):
@@ -34,6 +38,22 @@ class PashiziIranFxTests(unittest.TestCase):
             rates["USD"],
             (Decimal("2010000") + Decimal("2008000")) / Decimal("20"),
         )
+
+    def test_parses_currency_detail_title_and_update_time(self):
+        raw = (
+            "<html><head>"
+            "<title>USD Price Today: 2,315,000 IRR | Iran Free Market Rate</title>"
+            "</head><body>"
+            "<div>last update: Tue 18:50</div>"
+            "<h1>USD/IRR Exchange Rate &amp; Market Trends</h1>"
+            "</body></html>"
+        )
+
+        rate, updated = parse_pashizi_currency_detail(raw, "USD")
+
+        self.assertEqual(rate, Decimal("231500"))
+        self.assertEqual(updated, "Tue 18:50")
+
 
     def test_missing_currency_fails_closed(self):
         html = (
