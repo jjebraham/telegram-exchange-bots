@@ -40,12 +40,30 @@ class DailyLauncherTests(unittest.TestCase):
         self.assertIn("MARKET_SAFETY_MODE=shadow", script)
         self.assertIn("MARKET_HISTORY_DB=market_history_shadow.sqlite3", script)
         self.assertIn('00) post="bank-comparison"', script)
-        self.assertIn('04) post="alanchande-iran-fx"', script)
-        self.assertIn('08) post="alanchande-turkey-gold"', script)
-        self.assertIn('12) post="alanchande-usdt-exchanges"', script)
-        self.assertIn('16) post="alanchande-fx-pulse"', script)
-        self.assertIn('20) post="alanchande-iran-gold"', script)
-        self.assertIn("OnCalendar=*-*-* 00/4:10:00 Europe/Istanbul", timer)
+        self.assertIn('06) post="alanchande-turkey-gold"', script)
+        self.assertIn('12) post="alanchande-fx-pulse"', script)
+        self.assertIn('18) post="alanchande-iran-gold"', script)
+        self.assertNotIn('post="alanchande-iran-fx"', script)
+        self.assertNotIn('post="alanchande-usdt-exchanges"', script)
+        self.assertIn("OnCalendar=*-*-* 00/6:50:00 Europe/Istanbul", timer)
+
+    def test_fast_shadow_boards_have_independent_cadence(self):
+        launcher = (
+            ROOT / "channel_split" / "run_alanchande_shadow_post.sh"
+        ).read_text(encoding="utf-8")
+        usdt_timer = (
+            ROOT / "deploy" / "systemd" / "alanchande-shadow-usdt.timer"
+        ).read_text(encoding="utf-8")
+        iran_fx_timer = (
+            ROOT / "deploy" / "systemd" / "alanchande-shadow-iran-fx.timer"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("ALANCHANDE_CHANNEL_ID=@alanchandetest", launcher)
+        self.assertIn("MARKET_SAFETY_MODE=shadow", launcher)
+        self.assertIn("MARKET_HISTORY_DB=market_history_shadow.sqlite3", launcher)
+        self.assertIn("alanchande-usdt-exchanges|alanchande-iran-fx", launcher)
+        self.assertIn("OnCalendar=*-*-* *:10:00 Europe/Istanbul", usdt_timer)
+        self.assertIn("OnCalendar=*-*-* 00/2:30:00 Europe/Istanbul", iran_fx_timer)
 
 
 if __name__ == "__main__":
