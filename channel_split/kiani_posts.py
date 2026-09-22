@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import html
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
@@ -43,6 +43,14 @@ def _fmt_int(value: Decimal) -> str:
 
 def _fmt_cross(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01')):.2f}".rstrip("0").rstrip(".")
+
+
+def _fmt_required_try(value: Decimal) -> str:
+    # Keep small examples precise to the nearest lira, but round six-figure
+    # TRY requirements to the nearest hundred for a cleaner customer example.
+    quantum = Decimal("100") if value >= Decimal("100000") else Decimal("1")
+    rounded = value.quantize(quantum, rounding=ROUND_HALF_UP)
+    return f"{int(rounded):,}"
 
 
 def gregorian_to_jalali(gy: int, gm: int, gd: int) -> tuple[int, int, int]:
@@ -159,10 +167,13 @@ def build_kiani_try_receive_post(
     buy_try = rates["buy_lira"]
     amounts = (Decimal("10000"), Decimal("50000"), Decimal("100000"))
 
-    table = [f"{'TRY':>10} {'TOMAN':>16}"]
+    ltr = "\u200e"
+    table = [ltr + f"{'TRY':>10} {'TOMAN':>16}"]
     for try_amount in amounts:
         toman = try_amount * buy_try
-        table.append(f"{_fmt_int(try_amount):>10} {_fmt_int(toman):>16}")
+        table.append(
+            ltr + f"{_fmt_int(try_amount):>10} {_fmt_int(toman):>16}"
+        )
 
     return "\n".join(
         [
@@ -189,10 +200,13 @@ def build_kiani_toman_receive_post(
         Decimal("500000000"),
     )
 
-    table = [f"{'TOMAN':>16} {'TRY':>10}"]
+    ltr = "\u200e"
+    table = [ltr + f"{'TOMAN':>16} {'TRY':>10}"]
     for toman in amounts:
         try_amount = toman / sell_try
-        table.append(f"{_fmt_int(toman):>16} {_fmt_int(try_amount):>10}")
+        table.append(
+            ltr + f"{_fmt_int(toman):>16} {_fmt_required_try(try_amount):>10}"
+        )
 
     return "\n".join(
         [
