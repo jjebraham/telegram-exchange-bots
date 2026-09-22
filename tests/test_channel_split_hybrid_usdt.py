@@ -151,7 +151,14 @@ class HybridUsdtComparisonTests(unittest.TestCase):
             })(),
         ]
 
-        post = build_hybrid_usdt_post(\n            quotes,\n            change_1m={"والکس": Decimal("12.34"), "نوبیتکس": Decimal("-4.50")},\n        )\n        self.assertNotIn("1️⃣", post)
+        post = build_hybrid_usdt_post(
+            quotes,
+            change_1m={
+                "والکس": Decimal("12.34"),
+                "نوبیتکس": Decimal("-4.50"),
+            },
+        )
+        self.assertNotIn("1️⃣", post)
         self.assertIn("EXCHANGE", post)
         self.assertIn("SELL", post)
         self.assertIn("BUY", post)
