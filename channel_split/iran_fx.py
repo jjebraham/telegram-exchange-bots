@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from typing import Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -168,14 +169,37 @@ def _fmt_toman(value: Decimal) -> str:
     return f"{int(value.quantize(Decimal('1'))):,}"
 
 
-def build_iran_fx_post(rates_toman: dict[str, Decimal]) -> str:
+def _fmt_pct(value: Decimal | None) -> str:
+    if value is None:
+        return "—"
+    rounded = value.quantize(Decimal("0.01"))
+    if rounded > 0:
+        return f"+{rounded:.2f}%"
+    if rounded < 0:
+        return f"-{abs(rounded):.2f}%"
+    return "0.00%"
+
+
+def build_iran_fx_post(
+    rates_toman: dict[str, Decimal],
+    change_24h: Mapping[str, Decimal] | None = None,
+    change_1m: Mapping[str, Decimal] | None = None,
+) -> str:
     missing = [code for code, *_rest in CURRENCY_ROWS if code not in rates_toman]
     if missing:
         raise ValueError("Iran FX post is missing: " + ", ".join(missing))
 
-    table = ["CURRENCY       TOMAN"]
+    change_24h = change_24h or {}
+    change_1m = change_1m or {}
+
+    table = [f"{'CURRENCY':<8} {'TOMAN':>10} {'Δ24H':>8} {'Δ1M':>8}"]
     for code, flag, _name, _labels in CURRENCY_ROWS:
-        table.append(f"{flag} {code:<3} { _fmt_toman(rates_toman[code]):>12}")
+        table.append(
+            f"{flag} {code:<3} "
+            f"{_fmt_toman(rates_toman[code]):>10} "
+            f"{_fmt_pct(change_24h.get(code)):>8} "
+            f"{_fmt_pct(change_1m.get(code)):>8}"
+        )
 
     now = datetime.now(TEHRAN_TZ).strftime("%H:%M")
     return "\n".join(
