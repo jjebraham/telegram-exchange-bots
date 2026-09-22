@@ -40,7 +40,13 @@ from iran_gold import build_iran_gold_post, fetch_iran_gold_market
 from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
+from iran_fx_pashizi import fetch_pashizi_iran_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
+from kiani_shared_pricing import (
+    calculate_kiani_rates,
+    fetch_btcturk_usdt_try,
+    load_shared_adjustments,
+)
 from kiani_posts import (
     build_kiani_rate_post,
     build_kiani_toman_receive_post,
@@ -369,6 +375,9 @@ def main() -> int:
     eur_quotes_cache: list[Any] | None = None
     turkey_gold_cache: list[Any] | None = None
     iran_fx_cache: dict[str, Decimal] | None = None
+    iran_fx_external_cache: dict[str, Decimal] | None = None
+    iran_fx_external_attempted = False
+    iran_fx_external_error: str | None = None
     iran_gold_cache: Any | None = None
     iran_gold_external_cache: dict[str, Decimal] | None = None
     iran_gold_external_attempted = False
@@ -413,7 +422,48 @@ def main() -> int:
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
         if rates_cache is None:
-            rates_cache = fetch_kiani_rates(os.environ.get("KIANI_RATES_URL", DEFAULT_RATES_URL))
+            quotes = get_hybrid_usdt()
+            buy_values = sorted(
+                Decimal(str(quote.buy_toman))
+                for quote in quotes
+            )
+            if not buy_values:
+                raise RuntimeError("No verified USDT/Toman market values for Kiani pricing")
+            middle = len(buy_values) // 2
+            if len(buy_values) % 2:
+                market_usdt_toman = buy_values[middle]
+            else:
+                market_usdt_toman = (
+                    buy_values[middle - 1] + buy_values[middle]
+                ) / Decimal("2")
+
+            try:
+                market_usdt_try = fetch_btcturk_usdt_try()
+                note_source_health("kiani:btcturk-usdttry", True)
+            except Exception as exc:
+                note_source_health(
+                    "kiani:btcturk-usdttry",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
+
+            try:
+                adjustments = load_shared_adjustments()
+                note_source_health("kiani:shared-pricing-db", True)
+            except Exception as exc:
+                note_source_health(
+                    "kiani:shared-pricing-db",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
+
+            rates_cache = calculate_kiani_rates(
+                market_usdt_toman,
+                market_usdt_try,
+                adjustments,
+            )
         return rates_cache
 
     def get_usd_quotes() -> list[Any]:
@@ -469,7 +519,7 @@ def main() -> int:
                 note_source_health(
                     "iran:tgju-fx",
                     True,
-                    "parsed 25 free-market currency rows; independent verifier pending",
+                    "parsed 25 free-market currency rows",
                 )
             except Exception as exc:
                 note_source_health(
@@ -479,6 +529,48 @@ def main() -> int:
                 )
                 raise
         return iran_fx_cache
+
+    def _iran_fx_external_max_age_minutes() -> int:
+        try:
+            value = int(
+                os.environ.get(
+                    "IRAN_FX_EXTERNAL_MAX_AGE_MINUTES",
+                    "900",
+                )
+            )
+        except ValueError:
+            value = 900
+        return max(value, 1)
+
+    def get_iran_fx_external_safe() -> dict[str, Decimal]:
+        nonlocal iran_fx_external_cache
+        nonlocal iran_fx_external_attempted
+        nonlocal iran_fx_external_error
+
+        if not iran_fx_external_attempted:
+            iran_fx_external_attempted = True
+            try:
+                iran_fx_external_cache = fetch_pashizi_iran_fx(
+                    max_age_minutes=_iran_fx_external_max_age_minutes()
+                )
+                note_source_health("iran:pashizi-fx", True)
+            except Exception as exc:
+                iran_fx_external_cache = {}
+                iran_fx_external_error = (
+                    f"pashizi-fx: {type(exc).__name__}: {exc}"
+                )[:240]
+                note_source_health(
+                    "iran:pashizi-fx",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                print(
+                    f"WARNING: Pashizi Iran-FX verifier unavailable: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+
+        return iran_fx_external_cache or {}
 
     def get_iran_gold() -> Any:
         nonlocal iran_gold_cache
@@ -1012,15 +1104,27 @@ def main() -> int:
             percentage_changes(rates, previous_24h),
             percentage_changes(rates, previous_1m),
         )
+        external = get_iran_fx_external_safe()
         observations = [
             SafetyObservation(
                 market_key=f"iran-fx:{code}/TOMAN",
-                source_values={"tgju": value},
+                source_values={
+                    **{"tgju": value},
+                    **(
+                        {"pashizi": external[code]}
+                        if code in external
+                        else {}
+                    ),
+                },
                 min_sources=2,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("6.00"),
                 strong_quorum=3,
-                unavailable_sources=("independent Iran-FX verifier pending",),
+                unavailable_sources=(
+                    (iran_fx_external_error,)
+                    if iran_fx_external_error
+                    else ()
+                ),
             )
             for code, value in rates.items()
         ]
