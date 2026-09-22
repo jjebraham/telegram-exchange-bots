@@ -1,0 +1,10 @@
+[Unit]
+Description=AlanChande Turkey gold daily
+
+[Timer]
+OnCalendar=*-*-* 11:50:00 Asia/Tehran
+Persistent=true
+Unit=channel-split-production@alanchande-turkey-gold.service
+
+[Install]
+WantedBy=timers.target
