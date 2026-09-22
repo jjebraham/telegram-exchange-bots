@@ -68,6 +68,7 @@ class IranFxTests(unittest.TestCase):
         )
         self.assertIn("نرخ ارز آزاد ایران", post)
         self.assertIn("<pre>", post)
+        self.assertIn("\u200eCURRENCY", post)
         self.assertIn("🇺🇸 USD", post)
         self.assertIn("228,600", post)
         self.assertIn("Δ24H", post)
