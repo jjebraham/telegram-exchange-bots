@@ -54,11 +54,12 @@ class KianiPostTests(unittest.TestCase):
         )
         post = build_kiani_rate_post(self.rates, now=now)
 
-        self.assertIn("💱 <b>صرافی کیانی | نرخ امروز</b>", post)
-        self.assertIn("🟢 می‌خرید: <b>4,770</b> تومان", post)
-        self.assertIn("🔵 می‌فروشید: <b>4,600</b> تومان", post)
-        self.assertIn("🟢 می‌خرید: <b>227,760</b> تومان", post)
-        self.assertIn("🔵 می‌فروشید: <b>223,240</b> تومان", post)
+        self.assertIn("<b>صرافی کیانی | نرخ امروز</b>", post)
+        self.assertNotIn("💱 <b>صرافی کیانی", post)
+        self.assertIn("🟢 از ما می‌خرید: <b>4,770</b> تومان", post)
+        self.assertIn("🔵 به ما می‌فروشید: <b>4,600</b> تومان", post)
+        self.assertIn("🟢 از ما می‌خرید: <b>227,760</b> تومان", post)
+        self.assertIn("🔵 به ما می‌فروشید: <b>223,240</b> تومان", post)
         self.assertIn("🔁 لیر ← تتر: <b>49.59</b> لیر", post)
         self.assertIn("🔁 تتر ← لیر: <b>47.65</b> لیر", post)
         self.assertIn("<code>19:08</code> استانبول", post)
@@ -85,8 +86,13 @@ class KianiPostTests(unittest.TestCase):
             post,
         )
         self.assertIn("<pre>", post)
-        self.assertIn("10,000,000", post)
-        self.assertIn("2,174", post)
+        self.assertNotIn("10,000,000", post)
+        self.assertIn("50,000,000", post)
+        self.assertIn("10,870", post)
+        self.assertIn("100,000,000", post)
+        self.assertIn("21,739", post)
+        self.assertIn("500,000,000", post)
+        self.assertIn("108,696", post)
         self.assertIn("بر اساس نرخ خرید فعلی: <b>4,600</b> تومان", post)
 
 
