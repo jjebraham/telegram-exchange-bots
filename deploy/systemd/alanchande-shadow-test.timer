@@ -1,0 +1,10 @@
+[Unit]
+Description=Run AlanChande test-only shadow rotation every 4 hours
+
+[Timer]
+OnCalendar=*-*-* 00/4:10:00 Europe/Istanbul
+Persistent=true
+Unit=alanchande-shadow-test.service
+
+[Install]
+WantedBy=timers.target
