@@ -1,0 +1,10 @@
+[Unit]
+Description=Kiani TRY customer rate hourly 09-21 Tehran
+
+[Timer]
+OnCalendar=*-*-* 09..21:10:00 Asia/Tehran
+Persistent=true
+Unit=channel-split-production@kiani-try.service
+
+[Install]
+WantedBy=timers.target
