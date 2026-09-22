@@ -48,7 +48,7 @@ def _fmt_cross(value: Decimal) -> str:
 def _fmt_required_try(value: Decimal) -> str:
     # Keep small examples precise to the nearest lira, but round six-figure
     # TRY requirements to the nearest hundred for a cleaner customer example.
-    quantum = Decimal("100") if value >= Decimal("100000") else Decimal("1")
+    quantum = Decimal("1E2") if value >= Decimal("100000") else Decimal("1")
     rounded = value.quantize(quantum, rounding=ROUND_HALF_UP)
     return f"{int(rounded):,}"
 
