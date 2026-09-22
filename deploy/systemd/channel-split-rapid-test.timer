@@ -1,0 +1,10 @@
+[Unit]
+Description=Run AlanChande/Kiani rapid test rotation every 3 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/3:00 Europe/Istanbul
+Persistent=true
+Unit=channel-split-rapid-test.service
+
+[Install]
+WantedBy=timers.target
