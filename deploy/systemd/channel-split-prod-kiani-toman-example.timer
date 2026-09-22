@@ -1,0 +1,10 @@
+[Unit]
+Description=Kiani toman to TRY example daily
+
+[Timer]
+OnCalendar=*-*-* 17:15:00 Asia/Tehran
+Persistent=true
+Unit=channel-split-production@kiani-examples-reverse.service
+
+[Install]
+WantedBy=timers.target
