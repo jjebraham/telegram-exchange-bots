@@ -1,0 +1,10 @@
+[Unit]
+Description=Run AlanChande USDT shadow board every hour
+
+[Timer]
+OnCalendar=*-*-* *:10:00 Europe/Istanbul
+Persistent=true
+Unit=alanchande-shadow-usdt.service
+
+[Install]
+WantedBy=timers.target
