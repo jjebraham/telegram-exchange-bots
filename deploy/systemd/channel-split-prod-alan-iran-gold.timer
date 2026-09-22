@@ -1,0 +1,10 @@
+[Unit]
+Description=AlanChande Iran gold daily
+
+[Timer]
+OnCalendar=*-*-* 20:20:00 Asia/Tehran
+Persistent=true
+Unit=channel-split-production@alanchande-iran-gold.service
+
+[Install]
+WantedBy=timers.target
