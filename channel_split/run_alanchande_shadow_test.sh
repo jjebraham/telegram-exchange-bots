@@ -27,13 +27,11 @@ fi
 hour="$(TZ=Europe/Istanbul date +%H)"
 case "$hour" in
   00) post="bank-comparison" ;;
-  04) post="alanchande-iran-fx" ;;
-  08) post="alanchande-turkey-gold" ;;
-  12) post="alanchande-usdt-exchanges" ;;
-  16) post="alanchande-fx-pulse" ;;
-  20) post="alanchande-iran-gold" ;;
+  06) post="alanchande-turkey-gold" ;;
+  12) post="alanchande-fx-pulse" ;;
+  18) post="alanchande-iran-gold" ;;
   *)
-    echo "alanchande-shadow-test: hour $hour is not a configured 4-hour slot; skipping" >&2
+    echo "alanchande-shadow-test: hour $hour is not a configured 6-hour slow-board slot; skipping" >&2
     exit 0
     ;;
 esac
