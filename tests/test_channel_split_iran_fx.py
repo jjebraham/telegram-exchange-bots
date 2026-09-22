@@ -61,7 +61,12 @@ class IranFxTests(unittest.TestCase):
 
     def test_build_post_uses_new_compact_format(self):
         rates = parse_tgju_currency_page(self._fixture_html())
-        post = build_iran_fx_post(\n            rates,\n            {"USD": Decimal("1.25"), "TRY": Decimal("-0.50")},\n            {"USD": Decimal("8.75"), "TRY": Decimal("3.20")},\n        )\n        self.assertIn("نرخ ارز آزاد ایران", post)
+        post = build_iran_fx_post(
+            rates,
+            {"USD": Decimal("1.25"), "TRY": Decimal("-0.50")},
+            {"USD": Decimal("8.75"), "TRY": Decimal("3.20")},
+        )
+        self.assertIn("نرخ ارز آزاد ایران", post)
         self.assertIn("<pre>", post)
         self.assertIn("🇺🇸 USD", post)
         self.assertIn("228,600", post)
