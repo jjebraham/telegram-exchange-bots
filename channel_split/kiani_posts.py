@@ -168,7 +168,7 @@ def build_kiani_try_receive_post(
     amounts = (Decimal("10000"), Decimal("50000"), Decimal("100000"))
 
     ltr = "\u200e"
-    table = [ltr + f"{'TRY':>10} {'TOMAN':>16}"]
+    table = [ltr + f"{'TL':>10} {'TOMAN':>16}"]
     for try_amount in amounts:
         toman = try_amount * buy_try
         table.append(
@@ -201,7 +201,7 @@ def build_kiani_toman_receive_post(
     )
 
     ltr = "\u200e"
-    table = [ltr + f"{'TOMAN':>16} {'TRY':>10}"]
+    table = [ltr + f"{'TOMAN':>16} {'TL':>10}"]
     for toman in amounts:
         try_amount = toman / sell_try
         table.append(
