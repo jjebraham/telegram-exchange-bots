@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Mapping
 from zoneinfo import ZoneInfo
 
 from direct_usdt_compare import DirectUsdtQuote, collect_direct_usdt_quotes
@@ -307,9 +308,16 @@ def independent_source_family_count(quotes: list[HybridUsdtQuote]) -> int:
     return len(families)
 
 
-def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
+def build_hybrid_usdt_post(
+    quotes: list[HybridUsdtQuote],
+    change_24h: Mapping[str, Decimal] | None = None,
+    change_1m: Mapping[str, Decimal] | None = None,
+) -> str:
     if not quotes:
         raise ValueError("No hybrid USDT quotes")
+
+    change_24h = change_24h or {}
+    change_1m = change_1m or {}
 
     direct_count = sum(1 for q in quotes if q.source == "direct")
     fallback_count = len(quotes) - direct_count
@@ -333,14 +341,16 @@ def build_hybrid_usdt_post(quotes: list[HybridUsdtQuote]) -> str:
     )
 
     table_lines = [
-        f"{'EXCHANGE':<10} {'SELL':>7} {'BUY':>7} {'Δ24H':>6}",
+        f"{'EXCHANGE':<10} {'SELL':>7} {'BUY':>7} {'Δ24H':>7} {'Δ1M':>7}",
     ]
     for quote in quotes:
+        day_change = change_24h.get(quote.exchange, quote.change_pct)
         table_lines.append(
             f"{_display_exchange(quote.exchange):<10} "
             f"{_fmt_toman(quote.buy_toman):>7} "
             f"{_fmt_toman(quote.sell_toman):>7} "
-            f"{_fmt_table_pct(quote.change_pct):>6}"
+            f"{_fmt_table_pct(day_change):>7} "
+            f"{_fmt_table_pct(change_1m.get(quote.exchange)):>7}"
         )
 
     lines = [
