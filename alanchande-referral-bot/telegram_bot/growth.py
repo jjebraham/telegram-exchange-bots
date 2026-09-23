@@ -27,6 +27,17 @@ _ONBOARDING_EVENTS = {
     "membership_check_passed",
     "membership_check_failed",
     "membership_check_error",
+    "entry_initial_membership_started",
+    "entry_initial_membership_passed",
+    "entry_initial_membership_failed",
+    "entry_initial_membership_error",
+    "entry_screen_delivered",
+    "entry_cta_membership_started",
+    "entry_cta_membership_passed",
+    "entry_cta_membership_failed",
+    "entry_cta_membership_error",
+    "entry_link_created",
+    "entry_link_creation_error",
 }
 
 
@@ -186,6 +197,15 @@ def source_performance(db, campaign: Campaign) -> dict:
             "membership_passed": 0,
             "membership_failed": 0,
             "membership_error": 0,
+            "initial_member_passed": 0,
+            "initial_member_failed": 0,
+            "initial_member_error": 0,
+            "screen_delivered": 0,
+            "cta_member_passed": 0,
+            "cta_member_failed": 0,
+            "cta_member_error": 0,
+            "entry_link_created": 0,
+            "entry_link_error": 0,
         })
 
     for uid, source in first_source.items():
@@ -208,6 +228,15 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["membership_passed"] = len(events.get("membership_check_passed", set()))
         item["membership_failed"] = len(events.get("membership_check_failed", set()))
         item["membership_error"] = len(events.get("membership_check_error", set()))
+        item["initial_member_passed"] = len(events.get("entry_initial_membership_passed", set()))
+        item["initial_member_failed"] = len(events.get("entry_initial_membership_failed", set()))
+        item["initial_member_error"] = len(events.get("entry_initial_membership_error", set()))
+        item["screen_delivered"] = len(events.get("entry_screen_delivered", set()))
+        item["cta_member_passed"] = len(events.get("entry_cta_membership_passed", set()))
+        item["cta_member_failed"] = len(events.get("entry_cta_membership_failed", set()))
+        item["cta_member_error"] = len(events.get("entry_cta_membership_error", set()))
+        item["entry_link_created"] = len(events.get("entry_link_created", set()))
+        item["entry_link_error"] = len(events.get("entry_link_creation_error", set()))
 
     candidate_seen: set[int] = set()
     for row in list(pending) + list(refs):
@@ -405,6 +434,10 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"  onboarding: shown={row['entry_shown']} cta={row['entry_cta']} "
             f"member_ok={row['membership_passed']} member_no={row['membership_failed']} "
             f"errors={row['membership_error']}",
+            f"  detailed: delivered={row['screen_delivered']} "
+            f"initial_ok={row['initial_member_passed']} initial_no={row['initial_member_failed']} "
+            f"cta_ok={row['cta_member_passed']} cta_no={row['cta_member_failed']} "
+            f"link_ok={row['entry_link_created']} link_err={row['entry_link_error']}",
             f"  start→enter={_pct(row['start_to_entered_pct'])} | "
             f"new start→enter={_pct(row['new_start_to_entered_pct'])} | "
             f"shown→cta={_pct(row['entry_cta_pct'])} | candidate→join={_pct(row['candidate_to_join_pct'])}",

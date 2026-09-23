@@ -190,10 +190,12 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     db.track_funnel_event(campaign.id, user.id, "membership_check_started", first_source)
+    db.track_funnel_event(campaign.id, user.id, "entry_initial_membership_started", first_source)
     try:
         is_member = await telegram_membership(context.bot, settings, user.id)
     except TelegramError:
         db.track_funnel_event(campaign.id, user.id, "membership_check_error", first_source)
+        db.track_funnel_event(campaign.id, user.id, "entry_initial_membership_error", first_source)
         log.exception("Could not check contest-entry membership for %s", user.id)
         await update.message.reply_text(
             "فعلاً نتونستم عضویتت رو بررسی کنم. چند لحظه دیگه دوباره امتحان کن."
@@ -204,6 +206,12 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         campaign.id,
         user.id,
         "membership_check_passed" if is_member else "membership_check_failed",
+        first_source,
+    )
+    db.track_funnel_event(
+        campaign.id,
+        user.id,
+        "entry_initial_membership_passed" if is_member else "entry_initial_membership_failed",
         first_source,
     )
     db.track_funnel_event(campaign.id, user.id, "entry_screen_shown", first_source)
@@ -219,6 +227,7 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML,
         reply_markup=_entry_keyboard(settings.channel_url, campaign.id, is_member),
     )
+    db.track_funnel_event(campaign.id, user.id, "entry_screen_delivered", first_source)
 
 
 async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -244,10 +253,12 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     source = _first_source_for_user(db, campaign.id, user.id)
     db.track_funnel_event(campaign.id, user.id, "entry_cta_clicked", source)
     db.track_funnel_event(campaign.id, user.id, "membership_check_started", source)
+    db.track_funnel_event(campaign.id, user.id, "entry_cta_membership_started", source)
     try:
         is_member = await _membership_with_retry(context, settings, user.id)
     except TelegramError:
         db.track_funnel_event(campaign.id, user.id, "membership_check_error", source)
+        db.track_funnel_event(campaign.id, user.id, "entry_cta_membership_error", source)
         log.exception("Could not verify contest-entry membership for %s", user.id)
         await query.answer("بررسی عضویت ممکن نشد. چند لحظه بعد دوباره امتحان کن.", show_alert=True)
         return
@@ -256,6 +267,12 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         campaign.id,
         user.id,
         "membership_check_passed" if is_member else "membership_check_failed",
+        source,
+    )
+    db.track_funnel_event(
+        campaign.id,
+        user.id,
+        "entry_cta_membership_passed" if is_member else "entry_cta_membership_failed",
         source,
     )
     if not is_member:
@@ -268,10 +285,12 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         link = await get_or_create_link(context, campaign, user)
     except Exception:
+        db.track_funnel_event(campaign.id, user.id, "entry_link_creation_error", source)
         log.exception("Could not create promotional participant link for %s", user.id)
         await query.answer("ساخت لینک با خطا روبه‌رو شد. دوباره امتحان کن.", show_alert=True)
         return
 
+    db.track_funnel_event(campaign.id, user.id, "entry_link_created", source)
     db.track_funnel_event(campaign.id, user.id, "entered_contest", source)
     db.track_funnel_event(campaign.id, user.id, "link_created", source)
 
