@@ -2,7 +2,7 @@
 Description=AlanChande Iran gold daily
 
 [Timer]
-OnCalendar=*-*-* 20:20:00 Asia/Tehran
+OnCalendar=*-*-* 09:30:00 Asia/Tehran
 Persistent=false
 Unit=channel-split-production@alanchande-iran-gold.service
 
