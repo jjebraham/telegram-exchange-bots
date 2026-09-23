@@ -135,7 +135,12 @@ def main() -> int:
         print("Keep the legacy bot stopped until destination is updated.")
         return 0
 
-    if path.stat() != original_stat:
+    current_stat = path.stat()
+    if (
+        current_stat.st_ino != original_stat.st_ino
+        or current_stat.st_size != original_stat.st_size
+        or current_stat.st_mtime_ns != original_stat.st_mtime_ns
+    ):
         raise RuntimeError("Source changed while preparing migration; aborting")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
