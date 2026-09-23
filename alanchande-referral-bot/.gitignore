@@ -1,0 +1,7 @@
+*.db
+*.db-shm
+*.db-wal
+.venv/
+
+# Track this bot's environment-based configuration module.
+!telegram_bot/config.py
