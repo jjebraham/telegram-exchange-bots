@@ -67,12 +67,12 @@ def validate_adonis_page_freshness(
     local_now = current.astimezone(ADONIS_LOCAL_TZ)
     page_text = _text_from_html(raw_html)
 
-    update_heading = re.search(r"\\bLast\\s+update\\b", page_text, re.IGNORECASE)
+    update_heading = re.search(r"\bLast\s+update\b", page_text, re.IGNORECASE)
     if not update_heading:
         raise ValueError("Adonis page has no Last update field")
 
     date_match = re.search(
-        r"\\b20\\d{2}-\\d{2}-\\d{2}\\b",
+        r"\b20\d{2}-\d{2}-\d{2}\b",
         page_text[: update_heading.start()],
     )
     if not date_match:
@@ -88,7 +88,7 @@ def validate_adonis_page_freshness(
 
     update_text = page_text[update_heading.end() : update_heading.end() + 100]
     match = re.match(
-        r"\\s*(\\d+)\\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\\s+ago\\b",
+        r"\s*(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\s+ago\b",
         update_text,
         re.IGNORECASE,
     )
@@ -103,7 +103,7 @@ def validate_adonis_page_freshness(
             age = timedelta(hours=quantity)
         else:
             age = timedelta(days=quantity)
-    elif re.match(r"\\s*just\\s+now\\b", update_text, re.IGNORECASE):
+    elif re.match(r"\s*just\s+now\b", update_text, re.IGNORECASE):
         age = timedelta(0)
     else:
         raise ValueError("Adonis page has an unrecognized Last update age")
