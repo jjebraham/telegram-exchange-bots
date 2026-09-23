@@ -77,7 +77,7 @@ class KianiPostTests(unittest.TestCase):
         }
         now = datetime(
             2026, 9, 23, 17, 45,
-            tzinfo=ZoneInfo("Europe/Istanbul"),
+            tzinfo=ZoneInfo("Asia/Tehran"),
         )
         post = build_kiani_remittance_post(rate_board, now=now)
 
@@ -95,6 +95,18 @@ class KianiPostTests(unittest.TestCase):
         self.assertIn("https://wa.me/905392905686", post)
         self.assertNotIn("@alanchande_com", post)
         self.assertNotIn("📆 چهارشنبه ۱ مهر ۱۴۰۵", post)
+
+    def test_remittance_post_converts_istanbul_input_to_tehran(self):
+        rates = {
+            code: Decimal("1000")
+            for code in ("USD", "EUR", "GBP", "CAD", "AUD", "SEK", "TRY")
+        }
+        now = datetime(
+            2026, 9, 23, 17, 15,
+            tzinfo=ZoneInfo("Europe/Istanbul"),
+        )
+        post = build_kiani_remittance_post(rates, now=now)
+        self.assertIn("چهارشنبه ۱ مهر · ⏰ ۱۷:۴۵", post)
 
     def test_remittance_post_requires_all_seven_distinct_rates(self):
         with self.assertRaisesRegex(ValueError, "Missing Kiani remittance rates"):
