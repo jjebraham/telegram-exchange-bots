@@ -3,7 +3,7 @@ Description=Kiani TRY to toman example daily
 
 [Timer]
 OnCalendar=*-*-* 11:15:00 Asia/Tehran
-Persistent=true
+Persistent=false
 Unit=channel-split-production@kiani-examples.service
 
 [Install]
