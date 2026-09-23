@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 PERSIAN_WEEKDAYS = (
     "دوشنبه",
@@ -195,11 +196,12 @@ def build_kiani_remittance_post(
     Rates must come from the existing remittance-rate source of truth.
     Do not substitute open-market or Kiani retail buy/sell quotes.
     This pure formatter does not fetch rates or select a channel.
+    Timestamps use Tehran time, matching the existing Hawala scheduler.
     """
     missing = [code for code, _, _ in REMITTANCE_CURRENCIES if code not in rates]
     if missing:
         raise ValueError("Missing Kiani remittance rates: " + ", ".join(missing))
-    local = (now or datetime.now(ISTANBUL_TZ)).astimezone(ISTANBUL_TZ)
+    local = (now or datetime.now(TEHRAN_TZ)).astimezone(TEHRAN_TZ)
     _, month, day = gregorian_to_jalali(
         local.year, local.month, local.day
     )
