@@ -154,6 +154,7 @@ class OfficialBankVerifierTests(unittest.TestCase):
         self.assertEqual(first["channel"], "Internet")
         self.assertEqual(first["client-type"], "ArkClient")
         self.assertEqual(first["dialect"], "TR")
+        self.assertEqual(first["ip"], "127.0.0.1")
         self.assertEqual(first["tenant-company-id"], "GAR")
         self.assertEqual(first["tenant-geolocation"], "TUR")
         self.assertEqual(first["guid"], first["x-client-trace-id"])
@@ -231,6 +232,7 @@ class OfficialBankVerifierTests(unittest.TestCase):
         self.assertEqual(json.loads(request.data), payload)
         self.assertEqual(headers["client-id"], "public-config-client-id")
         self.assertEqual(headers["guid"], headers["x-client-trace-id"])
+        self.assertEqual(headers["ip"], "127.0.0.1")
         self.assertNotIn("authorization", headers)
         self.assertNotIn("cookie", headers)
 
