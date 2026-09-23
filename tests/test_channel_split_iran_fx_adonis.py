@@ -88,7 +88,8 @@ class AdonisTryTests(unittest.TestCase):
                 super().__init__(body.encode("utf-8"))
                 self.headers = Message()
 
-        stale_html = self._dated_page(age="3 hours ago")
+        today = datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
+        stale_html = self._dated_page(age="3 hours ago", date=today)
         with patch(
             "iran_fx_adonis.urlopen",
             return_value=FakeResponse(stale_html),
