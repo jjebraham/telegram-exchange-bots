@@ -2,11 +2,13 @@ import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
 from official_bank_verifier import (  # noqa: E402
+    _discover_garanti_expanded_rate_url,
     _find_string_by_key,
     parse_garanti_quote,
     parse_isbank_midpoint,
@@ -56,6 +58,63 @@ class OfficialBankVerifierTests(unittest.TestCase):
                 "currency-management-pb/example"
             ),
         )
+
+    def test_garanti_flattened_config_discovers_exact_property(self):
+        endpoint = (
+            "https://customers.garantibbva.com.tr/"
+            "currency-management-pb/expanded-rates"
+        )
+        payload = {
+            "source": {
+                "app_properties.common.expandedCurrRateServicePath": endpoint,
+                "app_properties.common.baseUrl": "https://example.invalid",
+            }
+        }
+        self.assertEqual(
+            _find_string_by_key(payload, "expandedCurrRateServicePath"),
+            endpoint,
+        )
+        with patch("official_bank_verifier._fetch_json", return_value=payload):
+            self.assertEqual(_discover_garanti_expanded_rate_url(), endpoint)
+
+    def test_garanti_flattened_config_still_rejects_unofficial_host(self):
+        payload = {
+            "source": {
+                "app_properties.common.expandedCurrRateServicePath": (
+                    "https://unrelated.example/expanded-rates"
+                )
+            }
+        }
+        with patch("official_bank_verifier._fetch_json", return_value=payload):
+            with self.assertRaisesRegex(ValueError, "escaped official host"):
+                _discover_garanti_expanded_rate_url()
+
+    def test_garanti_flattened_key_requires_exact_segment(self):
+        payload = {
+            "source": {
+                "app_properties.common.notexpandedCurrRateServicePath": (
+                    "https://customers.garantibbva.com.tr/incorrect"
+                )
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "missing"):
+            _find_string_by_key(payload, "expandedCurrRateServicePath")
+
+    def test_garanti_conflicting_flat_and_nested_keys_fail_closed(self):
+        payload = {
+            "source": {
+                "app_properties.common.expandedCurrRateServicePath": (
+                    "https://customers.garantibbva.com.tr/a"
+                )
+            },
+            "fallback": {
+                "expandedCurrRateServicePath": (
+                    "https://customers.garantibbva.com.tr/b"
+                )
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "multiple"):
+            _find_string_by_key(payload, "expandedCurrRateServicePath")
 
     def test_garanti_config_duplicate_service_keys_fail_closed(self):
         payload = {
