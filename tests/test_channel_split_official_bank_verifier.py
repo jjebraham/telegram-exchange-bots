@@ -151,6 +151,12 @@ class OfficialBankVerifierTests(unittest.TestCase):
         first = _garanti_public_request_headers(config)
         second = _garanti_public_request_headers(config)
         self.assertEqual(first["client-id"], "public-config-client-id")
+        self.assertEqual(first["Accept"], "application/json")
+        self.assertEqual(first["Accept-Language"], "en-GB,en;q=0.8")
+        self.assertIn("Chrome/153.0.0.0", first["User-Agent"])
+        self.assertEqual(first["Authorization"], "")
+        self.assertEqual(first["state"], "")
+        self.assertEqual(first["tenant-app-id"], "")
         self.assertEqual(first["channel"], "Internet")
         self.assertEqual(first["client-type"], "ArkClient")
         self.assertEqual(first["dialect"], "TR")
@@ -165,7 +171,7 @@ class OfficialBankVerifierTests(unittest.TestCase):
             first["client-session-id"], second["client-session-id"]
         )
         self.assertNotIn("Cookie", first)
-        self.assertNotIn("Authorization", first)
+        self.assertEqual(first["Authorization"], "")
 
     def test_garanti_missing_public_client_id_fails_closed(self):
         config = {
@@ -233,7 +239,12 @@ class OfficialBankVerifierTests(unittest.TestCase):
         self.assertEqual(headers["client-id"], "public-config-client-id")
         self.assertEqual(headers["guid"], headers["x-client-trace-id"])
         self.assertEqual(headers["ip"], "127.0.0.1")
-        self.assertNotIn("authorization", headers)
+        self.assertEqual(headers["authorization"], "")
+        self.assertEqual(headers["state"], "")
+        self.assertEqual(headers["tenant-app-id"], "")
+        self.assertEqual(headers["accept"], "application/json")
+        self.assertEqual(headers["accept-language"], "en-GB,en;q=0.8")
+        self.assertIn("Chrome/153.0.0.0", headers["user-agent"])
         self.assertNotIn("cookie", headers)
 
     def test_garanti_parses_official_expanded_rate_row(self):
