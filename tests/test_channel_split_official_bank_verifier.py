@@ -1,3 +1,5 @@
+import io
+import json
 import sys
 import unittest
 from decimal import Decimal
@@ -10,6 +12,9 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 from official_bank_verifier import (  # noqa: E402
     _discover_garanti_expanded_rate_url,
     _find_string_by_key,
+    _garanti_public_request_headers,
+    _fetch_json_post,
+    fetch_garanti_quote,
     parse_garanti_quote,
     parse_isbank_midpoint,
     parse_kuveyt_quote,
@@ -126,6 +131,108 @@ class OfficialBankVerifierTests(unittest.TestCase):
                 payload,
                 "expandedCurrRateServicePath",
             )
+
+    def _garanti_public_config(self):
+        return {
+            "source": {
+                "app_properties.common.expandedCurrRateServicePath": (
+                    "https://customers.garantibbva.com.tr/"
+                    "currency-management-pb/currency-management-public/"
+                    "v0/expanded-curr-rate/curr-rate"
+                ),
+                "app_properties.application.components.authentication.clientId": (
+                    "public-config-client-id"
+                ),
+            }
+        }
+
+    def test_garanti_public_headers_use_config_and_ephemeral_ids(self):
+        config = self._garanti_public_config()
+        first = _garanti_public_request_headers(config)
+        second = _garanti_public_request_headers(config)
+        self.assertEqual(first["client-id"], "public-config-client-id")
+        self.assertEqual(first["channel"], "Internet")
+        self.assertEqual(first["client-type"], "ArkClient")
+        self.assertEqual(first["dialect"], "TR")
+        self.assertEqual(first["tenant-company-id"], "GAR")
+        self.assertEqual(first["tenant-geolocation"], "TUR")
+        self.assertEqual(first["guid"], first["x-client-trace-id"])
+        self.assertEqual(len(first["guid"]), 32)
+        self.assertEqual(len(first["client-session-id"].split("-")), 5)
+        self.assertNotEqual(first["guid"], second["guid"])
+        self.assertNotEqual(
+            first["client-session-id"], second["client-session-id"]
+        )
+        self.assertNotIn("Cookie", first)
+        self.assertNotIn("Authorization", first)
+
+    def test_garanti_missing_public_client_id_fails_closed(self):
+        config = {
+            "source": {
+                "app_properties.common.expandedCurrRateServicePath": (
+                    "https://customers.garantibbva.com.tr/rates"
+                )
+            }
+        }
+        with patch("official_bank_verifier._fetch_json", return_value=config):
+            with patch("official_bank_verifier._fetch_json_post") as post:
+                with self.assertRaisesRegex(ValueError, "missing clientId"):
+                    fetch_garanti_quote("USD/TRY")
+                post.assert_not_called()
+
+    def test_garanti_live_fetch_builds_public_request_metadata(self):
+        config = self._garanti_public_config()
+        official_response = {
+            "expandedCurrRateRespons": [
+                {
+                    "currCode": "USD",
+                    "exchBuyRate": "48.01",
+                    "exchSellRate": "49.21",
+                }
+            ]
+        }
+        with patch("official_bank_verifier._fetch_json", return_value=config) as get:
+            with patch(
+                "official_bank_verifier._fetch_json_post",
+                return_value=official_response,
+            ) as post:
+                self.assertEqual(
+                    fetch_garanti_quote("USD/TRY"),
+                    (Decimal("48.01"), Decimal("49.21")),
+                )
+        get.assert_called_once()
+        args, kwargs = post.call_args
+        self.assertTrue(args[0].startswith("https://customers.garantibbva.com.tr/"))
+        self.assertEqual(args[1]["parityParamName"], "DOVIZ_PUBLIC")
+        self.assertEqual(args[1]["latencyValue"], 1800)
+        self.assertEqual(kwargs["referer"], "https://webforms.garantibbva.com.tr/")
+        self.assertEqual(kwargs["extra_headers"]["client-id"], "public-config-client-id")
+        self.assertEqual(
+            kwargs["extra_headers"]["guid"],
+            kwargs["extra_headers"]["x-client-trace-id"],
+        )
+
+    def test_post_passes_public_headers_without_cookies_or_auth(self):
+        payload = {"parityParamName": "DOVIZ_PUBLIC"}
+        extra = _garanti_public_request_headers(self._garanti_public_config())
+        fake_reply = io.BytesIO(b'{"ok": true}')
+        with patch("official_bank_verifier.urlopen", return_value=fake_reply) as send:
+            result = _fetch_json_post(
+                "https://customers.garantibbva.com.tr/test",
+                payload,
+                extra_headers=extra,
+                origin="https://webforms.garantibbva.com.tr",
+                referer="https://webforms.garantibbva.com.tr/",
+            )
+        self.assertEqual(result, {"ok": True})
+        request = send.call_args.args[0]
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(json.loads(request.data), payload)
+        self.assertEqual(headers["client-id"], "public-config-client-id")
+        self.assertEqual(headers["guid"], headers["x-client-trace-id"])
+        self.assertNotIn("authorization", headers)
+        self.assertNotIn("cookie", headers)
 
     def test_garanti_parses_official_expanded_rate_row(self):
         payload = {
