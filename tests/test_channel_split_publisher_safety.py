@@ -215,6 +215,70 @@ class PublisherSafetyModeTests(unittest.TestCase):
             self.assertIn("VERIFIED", status)
             self.assertIn("published=1", status)
 
+    def test_iran_fx_three_source_consensus_rejects_tgju_try_outlier(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            tgju = {"TRY": Decimal("4866")}
+            pashizi = {"TRY": Decimal("4750")}
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_iran_open_market_fx",
+                    return_value=tgju,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_pashizi_iran_fx",
+                    return_value=pashizi,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_adonis_try_sell_toman",
+                    return_value=Decimal("4741"),
+                ),
+                patch.object(
+                    publish_channels,
+                    "build_iran_fx_post",
+                    return_value="IRAN-FX",
+                ) as build_iran_fx_post,
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                    return_value={"ok": True},
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_published_values",
+                    return_value="2026-09-23T00:00:00+00:00",
+                ) as record_published_values,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_called_once()
+
+            published_rates = build_iran_fx_post.call_args.args[0]
+            self.assertEqual(
+                published_rates["TRY"],
+                Decimal("4745.5"),
+            )
+
+            history_values = record_published_values.call_args.args[2]
+            self.assertEqual(
+                history_values["TRY"],
+                Decimal("4745.5"),
+            )
+
+            status = recent_safety_status(db)
+            self.assertIn("VERIFIED", status)
+            self.assertIn("rejected outlier source(s): tgju=4866", status)
+
     def test_iran_gold_external_consensus_allows_enforce_publish(self):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
