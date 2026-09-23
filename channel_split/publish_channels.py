@@ -77,6 +77,7 @@ from official_bank_verifier import (
 )
 from admin_alerts import maybe_notify_admin, maybe_notify_source_health
 from market_safety import (
+    VERIFIED,
     PostSafetyAssessment,
     SafetyObservation,
     SourceHealthEvent,
