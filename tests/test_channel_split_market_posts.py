@@ -226,7 +226,8 @@ class MarketPostTests(unittest.TestCase):
 
         post = build_iran_gold_post(market, previous)
         self.assertIn("+4.35%", post)
-        self.assertIn("+4.35%", post)
+        self.assertNotIn("<code>+4.35%</code>", post)
+        self.assertNotIn("<code>0.00%</code>", post)
 
     @staticmethod
     def _usdt_row(name, sell, buy, change, date_time):
