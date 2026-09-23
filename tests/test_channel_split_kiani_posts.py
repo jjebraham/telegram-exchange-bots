@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 
 from kiani_posts import (  # noqa: E402
     build_kiani_rate_post,
+    build_kiani_remittance_post,
     build_kiani_toman_receive_post,
     build_kiani_try_post,
     build_kiani_try_receive_post,
@@ -63,6 +64,51 @@ class KianiPostTests(unittest.TestCase):
         self.assertIn("🔁 لیر ← تتر: <b>49.59</b> لیر", post)
         self.assertIn("🔁 تتر ← لیر: <b>47.65</b> لیر", post)
         self.assertIn("<code>19:08</code> استانبول", post)
+
+    def test_remittance_post_uses_kiani_channel_style_and_all_seven_rates(self):
+        rate_board = {
+            "USD": Decimal("225100"),
+            "EUR": Decimal("257700"),
+            "GBP": Decimal("300400"),
+            "CAD": Decimal("160000"),
+            "AUD": Decimal("160100"),
+            "SEK": Decimal("22900"),
+            "TRY": Decimal("4610"),
+        }
+        now = datetime(
+            2026, 9, 23, 17, 45,
+            tzinfo=ZoneInfo("Europe/Istanbul"),
+        )
+        post = build_kiani_remittance_post(rate_board, now=now)
+
+        self.assertIn("💸 <b>نرخ حواله به ایران</b>", post)
+        self.assertIn("چهارشنبه ۱ مهر · ⏰ ۱۷:۴۵", post)
+        self.assertIn("🇺🇸 دلار آمریکا　<code>۲۲۵٬۱۰۰</code>", post)
+        self.assertIn("🇪🇺 یورو　<code>۲۵۷٬۷۰۰</code>", post)
+        self.assertIn("🇬🇧 پوند انگلیس　<code>۳۰۰٬۴۰۰</code>", post)
+        self.assertIn("🇨🇦 دلار کانادا　<code>۱۶۰٬۰۰۰</code>", post)
+        self.assertIn("🇦🇺 دلار استرالیا　<code>۱۶۰٬۱۰۰</code>", post)
+        self.assertIn("🇸🇪 کرون سوئد　<code>۲۲٬۹۰۰</code>", post)
+        self.assertIn("🇹🇷 لیر ترکیه　<code>۴٬۶۱۰</code>", post)
+        self.assertIn("@Kianiexchangebot", post)
+        self.assertIn("https://t.me/TL905411603664", post)
+        self.assertIn("https://wa.me/905392905686", post)
+        self.assertNotIn("@alanchande_com", post)
+        self.assertNotIn("📆 چهارشنبه ۱ مهر ۱۴۰۵", post)
+
+    def test_remittance_post_requires_all_seven_distinct_rates(self):
+        with self.assertRaisesRegex(ValueError, "Missing Kiani remittance rates"):
+            build_kiani_remittance_post({"USD": Decimal("225100")})
+
+    def test_remittance_post_rejects_invalid_prices(self):
+        rate_board = {
+            code: Decimal("1000")
+            for code in ("USD", "EUR", "GBP", "CAD", "AUD", "SEK", "TRY")
+        }
+        for invalid in (Decimal("0"), Decimal("-1"), Decimal("NaN"), Decimal("1.5")):
+            with self.subTest(invalid=str(invalid)):
+                with self.assertRaisesRegex(ValueError, "Remittance rates"):
+                    build_kiani_remittance_post({**rate_board, "TRY": invalid})
 
     def test_try_receive_examples_use_fixed_ltr_table(self):
         post = build_kiani_try_receive_post(self.rates)
