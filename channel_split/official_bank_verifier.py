@@ -249,9 +249,10 @@ def parse_garanti_quote(
 def _find_string_by_key(payload: object, target_key: str) -> str:
     """Find a unique non-empty string value by key anywhere in JSON.
 
-    Garanti has changed/wrapped the public config structure over time. The
-    public app still identifies the service by the stable semantic key, so use
-    that key rather than depending on one exact object nesting path.
+    Garanti's public config may use either nested dicts or flattened dotted
+    property names, e.g. "app_properties.common.expandedCurrRateServicePath".
+    Match only the complete final property segment and reject conflicting
+    matches rather than guessing which official endpoint to trust.
     """
     matches: list[str] = []
 
@@ -259,7 +260,7 @@ def _find_string_by_key(payload: object, target_key: str) -> str:
         if isinstance(value, dict):
             for key, child in value.items():
                 if (
-                    key == target_key
+                    (key == target_key or key.endswith("." + target_key))
                     and isinstance(child, str)
                     and child.strip()
                 ):
