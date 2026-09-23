@@ -108,7 +108,7 @@ class DailyLauncherTests(unittest.TestCase):
         self.assertIn("ALANCHANDE_CHANNEL_ID=@alanchande_com", script)
         self.assertIn("KIANI_CHANNEL_ID=@ExchangeKiani", script)
         self.assertIn("MARKET_SAFETY_MODE=enforce", script)
-        self.assertIn("MARKET_HISTORY_DB=market_history.sqlite3", script)
+        self.assertIn("MARKET_HISTORY_DB=market_history_production.sqlite3", script)
         self.assertIn("flock -n 9", script)
         self.assertIn("ExecStart=/bin/bash", service)
 
