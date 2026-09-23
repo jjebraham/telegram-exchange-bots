@@ -3,7 +3,7 @@ Description=AlanChande Iran FX hourly 09-21 Tehran
 
 [Timer]
 OnCalendar=*-*-* 09..21:00:00 Asia/Tehran
-Persistent=true
+Persistent=false
 Unit=channel-split-production@alanchande-iran-fx.service
 
 [Install]
