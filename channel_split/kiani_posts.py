@@ -158,6 +158,81 @@ def build_kiani_rate_post(
     )
 
 
+REMITTANCE_CURRENCIES = (
+    ("USD", "🇺🇸", "دلار آمریکا"),
+    ("EUR", "🇪🇺", "یورو"),
+    ("GBP", "🇬🇧", "پوند انگلیس"),
+    ("CAD", "🇨🇦", "دلار کانادا"),
+    ("AUD", "🇦🇺", "دلار استرالیا"),
+    ("SEK", "🇸🇪", "کرون سوئد"),
+    ("TRY", "🇹🇷", "لیر ترکیه"),
+)
+
+PERSIAN_DIGITS = str.maketrans(
+    "0123456789,", "۰۱۲۳۴۵۶۷۸۹٬"
+)
+
+
+def _fmt_persian_toman(value: Decimal) -> str:
+    amount = Decimal(str(value))
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("Remittance rates must be finite and positive")
+    if amount != amount.to_integral_value():
+        raise ValueError("Remittance rates must be whole toman")
+    return f"{int(amount):,}".translate(PERSIAN_DIGITS)
+
+
+def build_kiani_remittance_post(
+    rates: dict[str, Decimal],
+    *,
+    now: datetime | None = None,
+    order_handle: str = "@Kianiexchangebot",
+    telegram_url: str = "https://t.me/TL905411603664",
+    whatsapp_url: str = "https://wa.me/905392905686",
+) -> str:
+    """Format the separate seven-currency Kiani remittance-rate board.
+
+    Rates must come from the existing remittance-rate source of truth.
+    Do not substitute open-market or Kiani retail buy/sell quotes.
+    This pure formatter does not fetch rates or select a channel.
+    """
+    missing = [code for code, _, _ in REMITTANCE_CURRENCIES if code not in rates]
+    if missing:
+        raise ValueError("Missing Kiani remittance rates: " + ", ".join(missing))
+    local = (now or datetime.now(ISTANBUL_TZ)).astimezone(ISTANBUL_TZ)
+    _, month, day = gregorian_to_jalali(
+        local.year, local.month, local.day
+    )
+    weekday = PERSIAN_WEEKDAYS[local.weekday()]
+    date_text = (
+        f"{weekday} {day} {JALALI_MONTHS[month]}"
+        .translate(PERSIAN_DIGITS)
+    )
+    time_text = local.strftime("%H:%M").translate(PERSIAN_DIGITS)
+    lines = [
+        "💸 <b>نرخ حواله به ایران</b>",
+        f"📆 {date_text} · ⏰ {time_text}",
+        "━━━━━━━━━━━━━━",
+        "",
+    ]
+    for code, flag, label in REMITTANCE_CURRENCIES:
+        amount = _fmt_persian_toman(rates[code])
+        lines.append(f"{flag} {label}　<code>{amount}</code>")
+    telegram_link = html.escape(telegram_url, quote=True)
+    whatsapp_link = html.escape(whatsapp_url, quote=True)
+    lines.extend([
+        "",
+        "💰 نرخ‌ها به تومان است",
+        "━━━━━━━━━━━━━━",
+        f"📲 نرخ لحظه‌ای و سایر ارزها: {html.escape(order_handle)}",
+        (
+            f'✈️ <a href="{telegram_link}">تلگرام</a>'
+            f'  |  💬 <a href="{whatsapp_link}">واتس‌اپ</a>'
+        ),
+    ])
+    return "\n".join(lines)
+
+
 def build_kiani_try_receive_post(
     rates: dict[str, Decimal],
     *,
