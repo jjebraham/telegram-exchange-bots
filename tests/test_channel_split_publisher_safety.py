@@ -418,6 +418,89 @@ class PublisherSafetyModeTests(unittest.TestCase):
                 Decimal("49.6751"),
             )
 
+    def test_send_failure_does_not_stop_later_post_or_advance_failed_history(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "bank-comparisons"]
+            usd = BankQuote(
+                name="Kapalıçarşı",
+                buy=Decimal("48.69"),
+                sell=Decimal("48.71"),
+            )
+            eur = BankQuote(
+                name="Kapalıçarşı",
+                buy=Decimal("55.80"),
+                sell=Decimal("55.82"),
+            )
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_usd_comparison",
+                    return_value=[usd],
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_eur_comparison",
+                    return_value=[eur],
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_altinkaynak_currency_quotes",
+                    return_value={
+                        "USD/TRY": (Decimal("48.69"), Decimal("48.71")),
+                        "EUR/TRY": (Decimal("55.80"), Decimal("55.82")),
+                    },
+                ),
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                    side_effect=[
+                        RuntimeError("first send failed"),
+                        {"ok": True},
+                    ],
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_bank_fx_quotes",
+                    return_value="2026-09-23T00:00:00+00:00",
+                ) as record_bank_fx_quotes,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 1)
+            self.assertEqual(telegram_send.call_count, 2)
+
+            # The failed USD send must not enter history; the later successful
+            # EUR send must still be recorded.
+            record_bank_fx_quotes.assert_called_once()
+            self.assertEqual(
+                record_bank_fx_quotes.call_args.args[1],
+                "EUR/TRY",
+            )
+            self.assertIsNone(
+                load_last_accepted(
+                    db,
+                    "bank:USD/TRY:Kapalıçarşı:buy",
+                )
+            )
+            self.assertEqual(
+                load_last_accepted(
+                    db,
+                    "bank:EUR/TRY:Kapalıçarşı:buy",
+                ),
+                Decimal("55.80"),
+            )
+            self.assertIn(
+                "1 Telegram send(s) failed after all eligible jobs were attempted",
+                stderr.getvalue(),
+            )
+
+
     def test_enforce_verified_post_is_sent_and_becomes_baseline(self):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
