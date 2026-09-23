@@ -40,6 +40,7 @@ from iran_gold import build_iran_gold_post, fetch_iran_gold_market
 from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
+from iran_fx_adonis import fetch_adonis_try_sell_toman
 from iran_fx_pashizi import fetch_pashizi_iran_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from kiani_shared_pricing import (
@@ -378,6 +379,10 @@ def main() -> int:
     iran_fx_external_cache: dict[str, Decimal] | None = None
     iran_fx_external_attempted = False
     iran_fx_external_error: str | None = None
+    iran_fx_adonis_try_cache: Decimal | None = None
+    iran_fx_adonis_attempted = False
+    iran_fx_adonis_error: str | None = None
+    iran_fx_publish_cache: dict[str, Decimal] | None = None
     iran_gold_cache: Any | None = None
     iran_gold_external_cache: dict[str, Decimal] | None = None
     iran_gold_external_attempted = False
@@ -571,6 +576,34 @@ def main() -> int:
                 )
 
         return iran_fx_external_cache or {}
+
+    def get_iran_fx_adonis_try_safe() -> Decimal | None:
+        nonlocal iran_fx_adonis_try_cache
+        nonlocal iran_fx_adonis_attempted
+        nonlocal iran_fx_adonis_error
+
+        if not iran_fx_adonis_attempted:
+            iran_fx_adonis_attempted = True
+            try:
+                iran_fx_adonis_try_cache = fetch_adonis_try_sell_toman()
+                note_source_health("iran:adonis-try", True)
+            except Exception as exc:
+                iran_fx_adonis_try_cache = None
+                iran_fx_adonis_error = (
+                    f"adonis-try: {type(exc).__name__}: {exc}"
+                )[:240]
+                note_source_health(
+                    "iran:adonis-try",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                print(
+                    f"WARNING: Adonis TRY verifier unavailable: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+
+        return iran_fx_adonis_try_cache
 
     def get_iran_gold() -> Any:
         nonlocal iran_gold_cache
@@ -1084,7 +1117,68 @@ def main() -> int:
         return text, assessment
 
     def build_safe_iran_fx() -> tuple[str, PostSafetyAssessment]:
+        nonlocal iran_fx_publish_cache
+
         rates = get_iran_fx()
+        external = get_iran_fx_external_safe()
+        adonis_try = get_iran_fx_adonis_try_safe()
+
+        observations = []
+        for code, value in rates.items():
+            source_values: dict[str, Decimal] = {"tgju": value}
+            unavailable: list[str] = []
+
+            if code in external:
+                source_values["pashizi"] = external[code]
+            elif iran_fx_external_error:
+                unavailable.append(iran_fx_external_error)
+
+            if code == "TRY":
+                if adonis_try is not None:
+                    source_values["adonis"] = adonis_try
+                elif iran_fx_adonis_error:
+                    unavailable.append(iran_fx_adonis_error)
+
+            observations.append(
+                SafetyObservation(
+                    market_key=f"iran-fx:{code}/TOMAN",
+                    source_values=source_values,
+                    min_sources=2,
+                    max_source_deviation_pct=Decimal("2.00"),
+                    suspicious_move_pct=Decimal("6.00"),
+                    strong_quorum=3,
+                    unavailable_sources=tuple(unavailable),
+                )
+            )
+
+        assessment = assess_post(
+            history_db,
+            "iran-fx",
+            observations,
+        )
+
+        # Publish the verified consensus reference rather than blindly using
+        # the TGJU display value. This matters when two independent sources
+        # agree and one provider is rejected as an outlier.
+        check_by_code = {
+            check.market_key.split(":", 1)[1].split("/", 1)[0]: check
+            for check in assessment.checks
+            if check.market_key.startswith("iran-fx:")
+        }
+        publish_rates: dict[str, Decimal] = {}
+        for code, raw_value in rates.items():
+            check = check_by_code.get(code)
+            if (
+                check is not None
+                and check.decision == VERIFIED
+                and check.reference_value is not None
+            ):
+                publish_rates[code] = check.reference_value
+            else:
+                publish_rates[code] = raw_value
+
+        iran_fx_publish_cache = publish_rates
+
         previous_24h = load_published_values_near_age(
             history_db,
             "iran-fx",
@@ -1100,38 +1194,9 @@ def main() -> int:
             max_age_hours=24 * 35,
         )
         text = build_iran_fx_post(
-            rates,
-            percentage_changes(rates, previous_24h),
-            percentage_changes(rates, previous_1m),
-        )
-        external = get_iran_fx_external_safe()
-        observations = [
-            SafetyObservation(
-                market_key=f"iran-fx:{code}/TOMAN",
-                source_values={
-                    **{"tgju": value},
-                    **(
-                        {"pashizi": external[code]}
-                        if code in external
-                        else {}
-                    ),
-                },
-                min_sources=2,
-                max_source_deviation_pct=Decimal("2.00"),
-                suspicious_move_pct=Decimal("6.00"),
-                strong_quorum=3,
-                unavailable_sources=(
-                    (iran_fx_external_error,)
-                    if iran_fx_external_error
-                    else ()
-                ),
-            )
-            for code, value in rates.items()
-        ]
-        assessment = assess_post(
-            history_db,
-            "iran-fx",
-            observations,
+            publish_rates,
+            percentage_changes(publish_rates, previous_24h),
+            percentage_changes(publish_rates, previous_1m),
         )
         return text, assessment
 
@@ -1525,10 +1590,14 @@ def main() -> int:
         print(f"recorded verified USDT snapshot -> {timestamp}")
 
     if "iran-fx" in verified_sent_market_posts:
+        if iran_fx_publish_cache is None:
+            raise RuntimeError(
+                "Verified Iran FX post has no consensus publish snapshot"
+            )
         timestamp = record_published_values(
             history_db,
             "iran-fx",
-            get_iran_fx(),
+            iran_fx_publish_cache,
         )
         print(f"recorded verified Iran FX snapshot -> {timestamp}")
 
