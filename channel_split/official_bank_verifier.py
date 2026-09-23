@@ -321,14 +321,26 @@ def _garanti_public_request_headers(config: object) -> dict[str, str]:
     session_hex = uuid4().hex[:20]
     session_id = "-".join(session_hex[i : i + 4] for i in range(0, 20, 4))
     return {
+        # Preserve the public converter's successful request profile.
+        # This is public request metadata only: no bearer token or cookie.
+        "Accept": "application/json",
+        "Accept-Language": "en-GB,en;q=0.8",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36"
+        ),
+        "Authorization": "",
+        "state": "",
+        "tenant-app-id": "",
         "channel": "Internet",
         "client-id": client_id,
         "client-session-id": session_id,
         "client-type": "ArkClient",
         "dialect": "TR",
         # Garanti's public converter sends this loopback placeholder as its
-        # application-level ip header (not the caller's network IP). Omitting
-        # the field returned HTTP 500; adding it made the public POST succeed.
+        # application-level ip header (not the caller's network IP). The
+        # observed successful request also needed the public headers above;
+        # adding ip alone to our former verifier did not resolve HTTP 500.
         "ip": "127.0.0.1",
         "guid": guid,
         "tenant-company-id": "GAR",
