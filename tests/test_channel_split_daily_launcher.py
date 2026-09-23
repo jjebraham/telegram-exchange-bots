@@ -140,6 +140,8 @@ class DailyLauncherTests(unittest.TestCase):
                 ROOT / "deploy" / "systemd" / filename
             ).read_text(encoding="utf-8")
             self.assertIn(schedule, timer)
+            self.assertIn("Persistent=false", timer)
+            self.assertNotIn("Persistent=true", timer)
 
 
 if __name__ == "__main__":
