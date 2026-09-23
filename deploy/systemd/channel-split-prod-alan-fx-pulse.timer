@@ -3,7 +3,7 @@ Description=AlanChande Turkey FX pulse daily
 
 [Timer]
 OnCalendar=*-*-* 16:20:00 Asia/Tehran
-Persistent=true
+Persistent=false
 Unit=channel-split-production@alanchande-fx-pulse.service
 
 [Install]
