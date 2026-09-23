@@ -96,6 +96,40 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(set(check.source_values), {"source-a", "source-b"})
         self.assertIn("rejected outlier", check.reason)
 
+    def test_three_source_tight_majority_rejects_near_threshold_outlier(self):
+        check = evaluate_observation(
+            SafetyObservation(
+                "iran-fx:TRY/TOMAN",
+                {
+                    "adonis": Decimal("4727"),
+                    "pashizi": Decimal("4735"),
+                    "tgju": Decimal("4826.5"),
+                },
+                min_sources=2,
+                max_source_deviation_pct=Decimal("2.00"),
+                strong_quorum=3,
+            )
+        )
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(set(check.source_values), {"adonis", "pashizi"})
+        self.assertEqual(check.reference_value, Decimal("4731"))
+        self.assertIn("rejected outlier source(s): tgju=4826.5", check.reason)
+
+    def test_two_source_disagreement_still_blocks(self):
+        check = evaluate_observation(
+            SafetyObservation(
+                "iran-fx:AZN/TOMAN",
+                {
+                    "pashizi": Decimal("133400"),
+                    "tgju": Decimal("137220"),
+                },
+                min_sources=2,
+                max_source_deviation_pct=Decimal("2.00"),
+            )
+        )
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("consensus spread is too wide", check.reason)
+
     def test_x10_unit_jump_blocks(self):
         check = evaluate_observation(
             SafetyObservation(
