@@ -46,6 +46,12 @@ def main() -> int:
         "TELEGRAM_BOT_TOKEN", "BOT_TOKEN", "HAWALA_BOT_TOKEN"
     )
     token = next((env.get(key) for key in secret_candidates if env.get(key)), None)
+    if not token:
+        extra_keys = sorted(
+            key for key in env if key.endswith("_BOT_TOKEN") and env.get(key)
+        )
+        if len(extra_keys) == 1:
+            token = env[extra_keys[0]]
     source = env.get("TELEGRAM_CHANNEL_ID")
     if not token or not source:
         raise RuntimeError(
@@ -53,6 +59,9 @@ def main() -> int:
             "Do not disclose tokens or switch the publisher."
         )
     try:
+        # Mirror the legacy bot's optional Telegram transport proxy.
+        if env.get("PROXY_URL"):
+            telebot.apihelper.proxy = {"https": env["PROXY_URL"]}
         bot = telebot.TeleBot(token, threaded=False)
         me = bot.get_me()
         current = bot.get_chat(int(source) if source.lstrip("-").isdigit() else source)
