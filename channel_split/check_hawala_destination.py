@@ -58,19 +58,32 @@ def main() -> int:
             "Cannot read active bot token/channel from process environment. "
             "Do not disclose tokens or switch the publisher."
         )
+    stage = "initialize Telegram client"
     try:
         # Mirror the legacy bot's optional Telegram transport proxy.
         if env.get("PROXY_URL"):
             telebot.apihelper.proxy = {"https": env["PROXY_URL"]}
         bot = telebot.TeleBot(token, threaded=False)
+        stage = "getMe (identify current Hawala bot)"
         me = bot.get_me()
+        print(f"Bot identity: @{me.username}")
+        stage = "getChat (current configured channel)"
         current = bot.get_chat(int(source) if source.lstrip("-").isdigit() else source)
+        print(f"Current destination: {current.id} @{current.username or '(private)'}")
+        stage = "getChat (@ExchangeKiani)"
         target = bot.get_chat("@ExchangeKiani")
+        print(f"Target: {target.id} @{target.username or '(private)'}")
+        stage = "getChatMember (target posting permission)"
         membership = bot.get_chat_member(target.id, me.id)
     except Exception as exc:
-        # Telebot errors may contain URL/token details; never echo the exception.
-        print("PREFLIGHT: FAILED — Telegram could not verify source or target.")
+        # Do not print exception messages: URLs and some network errors can
+        # include credentials. Stage and numeric HTTP code are sufficient.
+        print(f"PREFLIGHT: FAILED at {stage}.")
         print(f"Exception type: {type(exc).__name__}")
+        error_code = getattr(exc, "error_code", None)
+        if isinstance(error_code, int):
+            print(f"Telegram error code: {error_code}")
+        print("No messages were sent and no configuration was changed.")
         return 1
 
     status = str(membership.status)
