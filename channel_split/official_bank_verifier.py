@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from uuid import uuid4
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
@@ -285,8 +286,7 @@ def _find_string_by_key(payload: object, target_key: str) -> str:
     return unique[0]
 
 
-def _discover_garanti_expanded_rate_url(timeout: int = 20) -> str:
-    config = _fetch_json(GARANTI_CONFIG_URL, timeout)
+def _garanti_expanded_rate_url_from_config(config: object) -> str:
     endpoint = _find_string_by_key(
         config,
         "expandedCurrRateServicePath",
@@ -303,6 +303,36 @@ def _discover_garanti_expanded_rate_url(timeout: int = 20) -> str:
     return endpoint
 
 
+def _discover_garanti_expanded_rate_url(timeout: int = 20) -> str:
+    return _garanti_expanded_rate_url_from_config(
+        _fetch_json(GARANTI_CONFIG_URL, timeout)
+    )
+
+
+def _garanti_public_request_headers(config: object) -> dict[str, str]:
+    """Generate per-request public frontend metadata without session reuse.
+
+    The public converter's successful request supplies a client-id configured
+    by the site plus ephemeral tracing identifiers. Do not copy browser
+    cookies, authentication tokens, or another user's session identifiers.
+    """
+    client_id = _find_string_by_key(config, "clientId")
+    guid = uuid4().hex
+    session_hex = uuid4().hex[:20]
+    session_id = "-".join(session_hex[i : i + 4] for i in range(0, 20, 4))
+    return {
+        "channel": "Internet",
+        "client-id": client_id,
+        "client-session-id": session_id,
+        "client-type": "ArkClient",
+        "dialect": "TR",
+        "guid": guid,
+        "tenant-company-id": "GAR",
+        "tenant-geolocation": "TUR",
+        "x-client-trace-id": guid,
+    }
+
+
 def _fetch_json_post(
     url: str,
     payload: object,
@@ -310,6 +340,7 @@ def _fetch_json_post(
     timeout: int = 20,
     origin: str | None = None,
     referer: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> object:
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     headers = {
@@ -322,6 +353,8 @@ def _fetch_json_post(
         headers["Origin"] = origin
     if referer:
         headers["Referer"] = referer
+    if extra_headers:
+        headers.update(extra_headers)
 
     request = Request(
         url,
@@ -348,7 +381,9 @@ def fetch_garanti_quote(
     pair: str,
     timeout: int = 20,
 ) -> tuple[Decimal, Decimal]:
-    endpoint = _discover_garanti_expanded_rate_url(timeout)
+    config = _fetch_json(GARANTI_CONFIG_URL, timeout)
+    endpoint = _garanti_expanded_rate_url_from_config(config)
+    public_headers = _garanti_public_request_headers(config)
     request_payload = {
         "parityParamName": "DOVIZ_PUBLIC",
         "parityParamAttrName": "CURRENCIES",
@@ -368,10 +403,8 @@ def fetch_garanti_quote(
         request_payload,
         timeout=timeout,
         origin="https://webforms.garantibbva.com.tr",
-        referer=(
-            "https://webforms.garantibbva.com.tr/"
-            "currency-convertor-app-v3/"
-        ),
+        referer="https://webforms.garantibbva.com.tr/",
+        extra_headers=public_headers,
     )
     return parse_garanti_quote(response, pair)
 
