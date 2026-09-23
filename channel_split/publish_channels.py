@@ -1482,6 +1482,8 @@ def main() -> int:
                 file=sys.stderr,
             )
 
+    send_failures: list[str] = []
+
     for token_env, destination_env, text, post_key, safety in jobs:
         if safety is not None and not publication_allowed(safety_mode, safety):
             record_assessment(
@@ -1512,14 +1514,35 @@ def main() -> int:
                 )
             continue
 
-        token = _required_env(token_env)
-        chat_id = _required_env(destination_env)
-        telegram_send(token, chat_id, text)
+        try:
+            token = _required_env(token_env)
+            chat_id = _required_env(destination_env)
+            telegram_send(token, chat_id, text)
+        except Exception as exc:
+            failure = (
+                f"{destination_env}"
+                f"{f'/{post_key}' if post_key else ''}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            send_failures.append(failure)
+            print(f"SEND FAILED -> {failure}", file=sys.stderr)
+
+            # A failed Telegram delivery must never advance the accepted
+            # safety baseline or any Δ24H/Δ1M history.
+            if safety is not None:
+                record_assessment(
+                    history_db,
+                    safety,
+                    mode=safety_mode,
+                    published=False,
+                )
+            continue
+
         print(f"sent -> {destination_env} using {token_env}")
 
         if post_key is not None:
             sent_market_posts.add(post_key)
-            if safety is None or safety.decision == "VERIFIED":
+            if safety is None or safety.decision == VERIFIED:
                 verified_sent_market_posts.add(post_key)
 
         if safety is not None:
@@ -1529,7 +1552,7 @@ def main() -> int:
                 mode=safety_mode,
                 published=True,
             )
-            if safety.decision != "VERIFIED":
+            if safety.decision != VERIFIED:
                 print(
                     f"SHADOW SAFETY {safety.post_type}: {safety.decision} | "
                     f"{safety.reason}",
@@ -1601,6 +1624,16 @@ def main() -> int:
             iran_fx_publish_cache,
         )
         print(f"recorded verified Iran FX snapshot -> {timestamp}")
+
+    if send_failures:
+        print(
+            f"{len(send_failures)} Telegram send(s) failed after all eligible "
+            "jobs were attempted",
+            file=sys.stderr,
+        )
+        for failure in send_failures:
+            print(f"  - {failure}", file=sys.stderr)
+        return 1
 
     return 0
 
