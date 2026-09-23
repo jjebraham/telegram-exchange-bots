@@ -326,6 +326,10 @@ def _garanti_public_request_headers(config: object) -> dict[str, str]:
         "client-session-id": session_id,
         "client-type": "ArkClient",
         "dialect": "TR",
+        # Garanti's public converter sends this loopback placeholder as its
+        # application-level ip header (not the caller's network IP). Omitting
+        # the field returned HTTP 500; adding it made the public POST succeed.
+        "ip": "127.0.0.1",
         "guid": guid,
         "tenant-company-id": "GAR",
         "tenant-geolocation": "TUR",
