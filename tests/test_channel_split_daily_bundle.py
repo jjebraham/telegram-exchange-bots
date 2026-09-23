@@ -87,7 +87,12 @@ class DailyBundleCommandTests(unittest.TestCase):
                     publish_channels,
                     "collect_hybrid_usdt_snapshot",
                     return_value=SimpleNamespace(
-                        quotes=["USDT"],
+                        quotes=[
+                            SimpleNamespace(
+                                exchange="Wallex",
+                                buy_toman=Decimal("228000"),
+                            )
+                        ],
                         source_health={},
                     ),
                 )
