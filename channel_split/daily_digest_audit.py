@@ -141,7 +141,7 @@ def run_audit() -> None:
     for symbol in CRYPTO:
         print(
             f"CRYPTO  {symbol:<18} NOT IMPLEMENTED: "
-            "independent CoinGecko and exchange feed"
+            "two verified independent feeds; check aggregator/exchange overlap"
         )
     print()
     print(
