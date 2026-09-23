@@ -367,15 +367,15 @@ def build_iran_gold_post(
         "💰 <b>قیمت بازار</b> <i>(تومان)</i>　|　<b>Δ24H</b>",
         "",
         f"🌕 <b>سکه امامی</b>　<code>{_fmt_toman(prices['سکه امامی'])}</code>　"
-        f"<code>{_fmt_change_pct(prices['سکه امامی'], previous.get('سکه امامی'))}</code>",
+        f"{_fmt_change_pct(prices['سکه امامی'], previous.get('سکه امامی'))}",
         f"🌕 <b>سکه بهار آزادی</b>　<code>{_fmt_toman(prices['سکه بهار آزادی'])}</code>　"
-        f"<code>{_fmt_change_pct(prices['سکه بهار آزادی'], previous.get('سکه بهار آزادی'))}</code>",
+        f"{_fmt_change_pct(prices['سکه بهار آزادی'], previous.get('سکه بهار آزادی'))}",
         f"🟡 <b>نیم سکه</b>　<code>{_fmt_toman(prices['نیم سکه'])}</code>　"
-        f"<code>{_fmt_change_pct(prices['نیم سکه'], previous.get('نیم سکه'))}</code>",
+        f"{_fmt_change_pct(prices['نیم سکه'], previous.get('نیم سکه'))}",
         f"🟡 <b>ربع سکه</b>　<code>{_fmt_toman(prices['ربع سکه'])}</code>　"
-        f"<code>{_fmt_change_pct(prices['ربع سکه'], previous.get('ربع سکه'))}</code>",
+        f"{_fmt_change_pct(prices['ربع سکه'], previous.get('ربع سکه'))}",
         f"🪙 <b>سکه گرمی</b>　<code>{_fmt_toman(prices['سکه گرمی'])}</code>　"
-        f"<code>{_fmt_change_pct(prices['سکه گرمی'], previous.get('سکه گرمی'))}</code>",
+        f"{_fmt_change_pct(prices['سکه گرمی'], previous.get('سکه گرمی'))}",
     ]
 
     if market.gold18_rial is not None or market.mesghal_rial is not None:
@@ -383,12 +383,12 @@ def build_iran_gold_post(
         if market.gold18_rial is not None:
             lines.append(
                 f"✨ <b>طلای ۱۸ عیار</b>　<code>{_fmt_toman(market.gold18_rial)}</code>　"
-                f"<code>{_fmt_change_pct(market.gold18_rial, previous.get('طلای ۱۸ عیار'))}</code>"
+                f"{_fmt_change_pct(market.gold18_rial, previous.get('طلای ۱۸ عیار'))}"
             )
         if market.mesghal_rial is not None:
             lines.append(
                 f"⚖️ <b>مثقال طلا</b>　<code>{_fmt_toman(market.mesghal_rial)}</code>　"
-                f"<code>{_fmt_change_pct(market.mesghal_rial, previous.get('مثقال طلا'))}</code>"
+                f"{_fmt_change_pct(market.mesghal_rial, previous.get('مثقال طلا'))}"
             )
 
 
