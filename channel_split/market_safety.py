@@ -309,6 +309,48 @@ def evaluate_observation(
         / reference
         * Decimal("100")
     )
+
+    # Edge case: with 3+ sources, one provider can sit just inside the normal
+    # median-deviation cutoff yet still widen the full consensus range beyond
+    # the allowed spread. In that case, accept only a clearly tighter majority
+    # cluster around the median. The tighter cluster must stay within half the
+    # normal tolerance, and it must still preserve the configured quorum.
+    #
+    # This never applies to two-source observations: if two providers disagree,
+    # there is no principled way to choose a winner, so they remain blocked.
+    if (
+        consensus_spread_pct > observation.max_source_deviation_pct
+        and len(normalized) >= 3
+    ):
+        tight_tolerance = observation.max_source_deviation_pct / Decimal("2")
+        tight_inliers = {
+            source: value
+            for source, value in normalized.items()
+            if (
+                abs(value - initial_reference)
+                / initial_reference
+                * Decimal("100")
+            )
+            <= tight_tolerance
+        }
+        if len(tight_inliers) >= observation.min_sources:
+            tight_reference = _median(tight_inliers.values())
+            tight_spread_pct = (
+                (max(tight_inliers.values()) - min(tight_inliers.values()))
+                / tight_reference
+                * Decimal("100")
+            )
+            if tight_spread_pct <= tight_tolerance:
+                newly_rejected = {
+                    source: value
+                    for source, value in normalized.items()
+                    if source not in tight_inliers
+                }
+                inliers = tight_inliers
+                rejected = newly_rejected
+                reference = tight_reference
+                consensus_spread_pct = tight_spread_pct
+
     if consensus_spread_pct > observation.max_source_deviation_pct:
         return SafetyCheck(
             market_key=observation.market_key,
