@@ -75,6 +75,11 @@ class KianiPostTests(unittest.TestCase):
         self.assertIn("TL", post)
         self.assertIn("TOMAN", post)
         self.assertNotIn("TRY", post)
+        self.assertIn("در ایران 🇮🇷 تومان واریز می کنید", post)
+        self.assertIn(
+            "و معادل آن لیر ترکیه 🇹🇷 دریافت می کنید",
+            post,
+        )
         self.assertIn("10,000", post)
         self.assertIn("47,700,000", post)
         self.assertNotIn("≈", post)
@@ -92,6 +97,14 @@ class KianiPostTests(unittest.TestCase):
         self.assertIn("10,870", post)
         self.assertIn("100,000,000", post)
         self.assertIn("21,739", post)
+        self.assertIn(
+            "در ترکیه 🇹🇷 لیر واریز می کنید",
+            post,
+        )
+        self.assertIn(
+            "و معادل آن تومان در ایران 🇮🇷 دریافت می کنید",
+            post,
+        )
         self.assertIn("500,000,000", post)
         self.assertIn("108,700", post)
         self.assertIn("بر اساس نرخ خرید فعلی: <b>4,600</b> تومان", post)
