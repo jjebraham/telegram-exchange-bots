@@ -290,6 +290,7 @@ def telegram_send(token: str, chat_id: str, text: str, timeout: int = 20) -> dic
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": "true",
+            "disable_notification": "true",
         }
     ).encode("utf-8")
     request = Request(endpoint, data=payload, headers={"Content-Type": "application/x-www-form-urlencoded"})
