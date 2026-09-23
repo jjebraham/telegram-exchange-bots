@@ -38,7 +38,7 @@ fi
 
 cd "$SCRIPT_DIR"
 export MARKET_SAFETY_MODE=enforce
-export MARKET_HISTORY_DB=market_history.sqlite3
+export MARKET_HISTORY_DB=market_history_production.sqlite3
 
 echo "channel-split-production: post=$post"
 exec "$PYTHON_BIN" publish_channels.py --post "$post"
