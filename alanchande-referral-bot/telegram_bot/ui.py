@@ -306,28 +306,40 @@ def _mask_name(first_name: str | None, username: str | None, user_id: int) -> st
 
 
 def render_top(campaign: Campaign, db: ReferralDB, user_id: int | None = None) -> str:
+    # Set each paragraph's base direction before any Latin name or neutral emoji.
+    rtl = "\u200f"
+    digits = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+    number = lambda value: str(value).translate(digits)
+    # Names can contain their own directional controls; do not let those escape
+    # the isolate or consume the two visible characters used for masking.
+    controls = dict.fromkeys(map(ord, "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"))
+    title = f"{rtl}<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>"
     rows = db.leaderboard(campaign, limit=10)
     if not rows:
         return (
-            f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n\n"
-            "هنوز امتیازی در جدول ثبت نشده؛ اولین نفر باش! 🚀"
+            f"{title}\n\n"
+            f"{rtl}هنوز امتیازی در جدول ثبت نشده؛ اولین نفر باش! 🚀"
         )
     medals = ["🥇", "🥈", "🥉"]
-    lines = [f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n"]
+    lines = [f"{title}\n{rtl}بر اساس امتیاز موقت"]
     for index, row in enumerate(rows):
-        badge = medals[index] if index < 3 else f"{index + 1}."
-        name = _mask_name(row["first_name"], row["username"], row["user_id"])
+        badge = f"{medals[index]} " if index < 3 else ""
+        name = _mask_name(
+            (row["first_name"] or "").translate(controls),
+            (row["username"] or "").translate(controls),
+            row["user_id"],
+        )
         lines.append(
-            f"{badge} <b>{name}</b>\n"
-            f"⭐ موقت: <b>{row['current_points']}</b> | "
-            f"🎟 تأییدشده: <b>{row['confirmed_points']}</b>"
+            f"{rtl}{number(index + 1)}) {badge}\u2068<b>{name}</b>\u2069\n"
+            f"{rtl}⭐ امتیاز موقت: <b>{number(row['current_points'])}</b> | "
+            f"🎟 بلیت تأییدشده: <b>{number(row['confirmed_points'])}</b>"
         )
     if user_id is not None:
         rank, total = db.leaderboard_position(campaign, user_id)
         if rank is not None:
-            lines.append(f"\n📍 رتبه تو: <b>#{rank}</b> از <b>{total}</b>")
+            lines.append(f"{rtl}📍 رتبه تو: <b>{number(rank)}</b> از <b>{number(total)}</b>")
     lines.append(
-        "\nℹ️ این جدول فقط پیشرفت فعلی را نشان می‌دهد و ترتیب آن تعیین‌کننده برنده نیست. "
+        f"{rtl}ℹ️ این جدول فقط پیشرفت فعلی را نشان می‌دهد و ترتیب آن تعیین‌کننده برنده نیست. "
         "برندگان با قرعه‌کشی وزن‌دار و فقط بر اساس 🎟 بلیت‌های تأییدشده انتخاب می‌شوند."
     )
     return "\n\n".join(lines)
