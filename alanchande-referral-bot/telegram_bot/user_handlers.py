@@ -461,6 +461,13 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await notify_referral_join(context, campaign, user, referrer_id, "reactivated")
             from .referral_success import send_participant_welcome
             await send_participant_welcome(context, campaign, user)
+            return
+
+        # Promo/organic entrants used to have to return to the bot and press a
+        # second membership-check button. Complete their entry as soon as the
+        # channel membership update arrives; the old button remains a fallback.
+        from .promo_handlers import auto_complete_promo_join
+        await auto_complete_promo_join(context, campaign, user)
 
     elif was_member and not is_member_now:
         campaign = db.live_campaign()
