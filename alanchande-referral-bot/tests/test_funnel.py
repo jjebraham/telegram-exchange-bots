@@ -188,6 +188,18 @@ class FunnelTests(unittest.TestCase):
             build_promo_link("Alanchandebot", "mainchannel", "a"),
             "https://t.me/Alanchandebot?start=promo_mainchannel_a",
         )
+        self.assertEqual(
+            build_promo_link("Alanchandebot", "mainchannel_b", "b"),
+            "https://t.me/Alanchandebot?start=promo_mainchannel_b",
+        )
+        self.assertEqual(
+            build_promo_link("Alanchandebot", "mainchannel_b", "a"),
+            "https://t.me/Alanchandebot?start=promo_mainchannel_a",
+        )
+        self.assertEqual(
+            build_promo_link("Alanchandebot", "mainchannel_b_b"),
+            "https://t.me/Alanchandebot?start=promo_mainchannel_b",
+        )
         self.assertEqual(promo_variant("mainchannel_a"), "a")
         self.assertEqual(promo_variant("mainchannel_b"), "b")
         self.assertEqual(promo_variant("mainchannel"), "default")
@@ -202,8 +214,25 @@ class FunnelTests(unittest.TestCase):
         self.db.track_funnel_event(self.campaign.id, 30, "referral_open", "referral", self.now)
         self.db.record_join(self.campaign, 30, 20, None, "Carol", self.now)
 
-        self.db.save_invite_link(self.campaign.id, 10, "ref_1_alice", start)
+        legacy_link_time = start - timedelta(hours=1)
+        self.db.save_invite_link(
+            self.campaign.id,
+            10,
+            "ref_1_alice",
+            legacy_link_time,
+        )
         self.db.record_join(self.campaign, 40, 10, None, "Dave", self.now)
+
+        # Reproduce production behavior: a legacy participant later opens
+        # a tracked promotional link. Their old referral tree must not move
+        # into this newer source.
+        self.db.track_funnel_event(
+            self.campaign.id,
+            10,
+            "bot_start",
+            "mainchannel_b",
+            self.now,
+        )
 
         report = source_performance(self.db, self.campaign)
         rows = {row["source"]: row for row in report["rows"]}
@@ -213,6 +242,9 @@ class FunnelTests(unittest.TestCase):
         self.assertEqual(rows["mainchannel_a"]["joins"], 1)
         self.assertEqual(rows["mainchannel_a"]["referral_opens"], 1)
         self.assertEqual(rows["legacy/untracked"]["joins"], 1)
+        self.assertEqual(rows["legacy/untracked"]["links"], 1)
+        self.assertEqual(rows["mainchannel_b"]["starts"], 1)
+        self.assertEqual(rows["mainchannel_b"]["joins"], 0)
 
 
 if __name__ == "__main__":

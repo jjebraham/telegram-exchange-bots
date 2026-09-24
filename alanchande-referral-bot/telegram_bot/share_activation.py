@@ -101,7 +101,20 @@ def install_zero_open_nudge_filter() -> None:
     reminders._early_share_nudge_candidates = zero_open_nudge_candidates
 
 
-def _first_touch_sources(db, campaign_id: int) -> dict[int, str]:
+def _canonical_source(raw: str) -> str:
+    """Collapse accidental historical A/B suffix duplication."""
+    source = str(raw or "organic").strip().lower()
+    parts = source.rsplit("_", 2)
+    if (
+        len(parts) == 3
+        and parts[-2] in {"a", "b"}
+        and parts[-1] in {"a", "b"}
+    ):
+        return f"{parts[0]}_{parts[-1]}"
+    return source
+
+
+def _first_touch_sources(db, campaign_id: int):
     with db.connect() as conn:
         rows = conn.execute(
             """SELECT user_id,source,created_at FROM funnel_events
@@ -109,15 +122,25 @@ def _first_touch_sources(db, campaign_id: int) -> dict[int, str]:
                ORDER BY created_at ASC,user_id ASC,source ASC""",
             (campaign_id,),
         ).fetchall()
+
     first: dict[int, str] = {}
+    tracking_started = None
+
     for row in rows:
-        first.setdefault(int(row["user_id"]), str(row["source"] or "organic"))
-    return first
+        if tracking_started is None:
+            tracking_started = parse_datetime(row["created_at"])
+
+        first.setdefault(
+            int(row["user_id"]),
+            _canonical_source(row["source"] or "organic"),
+        )
+
+    return first, tracking_started
 
 
 def sharing_source_performance(db, campaign) -> dict:
     """Unique link-holder sharing outcomes by the referrer's first-touch source."""
-    first_source = _first_touch_sources(db, campaign.id)
+    first_source, tracking_started = _first_touch_sources(db, campaign.id)
     with db.connect() as conn:
         links = conn.execute(
             """SELECT user_id,created_at FROM invite_links
@@ -149,6 +172,19 @@ def sharing_source_performance(db, campaign) -> dict:
         int(row["user_id"]): parse_datetime(row["created_at"])
         for row in links
     }
+
+    def holder_source(user_id: int) -> str:
+        created_at = link_created.get(user_id)
+
+        if (
+            tracking_started is not None
+            and created_at is not None
+            and created_at < tracking_started
+        ):
+            return "legacy/untracked"
+
+        return first_source.get(user_id, "legacy/untracked")
+
     candidate_to_referrer: dict[int, int] = {}
     for row in list(pending) + list(refs):
         candidate_to_referrer.setdefault(int(row["joined_user_id"]), int(row["referrer_id"]))
@@ -204,7 +240,7 @@ def sharing_source_performance(db, campaign) -> dict:
     })
 
     for referrer_id in link_created:
-        source = first_source.get(referrer_id, "legacy/untracked")
+        source = holder_source(referrer_id)
         bucket = buckets[source]
         bucket["link_holders"].add(referrer_id)
         if referrer_id in referrers_with_open:
@@ -220,7 +256,7 @@ def sharing_source_performance(db, campaign) -> dict:
                 bucket["first_open_minutes"].append(delta)
 
     for referrer_id, candidate_id in open_records:
-        source = first_source.get(referrer_id, "legacy/untracked")
+        source = holder_source(referrer_id)
         buckets[source]["unique_openers"].add(candidate_id)
 
     rows = []

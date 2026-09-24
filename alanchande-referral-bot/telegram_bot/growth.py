@@ -27,6 +27,17 @@ _ONBOARDING_EVENTS = {
     "membership_check_passed",
     "membership_check_failed",
     "membership_check_error",
+    "entry_initial_membership_started",
+    "entry_initial_membership_passed",
+    "entry_initial_membership_failed",
+    "entry_initial_membership_error",
+    "entry_screen_delivered",
+    "entry_cta_membership_started",
+    "entry_cta_membership_passed",
+    "entry_cta_membership_failed",
+    "entry_cta_membership_error",
+    "entry_link_created",
+    "entry_link_creation_error",
 }
 
 
@@ -35,13 +46,33 @@ def normalize_promo_source(raw: str) -> str:
     return source[:48] or "promo"
 
 
+def canonical_promo_source(raw: str) -> str:
+    """Collapse accidental double A/B suffixes from historical promo links."""
+    source = normalize_promo_source(raw)
+    parts = source.rsplit("_", 2)
+    if (
+        len(parts) == 3
+        and parts[-2] in {"a", "b"}
+        and parts[-1] in {"a", "b"}
+    ):
+        return f"{parts[0]}_{parts[-1]}"
+    return source
+
+
 def promo_source_with_variant(source: str, variant: str | None = None) -> str:
-    base = normalize_promo_source(source)
+    base = canonical_promo_source(source)
     chosen = (variant or "").strip().lower()
+
     if chosen in {"a", "b"}:
+        # Replace an existing terminal A/B variant instead of appending
+        # another one. This prevents mainchannel_b_b, mainchannel_a_b, etc.
+        if base.endswith(("_a", "_b")):
+            base = base[:-2]
+
         suffix = f"_{chosen}"
         base = base[: 64 - len(suffix)]
         return base + suffix
+
     return base[:64]
 
 
@@ -104,7 +135,10 @@ def _first_touch_sources(db, campaign_id: int) -> tuple[dict[int, str], str | No
     for row in rows:
         if tracking_started is None:
             tracking_started = str(row["created_at"])
-        first.setdefault(int(row["user_id"]), str(row["source"] or "organic"))
+        first.setdefault(
+            int(row["user_id"]),
+            canonical_promo_source(str(row["source"] or "organic")),
+        )
     return first, tracking_started
 
 
@@ -118,7 +152,7 @@ def _onboarding_event_users(db, campaign_id: int) -> dict[str, dict[str, set[int
         ).fetchall()
     result: dict[str, dict[str, set[int]]] = {}
     for row in rows:
-        source = str(row["source"] or "organic")
+        source = canonical_promo_source(str(row["source"] or "organic"))
         event_type = str(row["event_type"])
         result.setdefault(source, {}).setdefault(event_type, set()).add(int(row["user_id"]))
     return result
@@ -138,12 +172,15 @@ def source_performance(db, campaign: Campaign) -> dict:
                 (campaign.id,),
             ).fetchall()
         }
-        links = {
-            int(row["user_id"])
-            for row in conn.execute(
-                "SELECT user_id FROM invite_links WHERE campaign_id=?",
-                (campaign.id,),
-            ).fetchall()
+        link_rows = conn.execute(
+            """SELECT user_id,created_at FROM invite_links
+               WHERE campaign_id=?""",
+            (campaign.id,),
+        ).fetchall()
+        links = {int(row["user_id"]) for row in link_rows}
+        link_created_at = {
+            int(row["user_id"]): str(row["created_at"])
+            for row in link_rows
         }
         open_users = {
             int(row["user_id"])
@@ -163,6 +200,21 @@ def source_performance(db, campaign: Campaign) -> dict:
                WHERE campaign_id=?""",
             (campaign.id,),
         ).fetchall()
+
+    tracking_started_dt = (
+        parse_datetime(tracking_started)
+        if tracking_started
+        else None
+    )
+
+    def holder_source(user_id: int) -> str:
+        created_at = link_created_at.get(user_id)
+
+        if tracking_started_dt is not None and created_at is not None:
+            if parse_datetime(created_at) < tracking_started_dt:
+                return "legacy/untracked"
+
+        return first_source.get(user_id, "legacy/untracked")
 
     buckets: dict[str, dict] = {}
 
@@ -186,6 +238,15 @@ def source_performance(db, campaign: Campaign) -> dict:
             "membership_passed": 0,
             "membership_failed": 0,
             "membership_error": 0,
+            "initial_member_passed": 0,
+            "initial_member_failed": 0,
+            "initial_member_error": 0,
+            "screen_delivered": 0,
+            "cta_member_passed": 0,
+            "cta_member_failed": 0,
+            "cta_member_error": 0,
+            "entry_link_created": 0,
+            "entry_link_error": 0,
         })
 
     for uid, source in first_source.items():
@@ -193,8 +254,11 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["starts"] += 1
         if uid in entered:
             item["entered"] += 1
-        if uid in links:
-            item["links"] += 1
+
+    # Count every personal-link holder, including participants whose link
+    # predates analytics and who never generated a tracked bot_start.
+    for uid in links:
+        bucket(holder_source(uid))["links"] += 1
 
     for source, events in onboarding.items():
         item = bucket(source)
@@ -208,12 +272,21 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["membership_passed"] = len(events.get("membership_check_passed", set()))
         item["membership_failed"] = len(events.get("membership_check_failed", set()))
         item["membership_error"] = len(events.get("membership_check_error", set()))
+        item["initial_member_passed"] = len(events.get("entry_initial_membership_passed", set()))
+        item["initial_member_failed"] = len(events.get("entry_initial_membership_failed", set()))
+        item["initial_member_error"] = len(events.get("entry_initial_membership_error", set()))
+        item["screen_delivered"] = len(events.get("entry_screen_delivered", set()))
+        item["cta_member_passed"] = len(events.get("entry_cta_membership_passed", set()))
+        item["cta_member_failed"] = len(events.get("entry_cta_membership_failed", set()))
+        item["cta_member_error"] = len(events.get("entry_cta_membership_error", set()))
+        item["entry_link_created"] = len(events.get("entry_link_created", set()))
+        item["entry_link_error"] = len(events.get("entry_link_creation_error", set()))
 
     candidate_seen: set[int] = set()
     for row in list(pending) + list(refs):
         joined_uid = int(row["joined_user_id"])
         referrer_id = int(row["referrer_id"])
-        source = first_source.get(referrer_id, "legacy/untracked")
+        source = holder_source(referrer_id)
         item = bucket(source)
         if joined_uid not in candidate_seen:
             item["candidates"] += 1
@@ -223,7 +296,7 @@ def source_performance(db, campaign: Campaign) -> dict:
 
     for row in refs:
         referrer_id = int(row["referrer_id"])
-        source = first_source.get(referrer_id, "legacy/untracked")
+        source = holder_source(referrer_id)
         item = bucket(source)
         item["joins"] += 1
         if int(row["active"]):
@@ -405,6 +478,10 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"  onboarding: shown={row['entry_shown']} cta={row['entry_cta']} "
             f"member_ok={row['membership_passed']} member_no={row['membership_failed']} "
             f"errors={row['membership_error']}",
+            f"  detailed: delivered={row['screen_delivered']} "
+            f"initial_ok={row['initial_member_passed']} initial_no={row['initial_member_failed']} "
+            f"cta_ok={row['cta_member_passed']} cta_no={row['cta_member_failed']} "
+            f"link_ok={row['entry_link_created']} link_err={row['entry_link_error']}",
             f"  start→enter={_pct(row['start_to_entered_pct'])} | "
             f"new start→enter={_pct(row['new_start_to_entered_pct'])} | "
             f"shown→cta={_pct(row['entry_cta_pct'])} | candidate→join={_pct(row['candidate_to_join_pct'])}",

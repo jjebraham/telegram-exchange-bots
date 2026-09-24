@@ -164,5 +164,52 @@ class ShareActivationTests(unittest.TestCase):
         self.assertEqual(main["median_first_open_minutes"], 20.0)
 
 
+    def test_sharing_report_keeps_pretracking_holder_legacy(self):
+        # Personal link existed before analytics instrumentation.
+        self._link(10, "2026-09-17T04:00:00+00:00")
+
+        # This tracked participant establishes analytics start.
+        self._event(
+            20,
+            "bot_start",
+            "mainchannel_b",
+            "2026-09-17T05:00:00+00:00",
+        )
+        self._link(20, "2026-09-17T06:00:00+00:00")
+
+        # Legacy holder later clicks a tracked promotional link.
+        self._event(
+            10,
+            "bot_start",
+            "mainchannel_b",
+            "2026-09-17T07:00:00+00:00",
+        )
+
+        # Historical malformed double variant must also collapse.
+        self._event(
+            30,
+            "bot_start",
+            "mainchannel_b_b",
+            "2026-09-17T08:00:00+00:00",
+        )
+        self._link(30, "2026-09-17T09:00:00+00:00")
+
+        report = sharing_source_performance(
+            self.db,
+            SimpleNamespace(id=1),
+        )
+        rows = {row["source"]: row for row in report["rows"]}
+
+        self.assertEqual(
+            rows["legacy/untracked"]["link_holders"],
+            1,
+        )
+        self.assertEqual(
+            rows["mainchannel_b"]["link_holders"],
+            2,
+        )
+        self.assertNotIn("mainchannel_b_b", rows)
+
+
 if __name__ == "__main__":
     unittest.main()
