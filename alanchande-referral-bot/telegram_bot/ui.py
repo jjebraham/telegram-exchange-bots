@@ -45,7 +45,7 @@ def copy_link_button(link: str) -> InlineKeyboardButton:
     return InlineKeyboardButton("🔗 نمایش لینک", callback_data="menu:link")
 
 
-def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
+def invitation_share_url(link: str, campaign: Campaign | None = None) -> str:
     if campaign:
         share_text = (
             f"🎁 بیا در مسابقه {campaign.name} «الان چنده؟» شرکت کن!\n"
@@ -58,11 +58,26 @@ def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = Non
             "با لینک من وارد شو 👇"
         )
 
-    share_url = "https://t.me/share/url?" + urlencode({
+    return "https://t.me/share/url?" + urlencode({
         "url": link,
         "text": share_text,
     })
 
+
+def leaderboard_keyboard(link: str | None, campaign: Campaign) -> InlineKeyboardMarkup:
+    # A visitor without a personal link must use the existing membership flow.
+    invite = (
+        InlineKeyboardButton("📤 دعوت از یک دوست", url=invitation_share_url(link, campaign))
+        if link else InlineKeyboardButton("🔗 دریافت لینک دعوت من", callback_data="menu:link")
+    )
+    return InlineKeyboardMarkup([
+        [invite],
+        [InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")],
+    ])
+
+
+def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
+    share_url = invitation_share_url(link, campaign)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
         [copy_link_button(link)],

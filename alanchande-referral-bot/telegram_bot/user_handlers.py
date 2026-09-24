@@ -14,7 +14,7 @@ from referral_core import Campaign, ReferralDB
 from .config import Settings, extract_status_change, hours_label, is_configured_channel, telegram_membership
 from .context import services
 from .ui import (
-    back_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
+    back_keyboard, leaderboard_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
     render_home, render_prizes, render_referrals, render_rules, render_stats, render_top,
     render_transparency,
 )
@@ -387,6 +387,18 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = render_referrals(campaign, db, user.id)
     elif data == "menu:top":
         text = render_top(campaign, db, user.id)
+        link = None
+        payload = db.get_invite_link(campaign.id, user.id)
+        if payload and payload.startswith("ref_"):
+            try:
+                username = context.bot.username
+                if not username:
+                    username = (await context.bot.get_me()).username
+                if username:
+                    link = f"https://t.me/{username}?start={payload}"
+            except TelegramError:
+                log.warning("Could not resolve bot username for leaderboard share button")
+        markup = leaderboard_keyboard(link, campaign)
     elif data == "menu:rules":
         text = render_rules(campaign)
     elif data == "menu:prizes":
