@@ -38,6 +38,12 @@ _ONBOARDING_EVENTS = {
     "entry_cta_membership_error",
     "entry_link_created",
     "entry_link_creation_error",
+    "entry_auto_existing_member",
+    "entry_auto_join_completed",
+    "entry_auto_join_message_sent",
+    "entry_auto_join_message_error",
+    "entry_auto_join_error",
+    "entry_cta_completed",
     "referral_welcome_sent",
     "referral_link_included",
     "referral_share_prompt_sent",
@@ -252,6 +258,12 @@ def source_performance(db, campaign: Campaign) -> dict:
             "cta_member_error": 0,
             "entry_link_created": 0,
             "entry_link_error": 0,
+            "entry_auto_existing_member": 0,
+            "entry_auto_join_completed": 0,
+            "entry_auto_join_message_sent": 0,
+            "entry_auto_join_message_error": 0,
+            "entry_auto_join_error": 0,
+            "entry_cta_completed": 0,
             "referral_welcome_sent": 0,
             "referral_link_included": 0,
             "referral_share_prompt_sent": 0,
@@ -291,6 +303,22 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["cta_member_error"] = len(events.get("entry_cta_membership_error", set()))
         item["entry_link_created"] = len(events.get("entry_link_created", set()))
         item["entry_link_error"] = len(events.get("entry_link_creation_error", set()))
+        item["entry_auto_existing_member"] = len(
+            events.get("entry_auto_existing_member", set())
+        )
+        item["entry_auto_join_completed"] = len(
+            events.get("entry_auto_join_completed", set())
+        )
+        item["entry_auto_join_message_sent"] = len(
+            events.get("entry_auto_join_message_sent", set())
+        )
+        item["entry_auto_join_message_error"] = len(
+            events.get("entry_auto_join_message_error", set())
+        )
+        item["entry_auto_join_error"] = len(
+            events.get("entry_auto_join_error", set())
+        )
+        item["entry_cta_completed"] = len(events.get("entry_cta_completed", set()))
         item["referral_welcome_sent"] = len(events.get("referral_welcome_sent", set()))
         item["referral_link_included"] = len(events.get("referral_link_included", set()))
         item["referral_share_prompt_sent"] = len(events.get("referral_share_prompt_sent", set()))
@@ -499,6 +527,12 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"initial_ok={row['initial_member_passed']} initial_no={row['initial_member_failed']} "
             f"cta_ok={row['cta_member_passed']} cta_no={row['cta_member_failed']} "
             f"link_ok={row['entry_link_created']} link_err={row['entry_link_error']}",
+            f"  auto-entry: existing={row['entry_auto_existing_member']} "
+            f"joined={row['entry_auto_join_completed']} "
+            f"msg_ok={row['entry_auto_join_message_sent']} "
+            f"msg_err={row['entry_auto_join_message_error']} "
+            f"auto_err={row['entry_auto_join_error']} "
+            f"fallback_cta={row['entry_cta_completed']}",
             f"  referral path: welcome={row['referral_welcome_sent']} "
             f"link={row['referral_link_included']} prompt={row['referral_share_prompt_sent']} "
             f"welcome_err={row['referral_welcome_error']} "
