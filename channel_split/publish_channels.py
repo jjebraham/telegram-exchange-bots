@@ -75,6 +75,7 @@ from official_bank_verifier import (
     fetch_kuveyt_quote,
     fetch_ziraat_quote,
 )
+from daily_market_digest import collect_digest
 from admin_alerts import maybe_notify_admin, maybe_notify_source_health
 from market_safety import (
     VERIFIED,
@@ -338,6 +339,7 @@ def main() -> int:
             "alanchande-usdt-seven",
             "alanchande-markets",
             "alanchande-daily",
+            "alanchande-daily-digest",
             "kiani-rates",
             "kiani-try",
             "kiani-examples",
@@ -373,6 +375,8 @@ def main() -> int:
     ] = []
     sent_market_posts: set[str] = set()
     verified_sent_market_posts: set[str] = set()
+    daily_digest_cache: Any | None = None
+    daily_digest_publish_cache: dict[str, Decimal] | None = None
     rates_cache: dict[str, Decimal] | None = None
     usd_quotes_cache: list[Any] | None = None
     eur_quotes_cache: list[Any] | None = None
@@ -998,6 +1002,22 @@ def main() -> int:
         # AlanChande history intentionally depends only on neutral market feeds.
         return build_snapshot(get_usd_quotes(), get_eur_quotes())
 
+    def build_safe_daily_digest() -> tuple[str, PostSafetyAssessment]:
+        nonlocal daily_digest_cache
+        nonlocal daily_digest_publish_cache
+
+        if daily_digest_cache is None:
+            daily_digest_cache = collect_digest(history_db)
+            daily_digest_publish_cache = dict(daily_digest_cache.published_values)
+            for source_key, error in daily_digest_cache.source_health.items():
+                note_source_health(
+                    source_key,
+                    error is None,
+                    error or "",
+                )
+
+        return daily_digest_cache.text, daily_digest_cache.assessment
+
     def add_alanchande(
         text: str,
         post_key: str | None = None,
@@ -1301,6 +1321,10 @@ def main() -> int:
     if args.post == "alanchande-fx-pulse":
         text, safety = build_safe_fx_pulse()
         add_alanchande(text, "fx-pulse", safety)
+
+    if args.post == "alanchande-daily-digest":
+        text, safety = build_safe_daily_digest()
+        add_alanchande(text, "daily-digest", safety)
 
     if args.post == "alanchande-iran-fx":
         text, safety = build_safe_iran_fx()
@@ -1625,6 +1649,18 @@ def main() -> int:
             iran_fx_publish_cache,
         )
         print(f"recorded verified Iran FX snapshot -> {timestamp}")
+
+    if "daily-digest" in verified_sent_market_posts:
+        if daily_digest_publish_cache is None:
+            raise RuntimeError(
+                "Verified daily digest has no consensus publish snapshot"
+            )
+        timestamp = record_published_values(
+            history_db,
+            "daily-digest",
+            daily_digest_publish_cache,
+        )
+        print(f"recorded verified daily digest snapshot -> {timestamp}")
 
     if send_failures:
         print(
