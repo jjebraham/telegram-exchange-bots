@@ -53,7 +53,7 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
             text=(
                 f"🎉 <b>{first_name}، عضویتت تأیید شد!</b>\n\n"
                 "از این لحظه خودت هم یک <b>شرکت‌کننده مستقل</b> مسابقه‌ای.\n"
-                "امتیاز دوستت بابت دعوت تو جداست؛ "
+                "دعوتی که بابت ورود تو برای دوستت ثبت شد جداست؛ "
                 "<b>امتیازها و شانس برنده‌شدن تو برای خودته.</b> ✅\n\n"
                 "🎯 <b>هدف اول: فقط برای ۱ نفر بفرست.</b>\n"
                 "اگر با لینک تو عضو شود، اولین دعوت فعال تو ثبت می‌شود.\n\n"
@@ -61,7 +61,7 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
                 f"<b>🔗 لینک اختصاصی دعوت تو:</b>\n{link}\n\n"
                 f"⭐ هر <b>{campaign.invites_per_point}</b> دعوت فعال = <b>۱ امتیاز موقت</b>\n"
                 f"🎟 بعد از <b>{hours_label(campaign.min_stay_hours)}</b> ماندن پیوسته، "
-                "سهم هر دعوت برای بلیت تأییدشده قرعه‌کشی حساب می‌شود.\n\n"
+                "آن دعوت تأیید می‌شود و در محاسبه بلیت‌های نهایی تو حساب می‌شود.\n\n"
                 f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}"
             ),
             parse_mode=ParseMode.HTML,
