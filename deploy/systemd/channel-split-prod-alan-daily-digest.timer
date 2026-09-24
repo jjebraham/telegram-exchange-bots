@@ -1,0 +1,10 @@
+[Unit]
+Description=AlanChande verified daily market digest
+
+[Timer]
+OnCalendar=*-*-* 12:05:00 Asia/Tehran
+Persistent=false
+Unit=channel-split-production@alanchande-daily-digest.service
+
+[Install]
+WantedBy=timers.target
