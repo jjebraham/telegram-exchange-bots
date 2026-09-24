@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily compact X alanchande-iran-fx
+
+[Timer]
+OnCalendar=*-*-* 17:25:00 Europe/Istanbul
+Persistent=false
+Unit=kiani-x-channel@alanchande-iran-fx.service
+
+[Install]
+WantedBy=timers.target

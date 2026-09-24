@@ -1,0 +1,61 @@
+def process_current_slot() -> None:
+    now = datetime.now(TEHRAN)
+
+    if not (
+        WORK_START_HOUR
+        <= now.hour
+        < WORK_END_HOUR
+    ):
+        return
+
+    scheduled_at = now.replace(
+        minute=POST_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    deadline = scheduled_at + timedelta(
+        minutes=GRACE_MINUTES
+    )
+
+    if not (scheduled_at <= now < deadline):
+        return
+
+    slot_key = "{} {:02d}:{:02d}:hawala".format(
+        now.date().isoformat(),
+        now.hour,
+        POST_MINUTE,
+    )
+
+    if slot_was_posted(slot_key):
+        return
+
+    rates = calculate_hawala_rates()
+
+    if rates is None:
+        logger.warning(
+            "Hawala post deferred for slot %s: "
+            "required data unavailable.",
+            slot_key,
+        )
+        return
+
+    message = build_hawala_message(rates)
+
+    if not post_message(message):
+        logger.error(
+            "Hawala send failed for slot %s; "
+            "will retry inside grace window.",
+            slot_key,
+        )
+        return
+
+    if not mark_slot_posted(slot_key):
+        fire_alert(
+            "Message sent but slot persistence failed: "
+            + slot_key
+        )
+
+    logger.info(
+        "Hawala message posted for slot %s",
+        slot_key,
+    )

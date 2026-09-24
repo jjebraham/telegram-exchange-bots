@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily compact X alanchande-usdt-exchanges
+
+[Timer]
+OnCalendar=*-*-* 10:25:00 Europe/Istanbul
+Persistent=false
+Unit=kiani-x-channel@alanchande-usdt-exchanges.service
+
+[Install]
+WantedBy=timers.target

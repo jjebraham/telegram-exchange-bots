@@ -368,7 +368,10 @@ def main() -> int:
         help="Show recent market-safety audit decisions, then exit",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print posts instead of sending to Telegram")
+    parser.add_argument("--export-json", action="store_true", help="Read-only assessed message export for X")
     args = parser.parse_args()
+    if args.export_json and (args.record_history or args.history_status or args.safety_status):
+        parser.error("--export-json cannot be combined with history actions")
 
     # (token_env, destination_env, text, post_key, safety_assessment)
     jobs: list[
@@ -1504,6 +1507,16 @@ def main() -> int:
 
     if args.post in {"kiani-examples-reverse", "demo-formats"}:
         add_kiani(build_kiani_toman_receive_post(get_rates()))
+
+    if args.export_json:
+        if len(jobs) != 1:
+            raise ValueError("X export requires exactly one post")
+        _, _, text, _, safety = jobs[0]
+        if safety is not None and safety.decision != VERIFIED:
+            raise ValueError(f"X export blocked: {safety.reason}")
+        print(json.dumps({"post": args.post, "text": text,
+                          "verified": safety is None or safety.decision == VERIFIED}, ensure_ascii=False))
+        return 0
 
     if args.dry_run:
         print(f"MARKET_SAFETY_MODE={safety_mode}")
