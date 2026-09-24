@@ -55,6 +55,36 @@ def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = Non
     ])
 
 
+def referral_activation_keyboard(
+    settings: Settings,
+    link: str,
+    campaign: Campaign,
+) -> InlineKeyboardMarkup:
+    """First-session share CTA for participants acquired through a referral."""
+    del settings  # Reserved for future channel-aware share copy.
+
+    contest_hook = (
+        "قرعه‌کشی ۲۱ میلیون تومانی «الان چنده؟»"
+        if campaign.slug == "paeez1405"
+        else f"مسابقه {campaign.name} «الان چنده؟»"
+    )
+    share_text = (
+        f"🎁 دعوتت کردم به {contest_hook}\n"
+        f"🏆 {campaign.num_winners} برنده داریم.\n\n"
+        "اگر دوست داشتی شرکت کنی، از لینک من وارد شو و شرایط مسابقه رو ببین 👇"
+    )
+    share_url = "https://t.me/share/url?" + urlencode({
+        "url": link,
+        "text": share_text,
+    })
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 ارسال برای ۱ دوست", url=share_url)],
+        [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
+        [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
+    ])
+
+
 def no_campaign_text() -> str:
     return "در حال حاضر مسابقه فعالی وجود ندارد. 🎁\n\nزمان شروع مسابقه بعدی از طریق کانال اعلام می‌شود."
 

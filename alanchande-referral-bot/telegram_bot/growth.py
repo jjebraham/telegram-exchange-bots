@@ -38,6 +38,11 @@ _ONBOARDING_EVENTS = {
     "entry_cta_membership_error",
     "entry_link_created",
     "entry_link_creation_error",
+    "referral_welcome_sent",
+    "referral_link_included",
+    "referral_share_prompt_sent",
+    "referral_welcome_error",
+    "referral_link_creation_error",
 }
 
 
@@ -247,6 +252,11 @@ def source_performance(db, campaign: Campaign) -> dict:
             "cta_member_error": 0,
             "entry_link_created": 0,
             "entry_link_error": 0,
+            "referral_welcome_sent": 0,
+            "referral_link_included": 0,
+            "referral_share_prompt_sent": 0,
+            "referral_welcome_error": 0,
+            "referral_link_creation_error": 0,
         })
 
     for uid, source in first_source.items():
@@ -281,6 +291,13 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["cta_member_error"] = len(events.get("entry_cta_membership_error", set()))
         item["entry_link_created"] = len(events.get("entry_link_created", set()))
         item["entry_link_error"] = len(events.get("entry_link_creation_error", set()))
+        item["referral_welcome_sent"] = len(events.get("referral_welcome_sent", set()))
+        item["referral_link_included"] = len(events.get("referral_link_included", set()))
+        item["referral_share_prompt_sent"] = len(events.get("referral_share_prompt_sent", set()))
+        item["referral_welcome_error"] = len(events.get("referral_welcome_error", set()))
+        item["referral_link_creation_error"] = len(
+            events.get("referral_link_creation_error", set())
+        )
 
     candidate_seen: set[int] = set()
     for row in list(pending) + list(refs):
@@ -482,6 +499,10 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"initial_ok={row['initial_member_passed']} initial_no={row['initial_member_failed']} "
             f"cta_ok={row['cta_member_passed']} cta_no={row['cta_member_failed']} "
             f"link_ok={row['entry_link_created']} link_err={row['entry_link_error']}",
+            f"  referral path: welcome={row['referral_welcome_sent']} "
+            f"link={row['referral_link_included']} prompt={row['referral_share_prompt_sent']} "
+            f"welcome_err={row['referral_welcome_error']} "
+            f"link_err={row['referral_link_creation_error']}",
             f"  start→enter={_pct(row['start_to_entered_pct'])} | "
             f"new start→enter={_pct(row['new_start_to_entered_pct'])} | "
             f"shown→cta={_pct(row['entry_cta_pct'])} | candidate→join={_pct(row['candidate_to_join_pct'])}",

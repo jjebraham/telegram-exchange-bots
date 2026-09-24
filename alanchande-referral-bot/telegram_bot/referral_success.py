@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from .config import hours_label, telegram_membership
 from .context import services
-from .ui import final_join_cutoff_text, link_keyboard
+from .ui import final_join_cutoff_text, referral_activation_keyboard
 from .user_handlers import finalize_pending_referral, get_or_create_link
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -27,41 +27,69 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
     try:
         link = await get_or_create_link(context, campaign, user)
     except Exception:
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            "referral_link_creation_error",
+            "referral",
+        )
         log.exception("Could not create referral link for newly onboarded participant %s", user.id)
         return False
 
     first_name = escape(user.first_name or "دوست عزیز")
     if campaign.invites_per_point == 2:
-        first_step = "👥 اولین دعوت فعال = نصف راه تا اولین امتیاز"
+        progress_line = (
+            "🎯 پیشرفت اولین امتیاز: <b>۰/۲ دعوت فعال</b>\n"
+            "اگر همین یک نفر عضو شود، پیشرفتت می‌شود <b>۱/۲</b>."
+        )
     else:
-        first_step = f"👥 برای اولین امتیاز به {campaign.invites_per_point} دعوت فعال نیاز داری"
+        progress_line = (
+            f"🎯 برای اولین امتیاز به <b>{campaign.invites_per_point}</b> دعوت فعال نیاز داری."
+        )
 
     try:
         await context.bot.send_message(
             chat_id=user.id,
             text=(
-                f"🎉 <b>{first_name}، تبریک!</b>\n\n"
-                "عضویتت تأیید شد و حالا خودت هم داخل مسابقه‌ای.\n"
-                "تو با لینک یکی از دوستات وارد شدی؛ حالا لینک اختصاصی خودت هم آماده است. 🚀\n\n"
-                "📤 همین الان فقط برای ۲ نفر از دوستات بفرستش و زنجیره دعوت رو ادامه بده 👇\n\n"
+                f"🎉 <b>{first_name}، عضویتت تأیید شد!</b>\n\n"
+                "از این لحظه خودت هم یک <b>شرکت‌کننده مستقل</b> مسابقه‌ای.\n"
+                "امتیاز دوستت بابت دعوت تو جداست؛ "
+                "<b>امتیازها و شانس برنده‌شدن تو برای خودته.</b> ✅\n\n"
+                "🎯 <b>هدف اول: فقط برای ۱ نفر بفرست.</b>\n"
+                "اگر با لینک تو عضو شود، اولین دعوت فعال تو ثبت می‌شود.\n\n"
+                f"{progress_line}\n\n"
                 f"<b>🔗 لینک اختصاصی دعوت تو:</b>\n{link}\n\n"
-                f"{first_step}\n"
                 f"⭐ هر <b>{campaign.invites_per_point}</b> دعوت فعال = <b>۱ امتیاز موقت</b>\n"
                 f"🎟 بعد از <b>{hours_label(campaign.min_stay_hours)}</b> ماندن پیوسته، "
-                "همان امتیاز به بلیت تأییدشده قرعه‌کشی تبدیل می‌شود.\n\n"
+                "سهم هر دعوت برای بلیت تأییدشده قرعه‌کشی حساب می‌شود.\n\n"
                 f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}"
             ),
             parse_mode=ParseMode.HTML,
-            reply_markup=link_keyboard(settings, link, campaign),
+            reply_markup=referral_activation_keyboard(settings, link, campaign),
             disable_web_page_preview=True,
         )
     except (Forbidden, BadRequest) as exc:
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            "referral_welcome_error",
+            "referral",
+        )
         log.warning("Could not send participant welcome to user=%s: %s", user.id, exc)
         return False
     except TelegramError:
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            "referral_welcome_error",
+            "referral",
+        )
         log.exception("Participant welcome failed for user=%s", user.id)
         return False
 
+    db.track_funnel_event(campaign.id, user.id, "referral_welcome_sent", "referral")
+    db.track_funnel_event(campaign.id, user.id, "referral_link_included", "referral")
+    db.track_funnel_event(campaign.id, user.id, "referral_share_prompt_sent", "referral")
     db.track_funnel_event(campaign.id, user.id, "entered_contest", "referral")
     db.track_funnel_event(campaign.id, user.id, "link_created", "referral")
     db.mark_participant_welcome_sent(campaign.id, user.id)
