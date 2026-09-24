@@ -6,6 +6,11 @@ from urllib.parse import urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+try:
+    from telegram import CopyTextButton
+except ImportError:  # Compatibility with older python-telegram-bot 21.x builds.
+    CopyTextButton = None
+
 from referral_core import Campaign, ReferralDB, utcnow
 from .config import Settings, hours_label, remaining_label
 
@@ -15,7 +20,7 @@ IRAN = timezone(timedelta(hours=3, minutes=30))
 
 def main_keyboard(settings: Settings) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 دعوت دوستان", callback_data="menu:link")],
+        [InlineKeyboardButton("🔗 لینک دعوت من", callback_data="menu:link")],
         [InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
          InlineKeyboardButton("👥 دعوت‌های من", callback_data="menu:referrals")],
         [InlineKeyboardButton("🏆 جدول مسابقه", callback_data="menu:top"),
@@ -28,6 +33,16 @@ def main_keyboard(settings: Settings) -> InlineKeyboardMarkup:
 
 def back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")]])
+
+
+def copy_link_button(link: str) -> InlineKeyboardButton:
+    """Return Telegram's native copy button when supported, otherwise a safe fallback."""
+    if CopyTextButton is not None:
+        return InlineKeyboardButton(
+            "📋 کپی لینک",
+            copy_text=CopyTextButton(text=link),
+        )
+    return InlineKeyboardButton("🔗 نمایش لینک", callback_data="menu:link")
 
 
 def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
@@ -50,6 +65,7 @@ def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = Non
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
+        [copy_link_button(link)],
         [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
         [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
     ])
@@ -80,6 +96,7 @@ def referral_activation_keyboard(
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 ارسال برای ۱ دوست", url=share_url)],
+        [copy_link_button(link)],
         [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
         [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
     ])
