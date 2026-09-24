@@ -37,6 +37,44 @@ acquisition yet; a rate without a denominator is shown as `n/a`.
 
 ## Current design
 
+### Launch markers and 24-hour activation
+
+Immediately before publishing, save an immutable measurement marker:
+
+```text
+/launch_mark meditation_b meditation_sep24
+/launch_report meditation_sep24 paeez1405
+```
+
+Use `kriptofarsi_b` or `trstudy_b` for the other audiences. To observe newly
+referral-acquired users from now forward, use:
+
+```text
+/launch_mark referral referral_sep24
+/launch_report referral_sep24 paeez1405
+```
+
+Both commands are admin-only. Markers apply to the live campaign; reports can
+select an older campaign. Labels are unique per campaign and cannot be reset:
+repeating a label returns the original source, timestamp and baseline. Use a
+different label for another launch. Markers record the time the command runs,
+not a verified publication time; they do not publish messages or backdate traffic.
+
+The baseline stores campaign-to-date source metrics. The report independently
+selects new first-touch users from the marker onward, excluding earlier visitors
+and anyone with a personal link predating their first tracked start. It reports
+entries and exact downstream opens for that cohort. The completed 24-hour rate
+uses only holders whose personal links are at least 24 hours old; opens at exactly
+24 hours count, later opens do not. Pending holders, including early successes,
+are shown separately. No completed holders means `n/a`, not zero conversion.
+
+These are ongoing cohorts, not fixed 24-hour acquisition windows. Overlapping
+markers can share users and must not be added together. Reports use exact
+`referral_open_received` events, not historical inferred opens. Source attribution
+does not establish which particular post caused a start. Existing tracking and
+campaign rules are unchanged. Startup adds only the `growth_launches` analytics
+table; no existing records are rewritten.
+
 - Persistent random bot deep-link per participant/campaign: `https://t.me/Alanchandebot?start=ref_...`
 - First referrer is permanent inside a campaign.
 - No self-referral.

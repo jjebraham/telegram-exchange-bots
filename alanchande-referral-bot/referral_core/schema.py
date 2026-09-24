@@ -156,4 +156,13 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS growth_launches (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    source TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    admin_id INTEGER NOT NULL,
+    baseline_json TEXT NOT NULL,
+    PRIMARY KEY(campaign_id, label)
+);
 """
