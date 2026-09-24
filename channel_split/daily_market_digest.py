@@ -55,7 +55,7 @@ KUCOIN_URL = "https://api.kucoin.com/api/v1/market/allTickers"
 BITGET_URL = "https://api.bitget.com/api/v3/market/tickers?category=SPOT"
 
 FX_CODES = ("USD", "EUR", "AED", "TRY", "CNY", "CAD", "AUD", "GBP", "AFN")
-CRYPTO_SYMBOLS = ("BTC", "ETH", "BNB", "SHIB", "ADA", "DOGE", "GRAM", "NOT", "SOL", "XRP")
+CRYPTO_SYMBOLS = ("BTC", "ETH", "BNB", "TRX", "SHIB", "ADA", "DOGE", "GRAM", "NOT", "SOL", "XRP")
 
 FX_DISPLAY = (
     ("USD", "🇺🇸", "دلار آمریکا"),
@@ -83,10 +83,11 @@ CRYPTO_DISPLAY = (
     ("BTC", "₿", "بیت کوین"),
     ("ETH", "♦️", "اتریوم"),
     ("BNB", "🟡", "بایننس کوین"),
+    ("TRX", "🟥", "ترون"),
     ("SHIB", "🐕", "شیبا"),
     ("ADA", "💧", "کاردانو"),
     ("DOGE", "🐶", "دوج‌کوین"),
-    ("GRAM", "💎", "گرام (شبکه TON)"),
+    ("GRAM", "💎", "گرام (تون کوین)"),
     ("NOT", "❔", "نات کوین"),
     ("SOL", "🌞", "سولانا"),
     ("XRP", "💠", "ریپل"),
@@ -347,7 +348,7 @@ def collect_digest(
     *,
     now: datetime | None = None,
 ) -> DailyDigestResult:
-    """Fetch, verify and format the complete 28-line digest."""
+    """Fetch, verify and format the complete 29-line digest."""
     health: dict[str, str | None] = {}
 
     tgju_fx = _safe_fetch(health, "iran:tgju-fx", fetch_iran_open_market_fx, {})
@@ -515,6 +516,7 @@ def _fmt_crypto(key: str, value: Decimal) -> str:
         "BTC": 2,
         "ETH": 2,
         "BNB": 2,
+        "TRX": 5,
         "SHIB": 9,
         "ADA": 4,
         "DOGE": 5,
@@ -593,7 +595,8 @@ def build_digest_post(
     lines.extend(["", "🧬 <b>رمزارزها:</b> (دلار)"])
     for key, flag, label in CRYPTO_DISPLAY:
         lines.append(
-            f"{flag} <b>{label}</b> <code>{_fmt_crypto(key, values[key])}$</code> "
+            f"{flag} <b>{label}</b> ({key}) "
+            f"<code>{_fmt_crypto(key, values[key])}$</code> "
             f"{_fmt_change(changes.get(key))}"
         )
 
