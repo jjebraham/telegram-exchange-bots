@@ -14,6 +14,7 @@ from telegram.ext import Application, ContextTypes
 
 from referral_core import Campaign, parse_datetime, utcnow
 from .context import is_admin, services
+from .config import hours_label
 from .reporting import reply_report
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -432,9 +433,30 @@ def weekly_post_text(db, campaign: Campaign, promo_link: str) -> str:
     return "\n".join(lines)
 
 
-def promo_post_text(campaign: Campaign, promo_link: str, variant: str) -> str:
+def promo_post_text(campaign: Campaign, promo_link: str, variant: str, source: str | None = None) -> str:
     left = remaining_text((campaign.end_dt - utcnow()).total_seconds())
     cutoff = qualification_cutoff_text(campaign)
+
+    owned_audience = {
+        "meditation_b": "مدیتیشن",
+        "kriptofarsi_b": "کریپتوفارسی",
+        "trstudy_b": "TRStudy",
+    }.get(promo_source_with_variant(source, variant)) if source else None
+    if owned_audience:
+        return (
+            f"🎁 <b>دعوت از همراهان {owned_audience} به مسابقه «الان چنده؟»</b>\n\n"
+            f"🏆 {campaign.num_winners} برنده در مسابقه <b>{escape(campaign.name)}</b>\n"
+            f"💰 {escape(campaign.prize_text)}\n\n"
+            "۱) لینک زیر را باز کن و دکمه Start ربات را بزن.\n"
+            "۲) عضو کانال «الان چنده؟» شو و لینک اختصاصی خودت را بگیر.\n"
+            "۳) برای شروع، لینک اختصاصی‌ات را برای یک دوست علاقه‌مند بفرست.\n\n"
+            f"⭐ هر {campaign.invites_per_point} دعوت فعال = ۱ امتیاز موقت\n"
+            f"🎟 دعوت‌ها پس از {hours_label(campaign.min_stay_hours)} عضویت پیوسته تأیید می‌شوند.\n"
+            "برندگان با قرعه‌کشی وزن‌دار و بر اساس بلیت‌های تأییدشده انتخاب می‌شوند؛ جایزه تضمینی نیست.\n\n"
+            "✅ اعضای فعلی کانال هم می‌توانند شرکت کنند.\n"
+            f"⏳ آخرین زمان ورود دعوت جدید برای تأیید پیش از قرعه‌کشی: <b>{cutoff}</b>\n\n"
+            f"👇 ورود و مشاهده شرایط مسابقه:\n{escape(promo_link)}"
+        )
 
     if variant == "b":
         return (
@@ -628,7 +650,7 @@ async def cmd_promo_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     username = await _bot_username(context)
     link = build_promo_link(username, source, variant_arg)
     await update.message.reply_text(
-        promo_post_text(campaign, link, variant_arg),
+        promo_post_text(campaign, link, variant_arg, source=source),
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🎁 شرکت در مسابقه", url=link)],

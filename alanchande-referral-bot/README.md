@@ -20,6 +20,13 @@ Prepare each audience's post with the existing admin command:
 ```
 
 These commands return drafts in the admin chat; they do not publish to channels.
+For these three audiences, variant B uses an audience-specific introduction,
+three entry/share steps, the campaign's continuous membership requirement and
+qualification cutoff. The tracked URL is included in the text as well as the
+button, so copying the draft text preserves acquisition tracking. Participants
+must share their own personal link to earn referral credit. Main-channel drafts,
+variant A, and `/publish_promo` remain unchanged; `/publish_promo` targets the
+configured channel, not an audience selected by source name.
 Use the matching tracked link and preserve its source slug when posting. Promo
 links and post drafts target the live campaign, even when viewing an older report.
 No schema migration or campaign configuration is required.

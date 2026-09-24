@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from referral_core import ReferralDB
-from telegram_bot.growth import build_promo_link, cmd_promo_post, source_performance
+from telegram_bot.growth import build_promo_link, cmd_promo_post, promo_post_text, source_performance
 from telegram_bot.owned_audiences import OWNED_AUDIENCES, cmd_owned_sources
 from telegram_bot.promo_handlers import cmd_start_entry
 from telegram_bot.reporting import reply_report
@@ -71,8 +71,32 @@ class OwnedAudienceTests(unittest.IsolatedAsyncioTestCase):
             call = self.update.message.reply_text.await_args
             link = f"https://t.me/Alanchandebot?start=promo_{audience}_b"
             self.assertEqual(call.kwargs["reply_markup"].inline_keyboard[0][0].url, link)
+            self.assertIn(link, call.args[0])
+            self.assertIn("عضویت پیوسته", call.args[0])
             self.assertEqual(build_promo_link("Alanchandebot", f"{audience}_b", "b"), link)
         self.context.bot.send_message.assert_not_awaited()
+
+    def test_owned_draft_uses_campaign_rules_and_escapes_campaign_content(self):
+        campaign = SimpleNamespace(
+            name="<Test>", prize_text="Prize & more", num_winners=3,
+            invites_per_point=4, min_stay_hours=48,
+            end_dt=self.now + timedelta(days=10),
+            final_qualification_cutoff=self.now + timedelta(days=8),
+        )
+        text = promo_post_text(campaign, "https://t.me/test?start=promo_trstudy_b", "b", "trstudy_b")
+        self.assertIn("TRStudy", text)
+        self.assertIn("&lt;Test&gt;", text)
+        self.assertIn("Prize &amp; more", text)
+        self.assertIn("هر 4 دعوت فعال", text)
+        self.assertIn("3 برنده", text)
+        self.assertIn("2 روز", text)
+        self.assertIn("یک دوست علاقه‌مند", text)
+
+    def test_existing_mainchannel_and_variant_a_drafts_are_unchanged(self):
+        for source, variant in (("mainchannel_b", "b"), ("meditation", "a"), ("other", "b")):
+            link = build_promo_link("Alanchandebot", source, variant)
+            self.assertEqual(promo_post_text(self.campaign, link, variant, source),
+                             promo_post_text(self.campaign, link, variant))
 
     async def test_owned_starts_auto_enter_and_share_metrics_stay_separate(self):
         for uid, audience in enumerate(OWNED_AUDIENCES, 10):
