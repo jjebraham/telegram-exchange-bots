@@ -43,6 +43,48 @@ class IranFxDolarchandTests(unittest.TestCase):
         self.assertEqual(check.decision, VERIFIED)
         self.assertEqual(check.reference_value, Decimal("138400"))
 
+    def test_try_unique_three_of_four_cluster_rejects_adonis_outlier(self):
+        check = evaluate_observation(
+            SafetyObservation(
+                market_key="iran-fx:TRY/TOMAN",
+                source_values={
+                    "tgju": Decimal("4896.5"),
+                    "pashizi": Decimal("4815"),
+                    "dolarchand": Decimal("4880"),
+                    "adonis": Decimal("4769"),
+                },
+                min_sources=2,
+                max_source_deviation_pct=Decimal("2.00"),
+                suspicious_move_pct=Decimal("6.00"),
+                strong_quorum=3,
+            )
+        )
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(check.reference_value, Decimal("4880"))
+        self.assertEqual(
+            set(check.source_values),
+            {"tgju", "pashizi", "dolarchand"},
+        )
+        self.assertIn("rejected outlier source(s): adonis=4769", check.reason)
+
+    def test_ambiguous_two_vs_two_split_remains_blocked(self):
+        check = evaluate_observation(
+            SafetyObservation(
+                market_key="iran-fx:TEST/TOMAN",
+                source_values={
+                    "a": Decimal("100"),
+                    "b": Decimal("100.5"),
+                    "c": Decimal("104"),
+                    "d": Decimal("104.5"),
+                },
+                min_sources=2,
+                max_source_deviation_pct=Decimal("2.00"),
+                suspicious_move_pct=Decimal("6.00"),
+                strong_quorum=3,
+            )
+        )
+        self.assertNotEqual(check.decision, VERIFIED)
+
     def test_two_source_disagreement_still_blocks(self):
         check = evaluate_observation(
             SafetyObservation(
