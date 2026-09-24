@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 import asyncio
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F, Router
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -10,11 +11,13 @@ from aiogram.filters import Command
 # CONFIG
 ########################################
 ADMIN_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
+MAIN_BOT_TOKEN = "8509657640:AAG4gNsyvG0xt5ePoFXraBlMUb6hIrWmaWE"
 ADMIN_CHAT_ID = 2043363119
 
 logging.basicConfig(level=logging.DEBUG)
 
 admin_bot = Bot(token=ADMIN_BOT_TOKEN)
+main_bot = Bot(token=MAIN_BOT_TOKEN)
 adp = Dispatcher(storage=MemoryStorage())
 
 # Create a separate router for handling logs from user bot
@@ -28,6 +31,36 @@ def get_db_connection():
     conn = sqlite3.connect("users.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+def init_db():
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS exchange_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                exchange_type TEXT,
+                amount TEXT,
+                rate REAL,
+                details TEXT,
+                status TEXT DEFAULT 'submitted',
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+        conn.commit()
+
+EXCHANGE_STATUS_LABELS = {
+    "submitted": "ثبت شد",
+    "under_process": "در حال انجام",
+    "rejected": "رد شد",
+    "canceled": "لغو توسط ادمین",
+    "under_review": "در حال بررسی",
+    "done": "انجام شد",
+    "waiting_user_payment": "در انتظار پرداخت کاربر",
+    "waiting_admin_payment": "در انتظار پرداخت ادمین"
+}
 
 ########################################
 # START
@@ -262,6 +295,45 @@ async def reject_kyc_callback_adminbot(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("❌ کاربر یافت نشد.")
 
+@adp.callback_query(F.data.startswith("exch|"))
+async def exchange_status_callback(callback_query: types.CallbackQuery):
+    parts = callback_query.data.split("|")
+    if len(parts) != 3:
+        await callback_query.answer("❌ داده نامعتبر است")
+        return
+    status_code = parts[1]
+    request_id = parts[2]
+    if status_code not in EXCHANGE_STATUS_LABELS:
+        await callback_query.answer("❌ وضعیت نامعتبر است")
+        return
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, exchange_type FROM exchange_requests WHERE id=?",
+            (request_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            await callback_query.answer("❌ درخواست یافت نشد")
+            return
+        cursor.execute(
+            "UPDATE exchange_requests SET status=?, updated_at=? WHERE id=?",
+            (status_code, datetime.now().isoformat(), request_id)
+        )
+        conn.commit()
+
+    status_label = EXCHANGE_STATUS_LABELS[status_code]
+    try:
+        await main_bot.send_message(
+            row["user_id"],
+            f"وضعیت درخواست شما #{request_id} به «{status_label}» تغییر کرد.\nنوع درخواست: {row['exchange_type']}"
+        )
+    except Exception as e:
+        logging.error(f"Failed to notify user about exchange status: {e}")
+
+    await callback_query.answer(f"✅ وضعیت به {status_label} تغییر کرد")
+
 ########################################
 # USER LOGS
 ########################################
@@ -298,10 +370,8 @@ async def receive_log(message: types.Message):
 ########################################
 async def main():
     logging.info("Starting admin bot...")
+    init_db()
     await adp.start_polling(admin_bot, skip_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
