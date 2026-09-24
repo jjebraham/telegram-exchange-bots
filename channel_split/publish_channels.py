@@ -41,6 +41,7 @@ from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
 from iran_fx_adonis import fetch_adonis_try_sell_toman
+from iran_fx_dolarchand import fetch_dolarchand_iran_fx
 from iran_fx_pashizi import fetch_pashizi_iran_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from kiani_shared_pricing import (
@@ -388,6 +389,9 @@ def main() -> int:
     iran_fx_adonis_try_cache: Decimal | None = None
     iran_fx_adonis_attempted = False
     iran_fx_adonis_error: str | None = None
+    iran_fx_dolarchand_cache: dict[str, Decimal] | None = None
+    iran_fx_dolarchand_attempted = False
+    iran_fx_dolarchand_errors: dict[str, str] = {}
     iran_fx_publish_cache: dict[str, Decimal] | None = None
     iran_gold_cache: Any | None = None
     iran_gold_external_cache: dict[str, Decimal] | None = None
@@ -582,6 +586,49 @@ def main() -> int:
                 )
 
         return iran_fx_external_cache or {}
+
+    def get_iran_fx_dolarchand_safe(
+        codes: Any,
+    ) -> dict[str, Decimal]:
+        nonlocal iran_fx_dolarchand_cache
+        nonlocal iran_fx_dolarchand_attempted
+        nonlocal iran_fx_dolarchand_errors
+
+        if not iran_fx_dolarchand_attempted:
+            iran_fx_dolarchand_attempted = True
+            rates, errors = fetch_dolarchand_iran_fx(codes)
+            iran_fx_dolarchand_cache = rates
+            iran_fx_dolarchand_errors = errors
+
+            if rates:
+                detail = (
+                    f"parsed {len(rates)} currencies"
+                    + (
+                        f"; {len(errors)} unavailable"
+                        if errors
+                        else ""
+                    )
+                )
+                note_source_health(
+                    "iran:dolarchand-fx",
+                    not bool(errors),
+                    detail,
+                )
+            else:
+                detail = (
+                    "; ".join(
+                        f"{code}={message}"
+                        for code, message in sorted(errors.items())[:5]
+                    )
+                    or "no Dolarchand FX rows available"
+                )
+                note_source_health(
+                    "iran:dolarchand-fx",
+                    False,
+                    detail,
+                )
+
+        return iran_fx_dolarchand_cache or {}
 
     def get_iran_fx_adonis_try_safe() -> Decimal | None:
         nonlocal iran_fx_adonis_try_cache
@@ -1143,6 +1190,7 @@ def main() -> int:
 
         rates = get_iran_fx()
         external = get_iran_fx_external_safe()
+        dolarchand = get_iran_fx_dolarchand_safe(rates.keys())
         adonis_try = get_iran_fx_adonis_try_safe()
 
         observations = []
@@ -1154,6 +1202,14 @@ def main() -> int:
                 source_values["pashizi"] = external[code]
             elif iran_fx_external_error:
                 unavailable.append(iran_fx_external_error)
+
+            if code in dolarchand:
+                source_values["dolarchand"] = dolarchand[code]
+            elif code in iran_fx_dolarchand_errors:
+                unavailable.append(
+                    f"dolarchand-fx:{code}: "
+                    f"{iran_fx_dolarchand_errors[code]}"
+                )
 
             if code == "TRY":
                 if adonis_try is not None:
