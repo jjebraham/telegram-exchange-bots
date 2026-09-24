@@ -28,7 +28,7 @@ def main() -> int:
         print(f"{key}: {'HEALTHY' if error is None else 'DEGRADED'}"
               + (f" | {error}" if error else ""))
 
-    print("\n===== 28-LINE SAFETY =====")
+    print("\n===== 29-LINE SAFETY =====")
     print(
         f"{result.assessment.post_type}: {result.assessment.decision} | "
         f"{result.assessment.reason}"
