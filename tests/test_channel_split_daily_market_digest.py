@@ -46,6 +46,7 @@ class DailyMarketDigestTests(unittest.TestCase):
             "BTC": Decimal("81179"),
             "ETH": Decimal("2620"),
             "BNB": Decimal("759.9"),
+            "TRX": Decimal("0.33456"),
             "SHIB": Decimal("0.0000055"),
             "ADA": Decimal("0.227"),
             "DOGE": Decimal("0.0866"),
@@ -60,7 +61,7 @@ class DailyMarketDigestTests(unittest.TestCase):
         )
         return values
 
-    def test_full_post_contains_all_28_prices_and_fits_telegram(self):
+    def test_full_post_contains_all_29_prices_and_fits_telegram(self):
         values = self._values()
         changes = {key: Decimal("0.52") for key in values}
         changes["BTC"] = Decimal("-0.79")
@@ -68,7 +69,12 @@ class DailyMarketDigestTests(unittest.TestCase):
         post = build_digest_post(values, changes, now=now)
         for key, _flag, label in (*FX_DISPLAY, *GOLD_DISPLAY, *CRYPTO_DISPLAY):
             self.assertIn(label, post)
-        self.assertIn("گرام (شبکه TON)", post)
+        self.assertIn("گرام (تون کوین)", post)
+        self.assertIn("<b>بیت کوین</b> (BTC)", post)
+        self.assertIn("<b>اتریوم</b> (ETH)", post)
+        self.assertIn("<b>ترون</b> (TRX)", post)
+        self.assertIn("<b>شیبا</b> (SHIB)", post)
+        self.assertIn("<b>گرام (تون کوین)</b> (GRAM)", post)
         self.assertIn("🔼 %0.52", post)
         self.assertIn("🔻 %0.79", post)
         self.assertIn("@alanchande_com", post)
