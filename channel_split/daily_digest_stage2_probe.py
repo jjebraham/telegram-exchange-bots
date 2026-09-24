@@ -154,8 +154,7 @@ def fetch_dolarchand_fx(code: str) -> Decimal:
 def parse_tgju_profile_current(html: str) -> Decimal:
     text = _visible(html).translate(_DIGITS)
     match = re.search(
-        r"(?:نرخ\s*فعلی|Last)\s*:*
-\s*([0-9][0-9,]*(?:\.[0-9]+)?)",
+        r"(?:نرخ\\s*فعلی|Last)\\s*:*\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)",
         text,
         re.IGNORECASE,
     )
