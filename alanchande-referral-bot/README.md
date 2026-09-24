@@ -2,6 +2,39 @@
 
 Dedicated referral/giveaway bot for [`@alanchande_com`](https://t.me/alanchande_com), intentionally isolated from the exchange bot.
 
+## Owned-audience seed acquisition
+
+Admins can run `/owned_sources [campaign_slug]` to compare `meditation_b`,
+`kriptofarsi_b`, and `trstudy_b`, including sources with no traffic yet. It shows
+tracked links, unique first-touch starts, new/returning classifications,
+start-to-entry rates, link holders, holders with downstream opens, unique openers,
+and joined/active/qualified referrals. `/sources` provides detailed auto-entry
+diagnostics and sharing activation for all sources, split across messages.
+
+Prepare each audience's post with the existing admin command:
+
+```text
+/promo_post meditation b
+/promo_post kriptofarsi b
+/promo_post trstudy b
+```
+
+These commands return drafts in the admin chat; they do not publish to channels.
+Use the matching tracked link and preserve its source slug when posting. Promo
+links and post drafts target the live campaign, even when viewing an older report.
+No schema migration or campaign configuration is required.
+
+Before acquisition, smoke-test existing-member auto-entry and non-member
+channel-join auto-entry using fresh accounts. Save `/owned_sources` and `/sources`
+baselines plus the UTC posting time, then launch one audience at a time. Compare
+increments after the same elapsed time (for example, 24 hours), keeping sample
+sizes visible. First-touch source is retained across repeat promo clicks;
+historical referral trees remain legacy/untracked. Reports are campaign-to-date,
+not isolated post-deploy or 24-hour cohorts. A holder's downstream open is not
+proof of native Share completion. Telegram post views are not measured, so these
+reports cannot calculate view-to-start rates. Zero starts means no measured
+acquisition yet; a rate without a denominator is shown as `n/a`.
+
 ## Current design
 
 - Persistent random bot deep-link per participant/campaign: `https://t.me/Alanchandebot?start=ref_...`

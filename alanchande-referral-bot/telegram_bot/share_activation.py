@@ -10,6 +10,7 @@ from referral_core import parse_datetime
 from . import reminders
 from .context import is_admin, services
 from .growth import cmd_sources as base_cmd_sources
+from .reporting import reply_report
 
 
 def record_referral_open_received(
@@ -318,7 +319,7 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     ]
     if not report["rows"]:
         lines.append("No sharing data yet.")
-    for row in report["rows"][:20]:
+    for row in report["rows"]:
         lines.extend([
             f"• {row['source']}",
             f"  holders={row['link_holders']} with_open={row['holders_with_open']} "
@@ -331,4 +332,4 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "Exact open attribution is recorded from this deployment forward; older opens are inferred when a pending/joined candidate can be matched.",
         "Telegram's native share-sheet completion is still not visible to the bot; downstream link opens are the reliable outcome metric.",
     ])
-    await update.message.reply_text("\n".join(lines))
+    await reply_report(update.message, "\n".join(lines))

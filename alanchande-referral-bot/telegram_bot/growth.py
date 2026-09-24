@@ -14,6 +14,7 @@ from telegram.ext import Application, ContextTypes
 
 from referral_core import Campaign, parse_datetime, utcnow
 from .context import is_admin, services
+from .reporting import reply_report
 
 log = logging.getLogger("alanchande_referral_bot")
 ISTANBUL = timezone(timedelta(hours=3))
@@ -512,7 +513,7 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     lines.append("")
     if not report["rows"]:
         lines.append("No source data yet.")
-    for row in report["rows"][:20]:
+    for row in report["rows"]:
         lines.extend([
             f"• {row['source']}",
             f"  starts={row['starts']} entered={row['entered']} links={row['links']} "
@@ -543,7 +544,7 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         ])
     lines.append("\nclassified starts are available only after this onboarding instrumentation was deployed.")
     lines.append("legacy/untracked = activity whose referrer predates first-touch source tracking.")
-    await update.message.reply_text("\n".join(lines))
+    await reply_report(update.message, "\n".join(lines))
 
 
 async def cmd_funnel_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
