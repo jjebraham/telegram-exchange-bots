@@ -4,9 +4,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -15,7 +20,6 @@ from telegram_bot.config import Settings
 from telegram_bot.growth import build_promo_link, normalize_promo_source
 
 ISTANBUL = ZoneInfo("Europe/Istanbul")
-ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV = ROOT / ".env"
 DEFAULT_IMAGE = ROOT / "assets" / "meditation-autumn-20260925.png"
 
