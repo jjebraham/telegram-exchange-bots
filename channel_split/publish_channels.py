@@ -1198,6 +1198,12 @@ def main() -> int:
 
         observations = []
         for code, value in rates.items():
+            # TRY has distinct Iran/Turkey-facing source conventions. Keep the
+            # global 2% ceiling for other currencies; allow only a bounded
+            # 3.5% TRY consensus spread. Wider divergence still blocks the board.
+            max_source_deviation_pct = (
+                Decimal("3.50") if code == "TRY" else Decimal("2.00")
+            )
             source_values: dict[str, Decimal] = {"tgju": value}
             unavailable: list[str] = []
 
@@ -1225,7 +1231,7 @@ def main() -> int:
                     market_key=f"iran-fx:{code}/TOMAN",
                     source_values=source_values,
                     min_sources=2,
-                    max_source_deviation_pct=Decimal("2.00"),
+                    max_source_deviation_pct=max_source_deviation_pct,
                     suspicious_move_pct=Decimal("6.00"),
                     strong_quorum=3,
                     unavailable_sources=tuple(unavailable),

@@ -110,3 +110,7 @@ class IranFxDolarchandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_try_publisher_has_bounded_wider_consensus_ceiling(self):
+        text = PUBLISHER.read_text(encoding="utf-8")
+        self.assertIn('Decimal("3.50") if code == "TRY"', text)
