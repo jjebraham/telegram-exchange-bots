@@ -9,7 +9,7 @@ The first feed covers verified Iran FX, Iran gold, Turkey bank FX, Turkey gold, 
 From `/home/kianirad2020/alanchande-site`:
 
 ```bash
-git fetch origin
+git fetch origin codex/alanchande-phase3-live-data:refs/remotes/origin/codex/alanchande-phase3-live-data
 git switch --create codex/alanchande-phase3-live-data --track origin/codex/alanchande-phase3-live-data
 cd website
 python3 -m venv .venv
