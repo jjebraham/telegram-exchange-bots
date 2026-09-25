@@ -26,6 +26,19 @@ observations; gaps are not filled.
 See [Phase 4 deployment](PHASE_4_DEPLOYMENT.md). The frontend needs the API
 reachable at `/api/v1/quotes` and `/api/v1/history` on the same domain.
 
+## First trust and UI release
+
+The current working tree includes the first Phase 5 release candidate. The
+dashboard now presents a headline board, explicit rate meanings, mobile-safe
+tables, relative freshness and expiry labels, and charts that break across
+long gaps. Daily digest crypto rows are marked as daily digest data so they
+appear in the digest view with the FX and gold rows. The publisher database
+remains outside the frontend and is still read only to the website importer.
+
+Before serving this checkout, run the Python and Node checks below, then use
+the deployment notes in `PHASE_5_FIRST_RELEASE.md`. The release only changes
+the website checkout; it does not restart Telegram or X publishers.
+
 ## Snapshot validation
 
 ```bash
@@ -34,4 +47,5 @@ node --test tests/model.test.mjs
 ```
 
 Money values stay decimal strings. No credentials, publisher tokens, customer transactions, or sample values are used as live quotes.
+
 
