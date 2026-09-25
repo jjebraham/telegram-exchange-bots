@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:ui": "node --test tests/*.test.mjs"
+  }
+}

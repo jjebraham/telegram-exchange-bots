@@ -13,6 +13,14 @@ from api import store
 app = FastAPI(title="AlanChande Market API", version="1.0.0")
 
 
+@app.middleware("http")
+async def prevent_market_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/") or request.url.path == "/healthz":
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.on_event("startup")
 def startup() -> None:
     store.initialize()
