@@ -1,0 +1,24 @@
+[Unit]
+Description=AlanChande read-only market API
+After=network.target
+
+[Service]
+Type=simple
+User=kianirad2020
+Group=kianirad2020
+WorkingDirectory=/home/kianirad2020/alanchande-site/website
+EnvironmentFile=/home/kianirad2020/.config/alanchande-api.env
+ExecStart=/home/kianirad2020/alanchande-site/website/.venv/bin/uvicorn api.app:app --host 127.0.0.1 --port 8012
+Restart=on-failure
+RestartSec=3
+StateDirectory=alanchande
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/home/kianirad2020/telegram_bot_repo/channel_split
+ReadWritePaths=/var/lib/alanchande
+
+[Install]
+WantedBy=multi-user.target
+
