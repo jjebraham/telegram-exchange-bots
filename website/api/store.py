@@ -13,6 +13,14 @@ from typing import Any, Iterable, Iterator
 
 from data_foundation.snapshot import SnapshotError, validate_snapshot
 
+PUBLIC_QUOTE_FIELDS = {
+    "quote_id", "series_id", "instrument_id", "base_asset", "base_quantity",
+    "quote_currency", "unit", "quote_kind", "bid", "ask", "reference", "mid",
+    "source_id", "source_family", "source_observed_at", "collected_at", "verified_at",
+    "verification_status", "valid_until", "market_open", "methodology_version",
+    "parent_quote_ids", "category", "display_name_fa",
+}
+
 
 def database_path() -> Path:
     configured = os.environ.get("ALANCHANDE_DB_PATH", "").strip()
@@ -135,6 +143,7 @@ def ingest_snapshots(
                 (snapshot_id, payload["collected_at"], digest, encoded),
             )
             for quote in payload["quotes"]:
+                public_quote = {key: value for key, value in quote.items() if key in PUBLIC_QUOTE_FIELDS}
                 db.execute(
                     """INSERT INTO quotes(
                         snapshot_id, quote_id, series_id, instrument_id, collected_at,
@@ -149,7 +158,7 @@ def ingest_snapshots(
                         quote["verification_status"],
                         str(quote.get("category", "other")),
                         str(quote.get("display_name_fa", quote["instrument_id"])),
-                        json.dumps(quote, ensure_ascii=False, sort_keys=True),
+                        json.dumps(public_quote, ensure_ascii=False, sort_keys=True),
                     ),
                 )
             inserted += 1
