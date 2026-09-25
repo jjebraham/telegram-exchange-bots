@@ -103,6 +103,13 @@ async def run() -> None:
     load_env_file(Path(args.env).expanduser())
 
     settings = Settings.from_env()
+
+    posting_token = os.environ.get("MEDITATION_POSTING_BOT_TOKEN", "").strip() or settings.bot_token
+    campaign_bot_username = (
+        os.environ.get("CAMPAIGN_BOT_USERNAME", "").strip().lstrip("@")
+        or "Alanchandebot"
+    )
+
     channel = (
         args.channel
         or os.environ.get("MEDITATION_CHANNEL_ID", "").strip()
@@ -141,11 +148,11 @@ async def run() -> None:
     tickets = int(stats["tickets"])
     source = normalize_promo_source(args.source) if args.source else unique_source()
 
-    async with Bot(settings.bot_token) as bot:
+    async with Bot(posting_token) as bot:
         me = await bot.get_me()
         if not me.username:
-            raise SystemExit("Bot username is unavailable.")
-        promo_link = build_promo_link(me.username, source, "b")
+            raise SystemExit("Posting bot username is unavailable.")
+        promo_link = build_promo_link(campaign_bot_username, source, "b")
         caption = build_caption(
             tickets=tickets,
             winners=int(campaign.num_winners),
@@ -157,6 +164,8 @@ async def run() -> None:
         print(f"tickets={tickets}")
         print(f"link={promo_link}")
         print(f"image={image}")
+        print(f"posting_bot=@{me.username}")
+        print(f"campaign_bot=@{campaign_bot_username}")
         print(f"channel={channel_ref}")
 
         if args.dry_run:
