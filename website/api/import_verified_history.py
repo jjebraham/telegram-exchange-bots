@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
@@ -52,6 +52,33 @@ USDT_EXCHANGES = {
     "bitpin": "بیت‌پین", "abantether": "آبان‌تتر", "aban": "آبان‌تتر",
     "tabdeal": "تبدیل", "exir": "اکسیر",
 }
+DIGEST_FX = {
+    "USD": "دلار آمریکا", "EUR": "یورو", "USDT": "تتر", "AED": "درهم امارات",
+    "TRY": "لیر ترکیه", "CNY": "یوان چین", "CAD": "دلار کانادا",
+    "AUD": "دلار استرالیا", "GBP": "پوند انگلیس", "IQD100": "صد دینار عراق",
+    "AFN": "افغانی",
+}
+DIGEST_GOLD = {
+    "COIN_EMAMI": ("coin-emami", "سکه امامی", "piece"),
+    "COIN_AZADI": ("coin-azadi", "سکه بهار آزادی", "piece"),
+    "COIN_HALF": ("coin-half", "نیم سکه", "piece"),
+    "COIN_QUARTER": ("coin-quarter", "ربع سکه", "piece"),
+    "MESGHAL": ("mesghal", "مثقال طلا", "mithqal"),
+    "GOLD18": ("gold18", "گرم طلای ۱۸ عیار", "gram-18k"),
+    "XAUUSD": ("xauusd", "انس جهانی طلا", "troy-ounce"),
+}
+DIGEST_CRYPTO = {
+    "BTC": "بیت‌کوین", "ETH": "اتریوم", "BNB": "بایننس کوین",
+    "TRX": "ترون", "SHIB": "شیبا", "ADA": "کاردانو",
+    "DOGE": "دوج‌کوین", "GRAM": "گرام", "NOT": "نات‌کوین",
+    "SOL": "سولانا", "XRP": "ریپل",
+}
+HAWALA_LABELS = {
+    "USD": "حواله دلار آمریکا", "EUR": "حواله یورو",
+    "GBP": "حواله پوند انگلیس", "CAD": "حواله دلار کانادا",
+    "AUD": "حواله دلار استرالیا", "SEK": "حواله کرون سوئد",
+    "TRY": "حواله لیر ترکیه",
+}
 
 
 def _utc(value: str) -> str:
@@ -79,12 +106,15 @@ def _quote(
     *, quote_id: str, series_id: str, instrument_id: str, base_asset: str,
     quote_currency: str, unit: str, category: str, label: str, collected_at: str,
     source_id: str, bid: Decimal | None = None, ask: Decimal | None = None,
-    reference: Decimal | None = None,
+    reference: Decimal | None = None, base_quantity: str = "1",
+    quote_kind: str | None = None, valid_until: str | None = None,
 ) -> dict[str, Any]:
     return {
         "quote_id": quote_id, "series_id": series_id, "instrument_id": instrument_id,
-        "base_asset": base_asset, "base_quantity": "1", "quote_currency": quote_currency,
-        "unit": unit, "quote_kind": "venue_quote" if bid is not None or ask is not None else "market_reference",
+        "base_asset": base_asset, "base_quantity": base_quantity, "quote_currency": quote_currency,
+        "unit": unit, "quote_kind": quote_kind or (
+            "venue_quote" if bid is not None or ask is not None else "market_reference"
+        ),
         "bid": str(bid) if bid is not None else None,
         "ask": str(ask) if ask is not None else None,
         "reference": str(reference) if reference is not None else None,
@@ -92,6 +122,7 @@ def _quote(
         "source_id": source_id, "source_family": "telegram_verified_history",
         "source_observed_at": None, "collected_at": collected_at,
         "verification_status": "verified", "category": category, "display_name_fa": label,
+        "valid_until": valid_until,
     }
 
 
@@ -249,9 +280,86 @@ def collect_new_snapshots(source_path: Path) -> tuple[list[dict[str, Any]], dict
             if quotes:
                 payloads.append(_snapshot("published-values", stamp, quotes))
         next_cursors["published_value_snapshots"] = next_id
+
+        # Use a separate cursor: the older importer advanced its shared cursor
+        # past digest rows whenever a later Iran FX or USDT post was recorded.
+        digest_cursor = "published_value_snapshots_daily_digest"
+        rows, next_id = _read_rows(
+            source, "published_value_snapshots", cursors.get(digest_cursor, 0),
+            "AND board = 'daily-digest'",
+        )
+        for stamp, batch in _groups(rows).items():
+            quotes = []
+            for row in batch:
+                key = str(row["item"]).upper()
+                value = _decimal(row["value"])
+                common = {
+                    "quote_id": f"published_value_snapshots:{row['id']}",
+                    "collected_at": stamp,
+                    "source_id": "verified-telegram:daily-digest",
+                    "reference": value,
+                }
+                if key in DIGEST_FX:
+                    base_asset = "IQD" if key == "IQD100" else key
+                    quotes.append(_quote(
+                        **common, series_id=f"digest:fx:{key.lower()}:toman:reference:v1",
+                        instrument_id=f"digest:fx:{key.lower()}", base_asset=base_asset,
+                        base_quantity="100" if key == "IQD100" else "1",
+                        quote_currency="TOMAN", unit="token" if key == "USDT" else "currency-unit",
+                        category="daily_fx", label=DIGEST_FX[key],
+                    ))
+                elif key in DIGEST_GOLD:
+                    slug, label, unit = DIGEST_GOLD[key]
+                    currency = "USD" if key == "XAUUSD" else "TOMAN"
+                    quotes.append(_quote(
+                        **common, series_id=f"digest:gold:{slug}:{currency.lower()}:reference:v1",
+                        instrument_id=f"digest:gold:{slug}", base_asset="XAU" if key == "XAUUSD" else label,
+                        quote_currency=currency, unit=unit, category="daily_gold", label=label,
+                    ))
+                elif key in DIGEST_CRYPTO:
+                    quotes.append(_quote(
+                        **common, series_id=f"digest:crypto:{key.lower()}:usd:reference:v1",
+                        instrument_id=f"crypto:{key.lower()}", base_asset=key,
+                        quote_currency="USD", unit="token", category="crypto_global",
+                        label=DIGEST_CRYPTO[key],
+                    ))
+            if quotes:
+                payloads.append(_snapshot("daily-digest", stamp, quotes))
+        next_cursors[digest_cursor] = next_id
         return payloads, next_cursors
     finally:
         source.close()
+
+
+def collect_hawala_snapshot(path: Path, *, now: datetime | None = None) -> dict[str, Any]:
+    """Read only the fresh export written after successful hawala Telegram delivery."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("source") != "kiani-hawala":
+        raise SnapshotError("hawala export has an unexpected source")
+    generated = datetime.fromisoformat(str(data.get("generated_at", "")).replace("Z", "+00:00"))
+    if generated.tzinfo is None:
+        raise SnapshotError("hawala export needs a timezone")
+    current = now or datetime.now(timezone.utc)
+    age = (current.astimezone(timezone.utc) - generated.astimezone(timezone.utc)).total_seconds()
+    if not 0 <= age <= 900:
+        raise SnapshotError("hawala export must be no older than 15 minutes")
+    rates = data.get("rates")
+    if not isinstance(rates, dict) or set(rates) != set(HAWALA_LABELS):
+        raise SnapshotError("hawala export must contain all seven expected currencies")
+    stamp = _utc(data["generated_at"])
+    expiry = (generated.astimezone(timezone.utc) + timedelta(minutes=15)).isoformat(timespec="seconds")
+    quotes = [
+        _quote(
+            quote_id=f"hawala:{code}", series_id=f"hawala:{code.lower()}:toman:payout:v1",
+            instrument_id=f"hawala:{code.lower()}", base_asset=code,
+            quote_currency="TOMAN", unit="currency-unit", category="kiani_hawala",
+            label=HAWALA_LABELS[code], collected_at=stamp,
+            source_id="verified-telegram:kiani-hawala", reference=_decimal(rates[code]),
+            quote_kind="customer_rate", valid_until=expiry,
+        )
+        for code in HAWALA_LABELS
+    ]
+    return _snapshot("kiani-hawala", stamp, quotes)
 
 
 def main() -> int:
@@ -262,6 +370,17 @@ def main() -> int:
     if not raw_source:
         parser.error("set ALANCHANDE_SOURCE_DB to the existing market history SQLite file")
     payloads, cursors = collect_new_snapshots(Path(raw_source))
+    hawala_path = os.environ.get("ALANCHANDE_HAWALA_SNAPSHOT", "").strip()
+    hawala_status = "not_configured"
+    if hawala_path:
+        try:
+            payloads.append(collect_hawala_snapshot(Path(hawala_path)))
+            hawala_status = "fresh_snapshot_included"
+        except (OSError, ValueError, SnapshotError) as exc:
+            # The hourly hawala export is normally older than 15 minutes.
+            # Its absence must not hold up the independent market imports.
+            hawala_status = f"skipped:{type(exc).__name__}"
+            print(f"HAWALA SKIPPED: {exc}", file=sys.stderr)
     for payload in payloads:
         validate_snapshot(payload)
     summary = {
@@ -271,6 +390,7 @@ def main() -> int:
         "snapshots": len(payloads),
         "quotes": sum(len(payload["quotes"]) for payload in payloads),
         "source_rows_through": cursors,
+        "hawala": hawala_status,
         "no_social_posts_sent": True,
     }
     if args.apply:
