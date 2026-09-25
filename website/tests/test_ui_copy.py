@@ -10,6 +10,9 @@ class UiCopyTests(unittest.TestCase):
         html = (ROOT / "dist" / "index.html").read_text(encoding="utf-8")
         self.assertIn("الان چنده؟", html)
         self.assertNotIn("الان چند؟", html)
-        self.assertIn('app.js?v=6', html)
+        self.assertIn('app.js?v=7', html)
         self.assertIn('styles.css?v=6', html)
+
+        app = (ROOT / "dist" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('from "./model.js?v=7";', app)
 

@@ -2,7 +2,7 @@ import {
   CATEGORY_META, CATEGORY_ORDER, bestQuote, changeBetween, chartObservations, cheapestAsk,
   currencyName, formatPercent, formatPrice, freshness, normalizeQuotes, numericPrice,
   observationSegments, quoteUnit, relativeAge, searchKey, sortQuotes,
-} from "./model.js";
+} from "./model.js?v=7";
 
 const byId = (id) => document.getElementById(id);
 const svgNS = "http://www.w3.org/2000/svg";
