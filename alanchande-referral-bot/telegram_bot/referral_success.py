@@ -39,8 +39,9 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
     first_name = escape(user.first_name or "دوست عزیز")
     if campaign.invites_per_point == 2:
         progress_line = (
-            "🎯 پیشرفت اولین امتیاز: <b>۰/۲ دعوت فعال</b>\n"
-            "اگر همین یک نفر عضو شود، پیشرفتت می‌شود <b>۱/۲</b>."
+            "🎯 <b>پیشرفت اولین امتیاز:</b>\n"
+            "░░░░░░░░░░ <b>۰/۲</b>\n"
+            "اگر همین یک نفر عضو شود: <b>۱/۲</b> ✅"
         )
     else:
         progress_line = (
@@ -55,8 +56,9 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
                 "از این لحظه خودت هم یک <b>شرکت‌کننده مستقل</b> مسابقه‌ای.\n"
                 "دعوتی که بابت ورود تو برای دوستت ثبت شد جداست؛ "
                 "<b>امتیازها و شانس برنده‌شدن تو برای خودته.</b> ✅\n\n"
-                "🎯 <b>هدف اول: فقط برای ۱ نفر بفرست.</b>\n"
-                "اگر با لینک تو عضو شود، اولین دعوت فعال تو ثبت می‌شود.\n\n"
+                "🎯 <b>فقط یک کار مونده</b>\n\n"
+                "لینکت آماده‌ست.\n"
+                "<b>همین الان برای فقط ۱ نفر بفرست 👇</b>\n\n"
                 f"{progress_line}\n\n"
                 f"<b>🔗 لینک اختصاصی دعوت تو:</b>\n{link}\n\n"
                 f"⭐ هر <b>{campaign.invites_per_point}</b> دعوت فعال = <b>۱ امتیاز موقت</b>\n"
