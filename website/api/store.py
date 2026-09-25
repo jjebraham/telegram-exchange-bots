@@ -8,7 +8,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-from typing import Any, Iterable
+from contextlib import contextmanager
+from typing import Any, Iterable, Iterator
 
 from data_foundation.snapshot import SnapshotError, validate_snapshot
 
@@ -18,8 +19,16 @@ def database_path() -> Path:
     return Path(configured) if configured else Path(__file__).resolve().parent.parent / "var" / "market.sqlite3"
 
 
-def connect() -> sqlite3.Connection:
+def _open_database(*, readonly: bool = False) -> sqlite3.Connection:
     path = database_path()
+    if readonly:
+        if not path.is_file():
+            raise FileNotFoundError("website market database has not been initialized")
+        db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=15)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA query_only = ON")
+        db.execute("PRAGMA busy_timeout = 15000")
+        return db
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=15)
     db.row_factory = sqlite3.Row
@@ -29,15 +38,26 @@ def connect() -> sqlite3.Connection:
     return db
 
 
-def connect_readonly() -> sqlite3.Connection:
-    path = database_path()
-    if not path.is_file():
-        raise FileNotFoundError("website market database has not been initialized")
-    db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=15)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA query_only = ON")
-    db.execute("PRAGMA busy_timeout = 15000")
-    return db
+@contextmanager
+def connect() -> Iterator[sqlite3.Connection]:
+    db = _open_database()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@contextmanager
+def connect_readonly() -> Iterator[sqlite3.Connection]:
+    db = _open_database(readonly=True)
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def initialize() -> None:
