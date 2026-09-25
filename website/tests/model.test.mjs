@@ -54,6 +54,7 @@ test("history uses only actual verified observations", () => {
 test("units and decimal precision remain explicit", () => {
   assert.equal(formatPrice(verified(), "84455.10"), "84,455.10");
   assert.equal(formatPrice(verified(), "0.00000582"), "0.00000582");
+  assert.equal(formatPrice(verified(), "0.000000000012"), "0.000000000012");
   assert.equal(quoteUnit(verified({
     base_asset: "IQD", base_quantity: "100", quote_currency: "TOMAN",
   })), "تومان برای ۱۰۰ واحد");

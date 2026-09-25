@@ -130,7 +130,9 @@ function marketRow(quote) {
   const main = element("td");
   const price = numericPrice(quote);
   main.append(priceNode(quote, price?.raw));
-  main.append(element("small", "", quoteUnit(quote)));
+  const rateKind = quote.quote_kind === "customer_rate"
+    ? "پرداختی" : price?.kind === "reference" ? "مرجع" : "فروش";
+  main.append(element("small", "", `${rateKind} · ${quoteUnit(quote)}`));
   const bid = element("td");
   if (typeof quote.bid === "string" && typeof quote.ask === "string") {
     bid.append(priceNode(quote, quote.bid));
@@ -157,7 +159,7 @@ function marketGroup(category, quotes) {
   const table = element("table", "rate-table");
   const thead = element("thead");
   const headRow = element("tr");
-  for (const label of ["نام بازار", "نرخ / فروش", "خرید", "ثبت · تهران"]) {
+  for (const label of ["نام بازار", "نرخ", "خرید", "ثبت · تهران"]) {
     headRow.append(element("th", "", label));
   }
   thead.append(headRow);

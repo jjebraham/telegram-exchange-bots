@@ -51,18 +51,15 @@ export function bestQuote(quotes, predicate, connected = true) {
 
 export function formatPrice(quote, raw) {
   if (typeof raw !== "string" || !/^\d+(?:\.\d+)?$/.test(raw)) return "—";
-  const value = Number(raw);
-  if (!Number.isFinite(value)) return "—";
-  let decimals = 0;
+  const [integer, fractional = ""] = raw.split(".");
+  let decimals = fractional.length;
   if (quote.quote_currency === "TRY") {
-    decimals = quote.category === "turkey_fx" ? 4 : 2;
+    decimals = Math.max(decimals, quote.category === "turkey_fx" ? 4 : 2);
   } else if (quote.quote_currency === "USD") {
-    decimals = value < 1 ? Math.min(8, (raw.split(".")[1] || "").length) : 2;
+    decimals = Number(raw) < 1 ? decimals : Math.max(decimals, 2);
   }
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(value);
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return decimals ? `${grouped}.${fractional.padEnd(decimals, "0")}` : grouped;
 }
 
 export function chartObservations(payload) {
