@@ -23,7 +23,7 @@ class ReferralActivationV2Tests(unittest.TestCase):
         keyboard = referral_activation_keyboard(SimpleNamespace(), link, campaign)
 
         primary = keyboard.inline_keyboard[0][0]
-        self.assertEqual(primary.text, "📤 ارسال برای ۱ دوست")
+        self.assertEqual(primary.text, "📤 همین الان برای ۱ نفر")
 
         query = parse_qs(urlparse(primary.url).query)
         self.assertEqual(query["url"][0], link)
