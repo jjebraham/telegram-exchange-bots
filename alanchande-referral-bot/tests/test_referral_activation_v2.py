@@ -57,6 +57,7 @@ class ReferralActivationV2Tests(unittest.TestCase):
             db.track_funnel_event(campaign.id, 100, "referral_welcome_sent", "referral", now)
             db.track_funnel_event(campaign.id, 100, "referral_link_included", "referral", now)
             db.track_funnel_event(campaign.id, 100, "referral_share_prompt_sent", "referral", now)
+            db.track_funnel_event(campaign.id, 100, "referral_share_prompt_v2_sent", "referral", now)
             db.save_invite_link(campaign.id, 100, "ref_6_100", now)
 
             report = source_performance(db, campaign)
@@ -65,6 +66,7 @@ class ReferralActivationV2Tests(unittest.TestCase):
             self.assertEqual(row["referral_welcome_sent"], 1)
             self.assertEqual(row["referral_link_included"], 1)
             self.assertEqual(row["referral_share_prompt_sent"], 1)
+            self.assertEqual(row["referral_share_prompt_v2_sent"], 1)
             self.assertEqual(row["referral_welcome_error"], 0)
             self.assertEqual(row["referral_link_creation_error"], 0)
         finally:
