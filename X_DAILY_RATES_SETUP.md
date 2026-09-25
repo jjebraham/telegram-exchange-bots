@@ -1,3 +1,4 @@
+> Current posting policy: every fixed post and movement alert is link-free and ends with «حواله روی خط واتسپ». The four daily times and hourly 0.5% movement checks below are unchanged. The `standard` manual mode replaces `linked`; legacy CLI link arguments cannot enable links. Install Node.js and run `npm ci --prefix x_text` before running the Python publisher. Every send is checked with the pinned official twitter-text validator and rejected if invalid or over 280 weighted characters. The older linked examples below describe historical behavior only.
 # Kiani Exchange rates on X
 
 This automation publishes Kiani Exchange rate updates from the official X account while avoiding repetitive hourly spam.

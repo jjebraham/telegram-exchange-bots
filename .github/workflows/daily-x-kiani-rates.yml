@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "x_daily_rates.py"
+      - "x_post_policy.py"
+      - "x_text/**"
       - "tests/test_x_daily_rates.py"
       - ".github/workflows/daily-x-kiani-rates.yml"
       - "X_DAILY_RATES_SETUP.md"
@@ -16,7 +18,7 @@ on:
     - cron: "12 18 * * *"
       timezone: "Europe/Istanbul"
 
-    # Main daily post with WhatsApp + mini-app links.
+    # Main daily post is also link-free.
     - cron: "7 12 * * *"
       timezone: "Europe/Istanbul"
 
@@ -35,10 +37,10 @@ on:
       publish_type:
         description: "What to preview or publish"
         required: true
-        default: linked
+        default: link_free
         type: choice
         options:
-          - linked
+          - standard
           - link_free
           - alert_check
 
@@ -69,6 +71,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install exact X text validator
+        run: npm ci --prefix x_text
+
       - name: Syntax and formatting tests
         run: |
           python -m py_compile x_daily_rates.py
@@ -92,7 +101,8 @@ jobs:
           args=(--state-file "$X_RATE_STATE_FILE")
 
           case "$PUBLISH_TYPE" in
-            linked)
+            standard)
+              args+=(--no-links)
               ;;
             link_free)
               args+=(--no-links --variant afternoon)
@@ -116,9 +126,9 @@ jobs:
         if: ${{ github.event_name == 'schedule' && github.event.schedule == '12 9 * * *' }}
         run: python x_daily_rates.py --no-links --variant morning --state-file "$X_RATE_STATE_FILE"
 
-      - name: Publish main linked rates
+      - name: Publish main link-free rates
         if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 12 * * *' }}
-        run: python x_daily_rates.py --state-file "$X_RATE_STATE_FILE"
+        run: python x_daily_rates.py --no-links --state-file "$X_RATE_STATE_FILE"
 
       - name: Publish afternoon link-free rates
         if: ${{ github.event_name == 'schedule' && github.event.schedule == '12 15 * * *' }}
