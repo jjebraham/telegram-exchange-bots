@@ -81,7 +81,10 @@ async def ingest(request: Request, authorization: str | None = Header(default=No
     expected = os.environ.get("ALANCHANDE_INGEST_TOKEN", "")
     if not expected:
         raise HTTPException(status_code=503, detail="snapshot ingestion is not configured")
-    supplied = (authorization or "").removeprefix("Bearer ")
+    parts = (authorization or "").split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="unauthorized")
+    supplied = parts[1]
     if not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="unauthorized")
     if int(request.headers.get("content-length", "0") or 0) > 2_000_000:
