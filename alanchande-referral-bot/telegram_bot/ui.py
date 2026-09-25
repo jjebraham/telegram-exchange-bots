@@ -110,7 +110,7 @@ def referral_activation_keyboard(
     })
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 ارسال برای ۱ دوست", url=share_url)],
+        [InlineKeyboardButton("📤 همین الان برای ۱ نفر", url=share_url)],
         [copy_link_button(link)],
         [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
         [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
