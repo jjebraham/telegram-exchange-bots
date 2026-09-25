@@ -1,0 +1,44 @@
+{
+  "schema_version": "1",
+  "snapshot_id": "sample-2026-09-25T180000Z",
+  "collected_at": "2026-09-25T18:00:00Z",
+  "quotes": [
+    {
+      "quote_id": "sample-usd-try-001",
+      "series_id": "fx:usd:kapalicarsi:try:1:venue:v1",
+      "instrument_id": "fx:usd",
+      "base_asset": "USD",
+      "base_quantity": "1",
+      "quote_currency": "TRY",
+      "unit": "currency-unit",
+      "quote_kind": "venue_quote",
+      "bid": "48.8000",
+      "ask": "48.8200",
+      "reference": null,
+      "mid": "48.8100",
+      "source_id": "sample-doviz",
+      "source_family": "sample",
+      "collected_at": "2026-09-25T18:00:00Z",
+      "verification_status": "verified"
+    },
+    {
+      "quote_id": "sample-usd-toman-001",
+      "series_id": "fx:usd:iran-open:toman:1:reference:v1",
+      "instrument_id": "fx:usd",
+      "base_asset": "USD",
+      "base_quantity": "1",
+      "quote_currency": "TOMAN",
+      "unit": "currency-unit",
+      "quote_kind": "market_reference",
+      "bid": null,
+      "ask": null,
+      "reference": "234500",
+      "mid": null,
+      "source_id": "sample-iran-fx",
+      "source_family": "sample",
+      "collected_at": "2026-09-25T18:00:00Z",
+      "verification_status": "verified"
+    }
+  ]
+}
+
