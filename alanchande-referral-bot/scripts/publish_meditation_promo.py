@@ -51,14 +51,14 @@ def unique_source(now: datetime | None = None) -> str:
     return normalize_promo_source(f"meditation_{stamp}")
 
 
-def build_caption(*, tickets: int, winners: int, deadline_fa: str) -> str:
+def build_caption(*, participants: int, winners: int, deadline_fa: str) -> str:
     return (
         "🎁 یه هدیه کوچیک برای همراه‌های این کانال\n\n"
         "قرعه‌کشی رایگان پاییز — ۲۱ میلیون تومان جایزه نقدی\n"
         "🥇 ۱۰ میلیون\n"
         "🥈 ۵ میلیون\n"
         "🥉 سه نفر، هر کدوم ۲ میلیون\n\n"
-        f"🎟 تا این لحظه {fa_number(tickets)} بلیت تأییدشده ثبت شده و "
+        f"🎟 تا این لحظه فقط {fa_number(participants)} بلیت ثبت شده و "
         f"{fa_number(winners)} جایزه داریم\n"
         f"⏳ آخرین فرصت دعوت: {deadline_fa}\n\n"
         "👇 شرکت رایگان"
@@ -149,7 +149,7 @@ async def run() -> None:
         raise SystemExit("No live campaign.")
 
     stats = db.admin_stats(campaign)
-    tickets = int(stats["tickets"])
+    participants = int(stats["participants"])
     source = normalize_promo_source(args.source) if args.source else unique_source()
 
     async with Bot(posting_token) as bot:
@@ -158,14 +158,14 @@ async def run() -> None:
             raise SystemExit("Posting bot username is unavailable.")
         promo_link = build_promo_link(campaign_bot_username, source, "b")
         caption = build_caption(
-            tickets=tickets,
+            participants=participants,
             winners=int(campaign.num_winners),
             deadline_fa=deadline_fa,
         )
 
         print(f"campaign={campaign.slug}")
         print(f"source={source}_b")
-        print(f"tickets={tickets}")
+        print(f"participants={participants}")
         print(f"link={promo_link}")
         print(f"image={image}")
         print(f"posting_bot=@{me.username}")
