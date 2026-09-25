@@ -49,6 +49,7 @@ _ONBOARDING_EVENTS = {
     "referral_welcome_sent",
     "referral_link_included",
     "referral_share_prompt_sent",
+    "referral_share_prompt_v2_sent",
     "referral_welcome_error",
     "referral_link_creation_error",
 }
@@ -269,6 +270,7 @@ def source_performance(db, campaign: Campaign) -> dict:
             "referral_welcome_sent": 0,
             "referral_link_included": 0,
             "referral_share_prompt_sent": 0,
+            "referral_share_prompt_v2_sent": 0,
             "referral_welcome_error": 0,
             "referral_link_creation_error": 0,
         })
@@ -324,6 +326,7 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["referral_welcome_sent"] = len(events.get("referral_welcome_sent", set()))
         item["referral_link_included"] = len(events.get("referral_link_included", set()))
         item["referral_share_prompt_sent"] = len(events.get("referral_share_prompt_sent", set()))
+        item["referral_share_prompt_v2_sent"] = len(events.get("referral_share_prompt_v2_sent", set()))
         item["referral_welcome_error"] = len(events.get("referral_welcome_error", set()))
         item["referral_link_creation_error"] = len(
             events.get("referral_link_creation_error", set())
@@ -558,6 +561,7 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"fallback_cta={row['entry_cta_completed']}",
             f"  referral path: welcome={row['referral_welcome_sent']} "
             f"link={row['referral_link_included']} prompt={row['referral_share_prompt_sent']} "
+            f"prompt_v2={row['referral_share_prompt_v2_sent']} "
             f"welcome_err={row['referral_welcome_error']} "
             f"link_err={row['referral_link_creation_error']}",
             f"  start→enter={_pct(row['start_to_entered_pct'])} | "
