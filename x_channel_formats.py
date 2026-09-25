@@ -83,8 +83,8 @@ def render(post, text):
         sell = re.search(r"SELL\s+TL\s+(" + NUMBER + ")", clean)
         if not buy or not sell:
             raise ValueError("Missing Kiani TRY quote")
-        lines = ["🇹🇷 نرخ لیر ترکیه | تومان", f"خرید لیر از ما: {number(buy[1])}",
-                 f"فروش لیر به ما: {number(sell[1])}", "",
+        lines = ["🇹🇷 نرخ لیر ترکیه | تومان", f"💵 خرید لیر از ما: {number(buy[1])}",
+                 f"💰 فروش لیر به ما: {number(sell[1])}", "",
                  "قبل از واریز، نرخ را تأیید کنید.", "صرافی کیانی"]
     elif post in {"kiani-examples", "kiani-examples-reverse"}:
         reverse = post.endswith("reverse")
@@ -101,12 +101,13 @@ def render(post, text):
         rows = table(text)
         if len(rows) != 2:
             raise ValueError("Expected USD and EUR pulse")
-        lines = ["📊 نبض ارز ترکیه | 24H"]
+        lines = ["📊 نبض ارز ترکیه | تغییرات ۲۴ ساعت"]
         for row, code in zip(rows, ("USD", "EUR")):
             if len(row) != 3 or code not in row[0]:
                 raise ValueError("Unexpected pulse row")
-            lines.append(f"{code}/TRY {number(row[1])}  {pct(row[2])}")
-        lines += ["", "نرخ میانی Kapalıçarşı", "🕒 استانبول", "صرفاً جهت اطلاع‌رسانی"]
+            flag = "🇺🇸" if code == "USD" else "🇪🇺"
+            lines.append(f"{flag} {code}/TRY {number(row[1])}  {pct(row[2])}")
+        lines += ["", "📍 استانبول | نرخ میانی Kapalıçarşı", "صرفاً جهت اطلاع‌رسانی"]
     elif post in {"alanchande-turkey-gold", "bank-comparison"}:
         gold = post in GOLD_TYPES
         names = ({"GRAM": "GRAM", "CEYREK": "ÇEYREK", "YARIM": "YARIM", "TAM": "TAM"}
@@ -145,4 +146,5 @@ def render(post, text):
         crypto = {code: field(text, f"({code})") for code in ("BTC", "ETH", "BNB", "SOL", "XRP")}
         lines += [" | ".join(f"{code} ${crypto[code]}" for code in keys)
                   for keys in [("BTC", "ETH", "BNB"), ("SOL", "XRP")]]
+    lines.insert(1, "")
     return finish("\n".join(lines), gold=post in GOLD_TYPES)
