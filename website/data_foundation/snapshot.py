@@ -78,14 +78,21 @@ def validate_snapshot(payload: dict[str, Any], *, now: datetime | None = None) -
             raise SnapshotError("quote_id values must be unique")
         seen.add(quote_id)
         status = quote["verification_status"]
-        if status not in ALLOWED_STATUS:
+        if not isinstance(status, str) or status not in ALLOWED_STATUS:
             raise SnapshotError(f"unsupported verification_status: {status}")
         _decimal(quote["base_quantity"], "base_quantity", positive=True)
         for field in ("bid", "ask", "reference", "mid"):
             if quote.get(field) is not None:
                 _decimal(quote[field], field, positive=True)
-        _timestamp(quote["collected_at"], "quote.collected_at")
-        normalized.append(dict(quote))
+        quote_collected_at = _timestamp(quote["collected_at"], "quote.collected_at")
+        if now is not None and quote_collected_at > now.astimezone(timezone.utc):
+            raise SnapshotError("quote.collected_at cannot be in the future")
+        clean_quote = dict(quote)
+        clean_quote["collected_at"] = quote_collected_at.isoformat()
+        for field in ("source_observed_at", "verified_at", "valid_until"):
+            if clean_quote.get(field) is not None:
+                clean_quote[field] = _timestamp(clean_quote[field], f"quote.{field}").isoformat()
+        normalized.append(clean_quote)
     return {**payload, "collected_at": collected_at.isoformat(), "quotes": normalized}
 
 
