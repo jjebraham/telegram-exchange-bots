@@ -1,0 +1,15 @@
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class UiCopyTests(unittest.TestCase):
+    def test_site_name_and_cache_buster_are_current(self):
+        html = (ROOT / "dist" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("الان چنده؟", html)
+        self.assertNotIn("الان چند؟", html)
+        self.assertIn('app.js?v=6', html)
+        self.assertIn('styles.css?v=6', html)
+

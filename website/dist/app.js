@@ -611,6 +611,13 @@ async function loadQuotes() {
     state.loading = false;
     render();
     loadChart();
+    if (state.error) {
+      // Retry quickly after a transient edge/API failure instead of leaving
+      // the first page load empty until the one-minute refresh interval.
+      setTimeout(() => {
+        if (!document.hidden) loadQuotes();
+      }, 5000);
+    }
   }
 }
 
