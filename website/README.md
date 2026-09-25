@@ -1,6 +1,6 @@
-# AlanChande website prototype
+# AlanChande market website
 
-Phase 2/3 prototype for `alanchande.com`: a Persian RTL market dashboard and a dependency-free validated snapshot foundation.
+Persian-first, RTL market dashboard for alanchande.com. The current dashboard is a visual prototype; it still labels its displayed prices as sample data.
 
 ## Local preview
 
@@ -8,7 +8,11 @@ Phase 2/3 prototype for `alanchande.com`: a Persian RTL market dashboard and a d
 python3 -m http.server 8080 --directory dist
 ```
 
-Open `http://localhost:8080`.
+## Phase 3 data foundation
+
+The `api/` service exposes verified read-only market observations and a protected snapshot-ingestion endpoint. `api/import_verified_history.py` can incrementally copy observations already recorded after successful verified Telegram posts. It opens the publisher SQLite database read-only and stores website data separately. See [Phase 3 deployment](PHASE_3_DEPLOYMENT.md).
+
+The API does not call upstream collectors and does not send Telegram or X posts. Current history covers only instrument families with verified publisher records. Points are not interpolated into candles. Connect all page widgets to this API and expand instrument coverage in Phase 4.
 
 ## Snapshot validation
 
@@ -16,9 +20,5 @@ Open `http://localhost:8080`.
 python3 -m unittest discover -s tests -v
 ```
 
-The current interface uses sample values. The `data_foundation` package is ready for a separate verified ingestion/API service. It deliberately has no Telegram/X credentials, live provider secrets, or transaction endpoints.
-
-## Deployment
-
-The `dist/` directory is a static prototype. Point your own host or Cloudflare Pages/Workers deployment at `dist/`. Replace the sample cards only after the verified API contract and source permissions are complete.
+Money values stay decimal strings. No credentials, publisher tokens, customer transactions, or sample values are used as live quotes.
 
