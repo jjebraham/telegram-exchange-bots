@@ -549,6 +549,18 @@ def _digest_date(now: datetime | None = None) -> tuple[str, str]:
     return f"{weekday} {jd} {JALALI_MONTHS[jm]}", local.strftime("%H:%M")
 
 
+def _rtl_digest_line(line: str) -> str:
+    """Set Persian paragraph direction; isolate Latin tokens without reversing digits."""
+    if not line:
+        return line
+    # Keep controls outside Telegram code entities so copied prices remain plain.
+    line = re.sub(r"<code>.*?</code>|\([A-Z]+\)|\d{2}:\d{2}|@[A-Za-z0-9_]+",
+                  lambda match: "\u2066" + match[0] + "\u2069", line)
+    line = re.sub(r"(?:🔼|🔻|➖) (?:%[0-9.]+|—)$",
+                  lambda match: "\u2066" + match[0] + "\u2069", line)
+    return "\u200f" + line
+
+
 def build_digest_post(
     values: Mapping[str, Decimal],
     changes_24h: Mapping[str, Decimal] | None = None,
@@ -601,7 +613,7 @@ def build_digest_post(
         )
 
     lines.extend(["", "🔗 @alanchande_com"])
-    text = "\n".join(lines)
+    text = "\n".join(_rtl_digest_line(line) for line in lines)
     if len(text) > 4096:
         raise ValueError(f"Daily digest exceeds Telegram limit: {len(text)} chars")
     return text

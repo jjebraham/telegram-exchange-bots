@@ -67,6 +67,7 @@ class DailyMarketDigestTests(unittest.TestCase):
         changes["BTC"] = Decimal("-0.79")
         now = datetime(2026, 9, 24, 12, 5, tzinfo=ZoneInfo("Asia/Tehran"))
         post = build_digest_post(values, changes, now=now)
+        post = post.translate(dict.fromkeys(map(ord, "\u200f\u2066\u2069")))
         for key, _flag, label in (*FX_DISPLAY, *GOLD_DISPLAY, *CRYPTO_DISPLAY):
             self.assertIn(label, post)
         self.assertIn("گرام (تون کوین)", post)
@@ -85,6 +86,24 @@ class DailyMarketDigestTests(unittest.TestCase):
         del values["BTC"]
         with self.assertRaisesRegex(ValueError, "BTC"):
             build_digest_post(values)
+
+    def test_rtl_rows_keep_all_prices_and_latin_tokens_isolated(self):
+        values = self._values()
+        changes = {key: Decimal("0.52") for key in values}
+        changes["BTC"] = Decimal("-0.79")
+        post = build_digest_post(values, changes)
+        for line in post.splitlines():
+            if line:
+                self.assertTrue(line.startswith("\u200f"))
+                self.assertEqual(line.count("\u2066"), line.count("\u2069"))
+        self.assertEqual(post.count("\u2066<code>"), len(values))
+        self.assertEqual(post.count("</code>\u2069"), len(values))
+        self.assertIn("\u2066(BTC)\u2069", post)
+        self.assertIn("\u2066<code>81,179$</code>\u2069", post)
+        self.assertIn("\u2066🔼 %0.52\u2069", post)
+        self.assertIn("\u2066🔻 %0.79\u2069", post)
+        self.assertIn("\u2066➖ —\u2069", build_digest_post(values))
+        self.assertLessEqual(len(post), 4096)
 
     def test_no_history_renders_dash_not_fake_change(self):
         post = build_digest_post(self._values())

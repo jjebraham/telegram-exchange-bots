@@ -19,7 +19,10 @@ NUMBER = r"[0-9][0-9,]*(?:\.[0-9]+)?"
 
 
 def plain(text):
-    return html.unescape(re.sub(r"<[^>]+>", "", text)).translate(
+    clean = html.unescape(re.sub(r"<[^>]+>", "", text))
+    # Telegram direction controls are presentation only, not numeric data for X.
+    clean = clean.translate(dict.fromkeys(map(ord, "\u200e\u200f\u2066\u2067\u2068\u2069")))
+    return clean.translate(
         str.maketrans("۰۱۲۳۴۵۶۷۸۹٬", "0123456789,"))
 
 
