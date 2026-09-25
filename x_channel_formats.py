@@ -96,8 +96,15 @@ def render(post, text):
             raise ValueError("Expected three calculator rows")
         lines = ["🧮 دریافت تومان در ایران" if reverse else "🧮 دریافت لیر در ترکیه"]
         for amount, cost in rows:
-            lines.append(f"{million(amount)} تومان ← {number(cost)} TL" if reverse
-                         else f"{number(amount)} TL ← {million(cost)} تومان")
+            amount_value = Decimal(number(amount).replace(",", ""))
+            if reverse:
+                received = {Decimal("50000000"): "پنجاه", Decimal("100000000"): "صد",
+                            Decimal("500000000"): "پانصد"}.get(amount_value, million(amount)[:-1])
+                lines.append(f"دریافت {received} میلیون تومان 🔄 واریز {number(cost)} لیر")
+            else:
+                received = {Decimal("10000"): "ده هزار", Decimal("50000"): "پنجاه هزار",
+                            Decimal("100000"): "صد هزار"}.get(amount_value, number(amount))
+                lines.append(f"دریافت {received} لیر 🔄 واریز {million(cost)[:-1]} میلیون تومان")
         rate = field(text, "بر اساس نرخ خرید فعلی" if reverse else "بر اساس نرخ فروش فعلی")
         lines += ["", f"مبنای محاسبه: {rate} تومان برای هر لیر", "صرافی کیانی"]
     elif post == "alanchande-fx-pulse":

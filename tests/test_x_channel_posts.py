@@ -77,6 +77,21 @@ class XChannelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             render('bank-comparison', sources['bank-comparison'].replace('48.7100', 'oops'))
 
+    def test_calculators_use_explicit_persian_payment_direction(self):
+        sources = fixtures()
+        forward = render('kiani-examples', sources['kiani-examples'])
+        reverse = render('kiani-examples-reverse', sources['kiani-examples-reverse'])
+        self.assertIn('دریافت ده هزار لیر 🔄 واریز 48.2 میلیون تومان', forward)
+        self.assertIn('دریافت پنجاه هزار لیر 🔄 واریز 241 میلیون تومان', forward)
+        self.assertIn('دریافت صد هزار لیر 🔄 واریز 482 میلیون تومان', forward)
+        self.assertIn('دریافت پنجاه میلیون تومان 🔄 واریز 10,684 لیر', reverse)
+        for text in (forward, reverse):
+            self.assertNotIn('TL', text)
+            self.assertNotIn('M', text)
+            self.assertNotIn('←', text)
+            self.assertEqual(text.count('دریافت'), 4)
+            self.assertEqual(text.count('واریز'), 3)
+
     def test_larger_prices_never_escape_length_guard(self):
         for source_multiplier in (10, 1000000):
             for post, source in fixtures(source_multiplier).items():
