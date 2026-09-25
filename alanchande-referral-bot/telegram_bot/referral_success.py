@@ -92,6 +92,7 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
     db.track_funnel_event(campaign.id, user.id, "referral_welcome_sent", "referral")
     db.track_funnel_event(campaign.id, user.id, "referral_link_included", "referral")
     db.track_funnel_event(campaign.id, user.id, "referral_share_prompt_sent", "referral")
+    db.track_funnel_event(campaign.id, user.id, "referral_share_prompt_v2_sent", "referral")
     db.track_funnel_event(campaign.id, user.id, "entered_contest", "referral")
     db.track_funnel_event(campaign.id, user.id, "link_created", "referral")
     db.mark_participant_welcome_sent(campaign.id, user.id)
