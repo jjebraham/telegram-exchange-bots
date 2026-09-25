@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh AlanChande website from verified publisher history
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=alanchande-import.service
+
+[Install]
+WantedBy=timers.target
+
