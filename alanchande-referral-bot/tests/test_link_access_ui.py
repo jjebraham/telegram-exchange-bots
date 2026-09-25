@@ -43,7 +43,7 @@ class LinkAccessUiTests(unittest.TestCase):
             self.campaign(),
         )
 
-        self.assertEqual(keyboard.inline_keyboard[0][0].text, "📤 ارسال برای ۱ دوست")
+        self.assertEqual(keyboard.inline_keyboard[0][0].text, "📤 همین الان برای ۱ نفر")
         copy_button = keyboard.inline_keyboard[1][0]
         if ui.CopyTextButton is not None:
             self.assertEqual(copy_button.text, "📋 کپی لینک")
