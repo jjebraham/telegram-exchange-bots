@@ -29,7 +29,7 @@ REQUIRED_QUOTE_FIELDS = {
     "quote_currency", "unit", "quote_kind", "collected_at",
     "verification_status",
 }
-ALLOWED_STATUS = {"verified", "unverified", "rejected"}
+ALLOWED_STATUS = {"verified", "source_published", "unverified", "rejected"}
 
 
 def _timestamp(value: Any, field: str) -> datetime:

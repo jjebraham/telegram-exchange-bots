@@ -2,108 +2,117 @@
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#081624">
-  <meta name="description" content="نرخ‌های تأییدشده ارز، طلا و رمزارز با زمان انتشار و نمودار مشاهدات واقعی بازار ایران و ترکیه">
-  <title>الان چند؟ | نرخ ارز، طلا و رمزارز</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#081624" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f3f5f7" media="(prefers-color-scheme: light)">
+  <meta name="description" content="نرخ دلار، یورو، لیر، طلا و تتر در ایران و ترکیه، همان‌طور که در کانال‌های تلگرام منتشر شده، با زمان ثبت و نمودار هر نرخ.">
+  <title>الان چنده؟ | نرخ دلار، لیر، طلا و تتر</title>
+  <link rel="canonical" href="https://alanchande.com/">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23081624'/%3E%3Cpath d='M16 44 32 13l16 31H38l-3-7h-7l-3 7z' fill='%23f0b85e'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles.css?v=4">
-  <script type="module" src="/app.js?v=4"></script>
+  <link rel="preload" href="/fonts/Vazirmatn-FD-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/Vazirmatn-FD-ExtraBold.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css?v=6">
+  <script type="module" src="/app.js?v=8"></script>
 </head>
 <body>
-  <a class="skip" href="#main">رفتن به محتوای اصلی</a>
+  <a class="skip" href="#rates">رفتن به نرخ‌ها</a>
+
   <header class="site-header">
-    <div class="header-inner">
-      <a class="brand" href="/" aria-label="الان چند، صفحه اصلی">
-        <span class="brand-mark" aria-hidden="true">A</span>
-        <span><strong>AlanChande</strong><small>الان چند؟ · بازار ایران و ترکیه</small></span>
+    <div class="wrap header-inner">
+      <a class="brand" href="/" aria-label="الان چنده؟ صفحهٔ اصلی">
+        <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16"/><path d="M16 44 32 13l16 31H38l-3-7h-7l-3 7z"/></svg>
+        <span class="brand-name">AlanChande</span>
       </a>
-      <nav aria-label="بخش‌های سایت">
+      <nav aria-label="بخش‌های صفحه">
         <a href="#rates">نرخ‌ها</a>
-        <a href="#history">نمودارها</a>
-        <a href="#about">درباره داده‌ها</a>
+        <a href="#history">نمودار</a>
+        <a href="#guide">راهنما</a>
+        <a class="nav-channel" href="https://t.me/alanchande_com" rel="noopener">کانال تلگرام</a>
       </nav>
     </div>
   </header>
 
-  <main id="main" class="shell">
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow">بازار در یک نگاه <span aria-hidden="true">✦</span></p>
-        <h1 id="hero-title">نبض بازار،<br><em>با دادهٔ واقعی.</em></h1>
-        <p>نرخ‌های ثبت‌شده پس از انتشار تأییدشده، با واحد، زمان و وضعیت تازگی روشن.</p>
+  <main id="main">
+    <section class="wrap intro" aria-labelledby="page-title">
+      <div class="intro-text">
+        <h1 id="page-title">الان چنده؟</h1>
+        <p>نرخ ارز، طلا و تتر در ایران و ترکیه، همان‌طور که در کانال تلگرام منتشر شده، با زمان ثبت هر نرخ.</p>
       </div>
-      <div class="hero-aside">
-        <div class="orbit" aria-hidden="true"><span>ا</span><i></i><i></i><i></i></div>
-        <p class="orbit-caption">ایران <span>·</span> ترکیه <span>·</span> بازار جهانی</p>
+      <p id="status" class="status" role="status" aria-live="polite" data-state="loading">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">در حال دریافت نرخ‌ها…</span>
+      </p>
+    </section>
+
+    <section class="wrap" aria-label="نرخ‌های اصلی">
+      <div id="board" class="board">
+        <div class="board-cell is-empty"><span class="board-name">دلار آمریکا</span><span class="board-value">—</span></div>
+        <div class="board-cell is-empty"><span class="board-name">لیر ترکیه</span><span class="board-value">—</span></div>
+        <div class="board-cell is-empty"><span class="board-name">تتر</span><span class="board-value">—</span></div>
+        <div class="board-cell is-empty"><span class="board-name">دلار در استانبول</span><span class="board-value">—</span></div>
+        <div class="board-cell is-empty"><span class="board-name">طلای ۱۸ عیار</span><span class="board-value">—</span></div>
       </div>
     </section>
 
-    <div id="connection" class="notice loading" role="status" aria-live="polite">
-      <span class="notice-dot" aria-hidden="true"></span>
-      <span id="connection-text">در حال دریافت نرخ‌های تأییدشده…</span>
-      <span id="updated-at" class="notice-time"></span>
-    </div>
-
-    <section class="highlights" aria-labelledby="highlights-title">
-      <div class="section-heading">
-        <div><p class="kicker">01 / نمای کلی</p><h2 id="highlights-title">نرخ‌های منتخب</h2></div>
-        <p>قیمت‌ها تنها از مشاهدات تأییدشده نمایش داده می‌شوند.</p>
-      </div>
-      <div id="highlight-grid" class="highlight-grid" aria-live="polite">
-        <div class="placeholder-card">در حال دریافت داده…</div>
-      </div>
-    </section>
-
-    <section id="rates" class="rates-section" aria-labelledby="rates-title">
-      <div class="section-heading">
-        <div><p class="kicker">02 / بازارها</p><h2 id="rates-title">همهٔ نرخ‌ها</h2></div>
-        <p id="rate-count">داده‌های تأییدشدهٔ موجود در سامانه</p>
-      </div>
-      <div class="rate-controls">
-        <div id="category-tabs" class="category-tabs" role="group" aria-label="فیلتر بازار">
-          <button type="button" data-filter="all" aria-pressed="true">همه</button>
-          <button type="button" data-filter="iran" aria-pressed="false">ایران</button>
-          <button type="button" data-filter="turkey" aria-pressed="false">ترکیه</button>
-          <button type="button" data-filter="crypto" aria-pressed="false">رمزارز</button>
-          <button type="button" data-filter="digest" aria-pressed="false">خلاصهٔ روز</button>
-        </div>
-        <label class="search-box"><span class="sr-only">جست‌وجوی نرخ</span><input id="rate-search" type="search" placeholder="جست‌وجوی ارز، بازار یا نماد…" autocomplete="off"></label>
-      </div>
-      <div id="market-content" class="market-content" aria-live="polite"></div>
-    </section>
-
-    <section id="history" class="history-section" aria-labelledby="history-title">
-      <div class="section-heading">
-        <div><p class="kicker">03 / روند قیمت</p><h2 id="history-title">نمودار مشاهدات</h2></div>
-        <p>هر نقطه، یک نرخ ثبت‌شده پس از انتشار تأییدشده است.</p>
-      </div>
-      <div class="chart-card">
-        <div class="chart-toolbar">
-          <label for="series-select">نرخ موردنظر</label>
-          <select id="series-select" disabled><option>در انتظار داده</option></select>
-          <div class="range-buttons" role="group" aria-label="بازهٔ زمانی نمودار">
-            <button type="button" data-days="1" aria-pressed="false">۲۴ ساعت</button>
-            <button type="button" data-days="7" aria-pressed="true">۷ روز</button>
-            <button type="button" data-days="30" aria-pressed="false">۳۰ روز</button>
+    <section id="rates" class="rates" aria-labelledby="rates-title">
+      <div class="toolbar">
+        <div class="wrap toolbar-inner">
+          <h2 id="rates-title">همهٔ نرخ‌ها <span id="rate-count" class="count"></span></h2>
+          <div id="category-tabs" class="tabs" role="group" aria-label="نمایش بازار">
+            <button type="button" data-filter="all" aria-pressed="true">همه</button>
+            <button type="button" data-filter="iran" aria-pressed="false">ایران</button>
+            <button type="button" data-filter="turkey" aria-pressed="false">ترکیه</button>
+            <button type="button" data-filter="crypto" aria-pressed="false">تتر و رمزارز</button>
+            <button type="button" data-filter="digest" aria-pressed="false">خلاصهٔ روز</button>
           </div>
+          <label class="search"><span class="sr-only">جست‌وجوی نرخ</span><input id="rate-search" type="search" placeholder="جست‌وجو: دلار، USD، نوبیتکس…" autocomplete="off"></label>
         </div>
-        <p id="chart-status" class="chart-status" role="status" aria-live="polite">برای مشاهدهٔ نمودار، منتظر دریافت داده بمانید.</p>
-        <div class="chart-frame">
-          <svg id="history-chart" viewBox="0 0 760 260" preserveAspectRatio="none" role="img" aria-label="نمودار نرخ‌های تأییدشده"></svg>
-        </div>
-        <div id="chart-labels" class="chart-labels"></div>
-        <p class="chart-footnote">خط تنها نقاط ثبت‌شده را به هم وصل می‌کند. برای فاصله‌های بدون داده، قیمتی ساخته نشده است.</p>
       </div>
+      <div id="market-content" class="wrap market-content" aria-live="polite"></div>
     </section>
 
-    <section id="about" class="about-section" aria-labelledby="about-title">
-      <div class="about-icon" aria-hidden="true">◎</div>
-      <div><p class="kicker">روش نمایش</p><h2 id="about-title">شفاف دربارهٔ هر نرخ</h2><p>نرخ‌ها از تاریخچهٔ انتشار تأییدشدهٔ کانال‌ها وارد می‌شوند. «قدیمی» یعنی زمان اعتبار آخرین مشاهده گذشته است. خرید و فروش در بازارهای دوطرفه جدا نمایش داده می‌شوند؛ قیمت مرجع با قیمت مشتری یکی نیست.</p></div>
+    <section id="history" class="wrap history" aria-labelledby="history-title">
+      <div class="history-head">
+        <div>
+          <h2 id="history-title">نمودار</h2>
+          <p id="chart-subtitle" class="chart-subtitle">یک نرخ را از جدول یا فهرست زیر انتخاب کنید.</p>
+        </div>
+        <div id="chart-summary" class="chart-summary"></div>
+      </div>
+      <div class="chart-controls">
+        <label class="series-picker"><span class="sr-only">انتخاب نرخ برای نمودار</span><select id="series-select" disabled><option>در انتظار داده</option></select></label>
+        <div class="segmented" role="group" aria-label="بازهٔ زمانی">
+          <button type="button" data-days="1" aria-pressed="false">۲۴ ساعت</button>
+          <button type="button" data-days="7" aria-pressed="true">۷ روز</button>
+          <button type="button" data-days="30" aria-pressed="false">۳۰ روز</button>
+        </div>
+      </div>
+      <div class="chart-frame" id="chart-frame">
+        <svg id="history-chart" role="img" aria-labelledby="chart-subtitle" tabindex="0" focusable="true"></svg>
+        <div id="chart-axis" class="chart-axis" aria-hidden="true"></div>
+        <div id="chart-tip" class="chart-tip" hidden></div>
+        <p id="chart-status" class="chart-status" role="status" aria-live="polite"></p>
+      </div>
+      <p class="chart-note">هر نقطه یک نرخ منتشرشده است و جای خالی با قیمت ساختگی پر نمی‌شود. در تاریخچهٔ Tomanify، زمان نمودار زمان ثبت نسخه در گیت‌هاب است، نه زمان دقیق مشاهدهٔ بازار.</p>
+    </section>
+
+    <section id="guide" class="wrap guide" aria-labelledby="guide-title">
+      <h2 id="guide-title">هر نرخ یعنی چه؟</h2>
+      <dl>
+        <div><dt><span class="kind-tag" data-kind="reference">نرخ مرجع</span></dt><dd>نرخ بازار که برای اطلاع منتشر شده. قیمت خرید یا فروش یک صرافی مشخص نیست.</dd></div>
+        <div><dt><span class="kind-tag" data-kind="two_sided">خرید و فروش</span></dt><dd>«خرید» قیمتی است که بانک یا بازار از شما می‌خرد؛ «فروش» قیمتی که به شما می‌فروشد.</dd></div>
+        <div><dt><span class="kind-tag" data-kind="ask_only">قیمت خرید تتر</span></dt><dd>مبلغی که برای خرید هر تتر در آن صرافی می‌پردازید.</dd></div>
+        <div><dt><span class="kind-tag" data-kind="customer">قیمت مشتری</span></dt><dd>نرخ صرافی کیانی برای مشتریان، که فقط تا زمان اعتبار نوشته‌شده معتبر است.</dd></div>
+        <div><dt><span class="age-tag" data-state="stale">قدیمی</span> <span class="age-tag" data-state="expired">منقضی</span></dt><dd>«قدیمی» یعنی از آخرین انتشار بیشتر از زمان معمول گذشته است. «منقضی» یعنی زمان اعتبار قیمت مشتری تمام شده است.</dd></div>
+      </dl>
     </section>
   </main>
 
-  <footer class="site-footer"><span>© AlanChande · الان چند؟</span><span>نرخ‌ها صرفاً جهت اطلاع‌رسانی هستند.</span></footer>
-  <noscript><p class="noscript">برای نمایش نرخ‌های زنده، جاوااسکریپت مرورگر را فعال کنید.</p></noscript>
+  <footer class="wrap site-footer">
+    <p>منبع نرخ‌ها: کانال‌های تلگرام <a href="https://t.me/alanchande_com" rel="noopener"><bdi>@alanchande_com</bdi></a> و <a href="https://t.me/ExchangeKiani" rel="noopener"><bdi>@ExchangeKiani</bdi></a>. تاریخچهٔ ارزهای آزاد ایران با سپاس از <a href="https://wordpress.org/plugins/tomanify/" rel="noopener">Tomanify</a>. نرخ‌ها فقط برای اطلاع هستند.</p>
+    <p><bdi>© AlanChande</bdi></p>
+  </footer>
+  <noscript><p class="noscript">برای دیدن نرخ‌ها، جاوااسکریپت مرورگر را روشن کنید یا به <a href="https://t.me/alanchande_com">کانال تلگرام</a> سر بزنید.</p></noscript>
 </body>
 </html>
+

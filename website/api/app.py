@@ -57,7 +57,7 @@ def quotes(instrument_ids: str | None = None) -> dict:
 def instrument(instrument_id: str) -> dict:
     values = store.latest_quotes([instrument_id])
     if not values:
-        raise HTTPException(status_code=404, detail="instrument has no verified observations")
+        raise HTTPException(status_code=404, detail="instrument has no published observations")
     quote = values[0]
     return {
         "instrument_id": instrument_id,

@@ -1,0 +1,21 @@
+[Unit]
+Description=Import public Tomanify history for AlanChande website charts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kianirad2020
+Group=kianirad2020
+WorkingDirectory=/home/kianirad2020/alanchande-site/website
+Environment=ALANCHANDE_DB_PATH=/var/lib/alanchande/market.sqlite3
+ExecStart=/home/kianirad2020/alanchande-site/website/.venv/bin/python -m api.import_tomanify_history --apply
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/home/kianirad2020/alanchande-site
+ReadWritePaths=/var/lib/alanchande
+
+[Install]
+WantedBy=multi-user.target
