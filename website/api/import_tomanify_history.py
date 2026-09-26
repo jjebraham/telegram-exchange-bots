@@ -88,19 +88,48 @@ def _price_string(value: Any) -> str:
     return result
 
 
+def _source_reported_date(payload: dict[str, Any]) -> date:
+    """Read current date-only and legacy timezone-unspecified Tomanify fields."""
+    generated = payload.get("generated_by_tomanify_at")
+    if isinstance(generated, str):
+        try:
+            reported = date.fromisoformat(generated)
+        except ValueError as exc:
+            raise SnapshotError("Tomanify generated date must be YYYY-MM-DD") from exc
+        if reported.isoformat() != generated:
+            raise SnapshotError("Tomanify generated date must be YYYY-MM-DD")
+        return reported
+    if generated is not None:
+        raise SnapshotError("Tomanify generated date must be YYYY-MM-DD")
+
+    legacy = payload.get("generated_at")
+    if isinstance(legacy, str) and re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", legacy):
+        try:
+            reported = date.fromisoformat(legacy)
+        except ValueError as exc:
+            raise SnapshotError("Tomanify legacy generated_at date was invalid") from exc
+        if reported.isoformat() == legacy:
+            return reported
+    if isinstance(legacy, str) and re.fullmatch(
+        r"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}", legacy
+    ):
+        try:
+            return datetime.strptime(legacy, "%Y-%m-%d %H:%M:%S").date()
+        except ValueError as exc:
+            raise SnapshotError("Tomanify legacy generated_at timestamp was invalid") from exc
+    raise SnapshotError(
+        "Tomanify snapshot must contain generated_by_tomanify_at (YYYY-MM-DD) "
+        "or legacy generated_at (YYYY-MM-DD HH:MM:SS)"
+    )
+
+
 def build_snapshot(payload: Any, sha: str, archived_at: str, *, now: datetime | None = None) -> dict[str, Any]:
     """Validate one immutable archived data.json version and map its currencies."""
     if not isinstance(payload, dict):
         raise SnapshotError("Tomanify response must be a JSON object")
     if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
         raise SnapshotError("GitHub commit SHA must be 40 lowercase hexadecimal characters")
-    generated = payload.get("generated_by_tomanify_at")
-    try:
-        reported_date = date.fromisoformat(generated)
-    except (TypeError, ValueError) as exc:
-        raise SnapshotError("Tomanify generated date must be YYYY-MM-DD") from exc
-    if reported_date.isoformat() != generated:
-        raise SnapshotError("Tomanify generated date must be YYYY-MM-DD")
+    reported_date = _source_reported_date(payload)
     values = payload.get("values")
     if not isinstance(values, dict):
         raise SnapshotError("Tomanify values must be an object")
@@ -137,7 +166,7 @@ def build_snapshot(payload: Any, sha: str, archived_at: str, *, now: datetime | 
             "source_family": SOURCE_FAMILY,
             # The feed gives a date but not an exact market-observation time.
             "source_observed_at": None,
-            "source_reported_date": generated,
+            "source_reported_date": reported_date.isoformat(),
             # The GitHub file-history commit timestamp is the archive time.
             "collected_at": stamp,
             "verification_status": "source_published",
