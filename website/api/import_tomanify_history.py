@@ -90,7 +90,16 @@ def _price_string(value: Any) -> str:
 
 def _source_reported_date(payload: dict[str, Any]) -> date:
     """Read current date-only and legacy timezone-unspecified Tomanify fields."""
-    generated = payload.get("generated_by_tomanify_at")
+    generated_matches = [
+        value for key, value in payload.items()
+        if isinstance(key, str)
+        and key.strip().rstrip(":").casefold() == "generated_by_tomanify_at"
+    ]
+    if len(generated_matches) > 1 and any(
+        value != generated_matches[0] for value in generated_matches[1:]
+    ):
+        raise SnapshotError("Tomanify snapshot contains conflicting generated date fields")
+    generated = generated_matches[0] if generated_matches else None
     if isinstance(generated, str):
         try:
             reported = date.fromisoformat(generated)
@@ -102,7 +111,16 @@ def _source_reported_date(payload: dict[str, Any]) -> date:
     if generated is not None:
         raise SnapshotError("Tomanify generated date must be YYYY-MM-DD")
 
-    legacy = payload.get("generated_at")
+    legacy_matches = [
+        value for key, value in payload.items()
+        if isinstance(key, str)
+        and key.strip().rstrip(":").casefold() == "generated_at"
+    ]
+    if len(legacy_matches) > 1 and any(
+        value != legacy_matches[0] for value in legacy_matches[1:]
+    ):
+        raise SnapshotError("Tomanify snapshot contains conflicting legacy generated_at fields")
+    legacy = legacy_matches[0] if legacy_matches else None
     if isinstance(legacy, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", legacy):
         try:
             reported = date.fromisoformat(legacy)
