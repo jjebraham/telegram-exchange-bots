@@ -121,6 +121,55 @@ class TomanifyHistoryTests(unittest.TestCase):
         self.assertEqual(scan["commit_count"], 2)
         self.assertFalse(scan["stopped_at_existing_snapshot"])
 
+    def test_invalid_published_currency_is_reported_without_dropping_valid_rates(self) -> None:
+        now = datetime.now(timezone.utc)
+        sha = "f" * 40
+        commit = {
+            "sha": sha,
+            "commit": {"committer": {"date": (now - timedelta(minutes=1)).isoformat()}},
+        }
+        payload = feed()
+        payload["values"]["USD"] = -1
+
+        def fetch(url: str) -> object:
+            return [commit] if "api.github.com" in url else payload
+
+        with patch("api.import_tomanify_history._fetch_json", side_effect=fetch):
+            snapshots, scan = collect_new_snapshots(limit=10)
+
+        self.assertEqual(scan["rejected_rate_count"], 1)
+        self.assertEqual(scan["rejected_rates"][0]["commit_sha"], sha)
+        self.assertEqual(scan["rejected_rates"][0]["currency"], "USD")
+        self.assertEqual(
+            {quote["base_asset"] for quote in snapshots[0]["quotes"]},
+            {"EUR", "AED", "TRY", "CNY"},
+        )
+
+    def test_archive_with_no_valid_rates_is_skipped_and_audited(self) -> None:
+        now = datetime.now(timezone.utc)
+        sha = "1" * 40
+        commit = {
+            "sha": sha,
+            "commit": {"committer": {"date": (now - timedelta(minutes=1)).isoformat()}},
+        }
+        payload = feed()
+        payload["values"] = {code: 0 for code in ("USD", "EUR", "AED", "TRY", "CNY")}
+
+        def fetch(url: str) -> object:
+            return [commit] if "api.github.com" in url else payload
+
+        with patch("api.import_tomanify_history._fetch_json", side_effect=fetch):
+            snapshots, scan = collect_new_snapshots(limit=10)
+
+        self.assertEqual(snapshots, [])
+        self.assertEqual(scan["rejected_rate_count"], 5)
+        self.assertEqual(scan["rejected_archive_count"], 1)
+        self.assertEqual(scan["rejected_archives"][0]["commit_sha"], sha)
+
+        with patch("api.import_tomanify_history._fetch_json", side_effect=fetch):
+            with self.assertRaises(SnapshotError):
+                collect_new_snapshots(limit=10, strict_rates=True)
+
     def test_source_published_series_are_queryable_without_replacing_verified_series(self) -> None:
         now = datetime.now(timezone.utc)
         stamp = (now - timedelta(minutes=2)).isoformat()

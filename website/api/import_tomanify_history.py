@@ -141,7 +141,14 @@ def _source_reported_date(payload: dict[str, Any]) -> date:
     )
 
 
-def build_snapshot(payload: Any, sha: str, archived_at: str, *, now: datetime | None = None) -> dict[str, Any]:
+def build_snapshot(
+    payload: Any,
+    sha: str,
+    archived_at: str,
+    *,
+    now: datetime | None = None,
+    rejected_rates: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     """Validate one immutable archived data.json version and map its currencies."""
     if not isinstance(payload, dict):
         raise SnapshotError("Tomanify response must be a JSON object")
@@ -166,7 +173,13 @@ def build_snapshot(payload: Any, sha: str, archived_at: str, *, now: datetime | 
     for code, label in SUPPORTED_CURRENCIES.items():
         if code not in values:
             continue
-        amount = _price_string(values[code])
+        try:
+            amount = _price_string(values[code])
+        except SnapshotError as exc:
+            if rejected_rates is None:
+                raise
+            rejected_rates.append({"commit_sha": sha, "currency": code, "reason": str(exc)})
+            continue
         quotes.append({
             "quote_id": f"tomanify:{sha}:{code.lower()}",
             "series_id": f"fx:{code.lower()}:iran-open:toman:tomanify:v1",
@@ -219,7 +232,11 @@ def _commit_time(commit: dict[str, Any]) -> str:
     return value
 
 
-def collect_new_snapshots(limit: int = MAX_HISTORY_COMMITS) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def collect_new_snapshots(
+    limit: int = MAX_HISTORY_COMMITS,
+    *,
+    strict_rates: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if limit < 1 or limit > MAX_HISTORY_COMMITS:
         raise ValueError(f"limit must be between 1 and {MAX_HISTORY_COMMITS}")
     known = imported_snapshot_ids(SOURCE_PREFIX)
@@ -254,6 +271,8 @@ def collect_new_snapshots(limit: int = MAX_HISTORY_COMMITS) -> tuple[list[dict[s
     # small bounded pool, then ingest in chronological order.
     commits.reverse()
     snapshots_by_index: dict[int, dict[str, Any]] = {}
+    rejected_rates: list[dict[str, str]] = []
+    rejected_archives: list[dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {
             pool.submit(_fetch_json, RAW_URL.format(sha=item["sha"])): (index, item)
@@ -261,15 +280,28 @@ def collect_new_snapshots(limit: int = MAX_HISTORY_COMMITS) -> tuple[list[dict[s
         }
         for future in as_completed(futures):
             index, item = futures[future]
-            snapshots_by_index[index] = build_snapshot(
-                future.result(), item["sha"], item["archived_at"]
-            )
-    snapshots = [snapshots_by_index[index] for index in range(len(commits))]
+            payload = future.result()
+            try:
+                snapshots_by_index[index] = build_snapshot(
+                    payload, item["sha"], item["archived_at"],
+                    rejected_rates=None if strict_rates else rejected_rates,
+                )
+            except SnapshotError as exc:
+                if strict_rates:
+                    raise
+                rejected_archives.append({"commit_sha": item["sha"], "reason": str(exc)})
+    snapshots = [snapshots_by_index[index] for index in range(len(commits)) if index in snapshots_by_index]
     return snapshots, {
         "commit_count": len(commits),
         "pages_read": page,
         "stopped_at_existing_snapshot": stopped_at_known,
         "history_limit_reached": len(commits) >= limit and not stopped_at_known,
+        "rejected_rate_count": len(rejected_rates),
+        "rejected_rates": rejected_rates[:25],
+        "rejected_rates_omitted": max(0, len(rejected_rates) - 25),
+        "rejected_archive_count": len(rejected_archives),
+        "rejected_archives": rejected_archives[:25],
+        "rejected_archives_omitted": max(0, len(rejected_archives) - 25),
     }
 
 
@@ -277,9 +309,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="write new source snapshots to the website SQLite database")
     parser.add_argument("--limit", type=int, default=MAX_HISTORY_COMMITS, help="maximum upstream snapshots to backfill")
+    parser.add_argument(
+        "--strict-rates", action="store_true",
+        help="fail the import if an archive contains an invalid supported currency rate",
+    )
     args = parser.parse_args()
     try:
-        snapshots, scan = collect_new_snapshots(args.limit)
+        snapshots, scan = collect_new_snapshots(args.limit, strict_rates=args.strict_rates)
         result = ingest_snapshots(snapshots) if args.apply else {
             "inserted_snapshots": 0,
             "already_present": 0,

@@ -31,6 +31,13 @@ initial history scan is capped at 1,500 file commits and the importer stops at
 the newest commit already present in SQLite. Later timer runs only collect new
 commits. Fetches use a small bounded worker pool.
 
+An invalid value for one supported currency is omitted from that archived
+snapshot while valid currencies in the same snapshot are retained. The import
+summary reports the commit, currency, and validation reason for each rejected
+value (up to 25 examples). An archive with no valid supported rates, or with
+invalid date metadata, is skipped and reported in the same summary. Use
+`--strict-rates` to stop on the first invalid archived record during an audit.
+
 The new systemd timer runs the importer every four hours. It uses the same
 SQLite database as the public API, and its service account can write only to
 that database directory. It does not access Telegram/X publisher services.
@@ -91,6 +98,9 @@ sudo systemctl restart alanchande-api.service
 
 Verify `/healthz`, `/api/v1/quotes`, and `/api/v1/history` for
 `fx:usd:iran-open:toman:tomanify:v1`, plus the attribution and chart timestamp
-note on the public page. A rollback restores the prior static assets and API
+note on the public page. Keep the exact `/healthz` proxy location from
+`deploy/nginx/alanchande-api-location.conf` in the active HTTPS server block's
+included Nginx snippet, then run `sudo nginx -t` before reloading Nginx. A
+rollback restores the prior static assets and API
 code and disables the new timer; imported rows can remain in the append-only
 database without affecting the old code.
