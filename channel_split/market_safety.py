@@ -20,6 +20,7 @@ import hashlib
 import json
 import sqlite3
 import statistics
+from itertools import combinations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -310,46 +311,57 @@ def evaluate_observation(
         * Decimal("100")
     )
 
-    # Edge case: with 3+ sources, one provider can sit just inside the normal
-    # median-deviation cutoff yet still widen the full consensus range beyond
-    # the allowed spread. In that case, accept only a clearly tighter majority
-    # cluster around the median. The tighter cluster must stay within half the
-    # normal tolerance, and it must still preserve the configured quorum.
+    # If the full set is too wide, look for one uniquely largest strict-majority
+    # cluster whose own full spread is within the configured tolerance. This
+    # avoids letting a single outlier veto three agreeing sources, while still
+    # failing closed on ambiguous splits (for example two sources versus two).
     #
-    # This never applies to two-source observations: if two providers disagree,
-    # there is no principled way to choose a winner, so they remain blocked.
+    # We deliberately select by cluster size only, not by provider preference
+    # or closeness to historical values. If two different largest clusters are
+    # possible, there is no principled winner and the observation stays blocked.
     if (
         consensus_spread_pct > observation.max_source_deviation_pct
         and len(normalized) >= 3
     ):
-        tight_tolerance = observation.max_source_deviation_pct / Decimal("2")
-        tight_inliers = {
-            source: value
-            for source, value in normalized.items()
-            if (
-                abs(value - initial_reference)
-                / initial_reference
+        source_names = tuple(sorted(normalized))
+        majority_cluster: dict[str, Decimal] | None = None
+
+        for cluster_size in range(len(source_names) - 1, observation.min_sources - 1, -1):
+            if cluster_size * 2 <= len(source_names):
+                break
+
+            candidates: list[dict[str, Decimal]] = []
+            for names in combinations(source_names, cluster_size):
+                candidate = {name: normalized[name] for name in names}
+                candidate_reference = _median(candidate.values())
+                candidate_spread_pct = (
+                    (max(candidate.values()) - min(candidate.values()))
+                    / candidate_reference
+                    * Decimal("100")
+                )
+                if candidate_spread_pct <= observation.max_source_deviation_pct:
+                    candidates.append(candidate)
+
+            if len(candidates) == 1:
+                majority_cluster = candidates[0]
+                break
+            if len(candidates) > 1:
+                # More than one equally large valid cluster is ambiguous.
+                break
+
+        if majority_cluster is not None:
+            inliers = majority_cluster
+            rejected = {
+                source: value
+                for source, value in normalized.items()
+                if source not in inliers
+            }
+            reference = _median(inliers.values())
+            consensus_spread_pct = (
+                (max(inliers.values()) - min(inliers.values()))
+                / reference
                 * Decimal("100")
             )
-            <= tight_tolerance
-        }
-        if len(tight_inliers) >= observation.min_sources:
-            tight_reference = _median(tight_inliers.values())
-            tight_spread_pct = (
-                (max(tight_inliers.values()) - min(tight_inliers.values()))
-                / tight_reference
-                * Decimal("100")
-            )
-            if tight_spread_pct <= tight_tolerance:
-                newly_rejected = {
-                    source: value
-                    for source, value in normalized.items()
-                    if source not in tight_inliers
-                }
-                inliers = tight_inliers
-                rejected = newly_rejected
-                reference = tight_reference
-                consensus_spread_pct = tight_spread_pct
 
     if consensus_spread_pct > observation.max_source_deviation_pct:
         return SafetyCheck(

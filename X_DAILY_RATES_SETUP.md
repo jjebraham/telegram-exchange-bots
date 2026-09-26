@@ -1,5 +1,9 @@
 # Kiani Exchange rates on X
 
+> Current compact-post deployment instructions are in [X_COMPACT_DEPLOYMENT.md](X_COMPACT_DEPLOYMENT.md).
+> All fixed posts are now link-free. Legacy linked-post instructions below are
+> historical and must not be used for activation.
+
 This automation publishes Kiani Exchange rate updates from the official X account while avoiding repetitive hourly spam.
 
 ## Source of rates

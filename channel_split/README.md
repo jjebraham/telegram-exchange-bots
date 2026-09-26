@@ -36,7 +36,7 @@ Available post names:
 - `alanchande-snapshot` — compact market snapshot.
 - `alanchande-daily-change` — intraday USD/EUR movement from local SQLite history.
 - `alanchande-turkey-gold` — Turkish Kapalıçarşı gold products.
-- `alanchande-iran-fx` — Iran open-market currency board (25 currencies), normalized from TGJU rial values to toman, with Δ24H and Δ1M trusted-history columns. During the current shadow rollout it intentionally remains safety-BLOCKED until an independent second verifier family is added.
+- `alanchande-iran-fx` — Iran open-market currency board (25 currencies), normalized from TGJU rial values to toman, with Δ24H and Δ1M trusted-history columns. The global independent-source ceiling is 2%; TRY uses a bounded 3.5% ceiling because its Iran/Turkey-facing source conventions diverge. Any wider spread remains blocked.
 - `alanchande-iran-gold` — Iranian coin/gold prices, converted from rial to toman.
 - `alanchande-usdt-exchanges` — production 7-exchange hybrid USDT board with Δ24H and Δ1M columns. It combines direct exchange APIs where available with TGJU/Ramzarz fallbacks per exchange.
 - `alanchande-usdt-direct` — direct-source-only USDT comparison for diagnostics.
