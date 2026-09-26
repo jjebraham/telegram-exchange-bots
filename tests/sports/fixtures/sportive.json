@@ -1,0 +1,128 @@
+{
+  "product": {
+    "pk": 272764,
+    "name": "Court Classic Clean Kadın Beyaz Sneaker Ayakkabı 40222324",
+    "sku": "1797695",
+    "base_code": "402223",
+    "attributes": {
+      "filterable_renk": "Beyaz",
+      "integration_renk": "N30"
+    },
+    "price": "2299.90",
+    "currency_type": "try",
+    "retail_price": "3399",
+    "absolute_url": "/puma-court-classic-clean-kadin-beyaz-sneaker-ayakkabi-40222324/"
+  },
+  "variants": [
+    {
+      "attribute_key": "filterable_beden",
+      "options": [
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "37",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "37,5",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "38",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "38,5",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "39",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "40",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "40,5",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "41",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "42",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "42,5",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "43",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "44",
+          "product": {
+            "price": "2299.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "44,5",
+          "product": {
+            "price": "2299.90"
+          }
+        }
+      ]
+    }
+  ],
+  "selected_variant": null
+}

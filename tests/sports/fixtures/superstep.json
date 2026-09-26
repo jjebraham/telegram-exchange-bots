@@ -1,0 +1,71 @@
+{
+  "product": {
+    "pk": 736750,
+    "name": "Lacoste Storm 96 2K Kadın Beyaz Spor Ayakkabı",
+    "sku": "6139983",
+    "base_code": "750SFA0174T",
+    "attributes": {
+      "integration_renk": "2R1"
+    },
+    "price": "5618",
+    "currency_type": "try",
+    "retail_price": "7490",
+    "absolute_url": "/urun/lacoste-storm-96-2k-kadin-beyaz-spor-ayakkabi/750sfa0174t/"
+  },
+  "variants": [
+    {
+      "attribute_key": "integration_beden",
+      "options": [
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "36",
+          "product": {
+            "price": "5618"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "37",
+          "product": {
+            "price": "5618"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "38",
+          "product": {
+            "price": "5618"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "39",
+          "product": {
+            "price": "5618"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "39,5",
+          "product": {
+            "price": "5618"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "40",
+          "product": {
+            "price": "5618"
+          }
+        }
+      ]
+    }
+  ],
+  "selected_variant": null
+}

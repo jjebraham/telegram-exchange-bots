@@ -1,0 +1,87 @@
+{
+  "productName": "adidas Samba OG",
+  "erpCode": "IG9030-001",
+  "slug": "adidas-samba-og-ig9030-001-sneaker-p-139139",
+  "price": {
+    "oldPrice": 7999,
+    "newPrice": 4799.4,
+    "currencySymbol": "TL",
+    "currencyName": "Lira",
+    "currencyCode": "TRY",
+    "taxRate": 10,
+    "oldPriceText": "7,999.00",
+    "newPriceText": "4,799.40",
+    "specialPrice": 0,
+    "specialPriceStartDate": "0001-01-01T00:00:00",
+    "specialPriceEndDate": "0001-01-01T00:00:00",
+    "specialPriceText": "0.00",
+    "percent": 40,
+    "specialPercent": 100,
+    "oldNewPriceRate": 1.67,
+    "markdown": true,
+    "variantPriceErpCode": null,
+    "salePrice": 4799.4,
+    "salePriceText": "4,799.40",
+    "oldNewPriceDifference": 3199.6,
+    "taxRates": []
+  },
+  "addToBasketDisabled": false,
+  "variants": [
+    {
+      "specName": "size",
+      "specValueName": "36",
+      "quantity": 0,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    },
+    {
+      "specName": "size",
+      "specValueName": "36.5",
+      "quantity": 0,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    },
+    {
+      "specName": "size",
+      "specValueName": "37.5",
+      "quantity": 0,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    },
+    {
+      "specName": "size",
+      "specValueName": "38",
+      "quantity": 0,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    },
+    {
+      "specName": "size",
+      "specValueName": "38.5",
+      "quantity": 0,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    },
+    {
+      "specName": "size",
+      "specValueName": "39.5",
+      "quantity": 75,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    },
+    {
+      "specName": "size",
+      "specValueName": "40",
+      "quantity": 168,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    },
+    {
+      "specName": "size",
+      "specValueName": "40.5",
+      "quantity": 136,
+      "newPrice": 4799.4,
+      "singleSaleDisabled": false
+    }
+  ]
+}

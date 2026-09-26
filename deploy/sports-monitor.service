@@ -1,0 +1,16 @@
+[Unit]
+Description=Turkish sports discount monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/telegram-exchange-bots
+EnvironmentFile=%h/.config/run-discount/monitor.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=%h/telegram-exchange-bots/.venv-sports/bin/python -m sports_monitor --publish --db %h/.local/state/run-discount/history.sqlite3 --report %h/.local/state/run-discount/latest-scan.json
+TimeoutStartSec=5h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

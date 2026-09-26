@@ -1,0 +1,171 @@
+{
+  "routePath": "merrell-ayakkabi-outdoor-ayakkabilari-moab-speed-2-gtx-j037513-10010",
+  "name": "MOAB SPEED 2 GTX",
+  "sku": "J037513-10010",
+  "stocksByBarcode": {
+    "1209658": 0,
+    "1209659": 0,
+    "1209660": 0,
+    "1209661": 0,
+    "1209662": 0,
+    "1209663": 1,
+    "1209664": 1,
+    "1209665": 1,
+    "1209666": 1,
+    "1209667": 1,
+    "1209668": 1,
+    "1209669": 1,
+    "1209670": 1,
+    "1209671": 1
+  },
+  "basePrice": 12699.9,
+  "salesPrice": 7699.93,
+  "brand": {
+    "id": 2015,
+    "name": "Merrell",
+    "filePath": "korayspor/uploads/brands/merrell2.png",
+    "routePath": "merrell",
+    "extensionData": {
+      "SizeChartList": [
+        {
+          "Items": [
+            {
+              "Categories": "9542,9541,9540,9537,9525,9524,9519,9514,9505,9504,9503,9502,9501,9500,9499,9477,9461,9450,9444,9423,9422,9421,9419,9400,9219,9217,9216,9215,9097,9096,9095,9094,9093,9092,9091,9090,9089,9088,9084,9072,9071,9056,9003,8984,8983,8979,8972,8947,8919,8918,8917,8916,8909,8890,8855,8854,8853,8852,8851,8850,8848,8847,8846,8842,9545,9546,9536,9535,9523,9515,9416,9351,9207,9214,8889,8886,8885,8731,8946,9411,8954,8953,8952,8951,8730,8729,8728",
+              "Chart": "83",
+              "InlineEditingId": "{\"Id\":4313,\"DynamicTypeId\":29,\"DynamicPropertyId\":101,\"ParentId\":4310,\"IsApproved\":true,\"OrderNumber\":0}"
+            }
+          ],
+          "InlineEditingId": "{\"Id\":4310,\"DynamicTypeId\":30,\"DynamicPropertyId\":0,\"ParentId\":0,\"IsApproved\":false,\"OrderNumber\":0}"
+        }
+      ]
+    }
+  },
+  "barcodes": [
+    {
+      "id": 1209658,
+      "barcode": "0195019754072",
+      "stockTypeValues": [
+        {
+          "name": "50"
+        }
+      ]
+    },
+    {
+      "id": 1209659,
+      "barcode": "0195019754065",
+      "stockTypeValues": [
+        {
+          "name": "49"
+        }
+      ]
+    },
+    {
+      "id": 1209660,
+      "barcode": "0195019754058",
+      "stockTypeValues": [
+        {
+          "name": "48"
+        }
+      ]
+    },
+    {
+      "id": 1209661,
+      "barcode": "0195019754041",
+      "stockTypeValues": [
+        {
+          "name": "47"
+        }
+      ]
+    },
+    {
+      "id": 1209662,
+      "barcode": "0195019754034",
+      "stockTypeValues": [
+        {
+          "name": "46.5"
+        }
+      ]
+    },
+    {
+      "id": 1209663,
+      "barcode": "0195019754027",
+      "stockTypeValues": [
+        {
+          "name": "46"
+        }
+      ]
+    },
+    {
+      "id": 1209664,
+      "barcode": "0195019754010",
+      "stockTypeValues": [
+        {
+          "name": "45"
+        }
+      ]
+    },
+    {
+      "id": 1209665,
+      "barcode": "0195019754003",
+      "stockTypeValues": [
+        {
+          "name": "44.5"
+        }
+      ]
+    },
+    {
+      "id": 1209666,
+      "barcode": "0195019753990",
+      "stockTypeValues": [
+        {
+          "name": "44"
+        }
+      ]
+    },
+    {
+      "id": 1209667,
+      "barcode": "0195019753983",
+      "stockTypeValues": [
+        {
+          "name": "43.5"
+        }
+      ]
+    },
+    {
+      "id": 1209668,
+      "barcode": "0195019753976",
+      "stockTypeValues": [
+        {
+          "name": "43"
+        }
+      ]
+    },
+    {
+      "id": 1209669,
+      "barcode": "0195019753969",
+      "stockTypeValues": [
+        {
+          "name": "42"
+        }
+      ]
+    },
+    {
+      "id": 1209670,
+      "barcode": "0195019753952",
+      "stockTypeValues": [
+        {
+          "name": "41.5"
+        }
+      ]
+    },
+    {
+      "id": 1209671,
+      "barcode": "0195019753945",
+      "stockTypeValues": [
+        {
+          "name": "41"
+        }
+      ]
+    }
+  ]
+}

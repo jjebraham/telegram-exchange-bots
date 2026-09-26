@@ -1,0 +1,11 @@
+[Unit]
+Description=Scan sports discounts every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:17:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+Unit=sports-monitor.service
+
+[Install]
+WantedBy=timers.target

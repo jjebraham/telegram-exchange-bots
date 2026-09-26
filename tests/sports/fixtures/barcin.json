@@ -1,0 +1,143 @@
+{
+  "product": {
+    "pk": 269164,
+    "name": "Nike Dunk Low Retro Erkek Spor Ayakkabı",
+    "sku": "200100640095",
+    "base_code": "DD1391",
+    "attributes": {
+      "integration_color_hash": "Beyaz-Beyaz-Siyah"
+    },
+    "price": "4798.90",
+    "currency_type": "try",
+    "retail_price": "7199.90",
+    "absolute_url": "/nike-dunk-low-retro-erkek-spor-ayakkabi-beyaz-beyaz-siyah/"
+  },
+  "variants": [
+    {
+      "attribute_key": "integration_size",
+      "options": [
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "39",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "40",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "40.5",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "41",
+          "product": {
+            "price": "3819.90"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "42",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "42.5",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "43",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "44",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "44.5",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "45",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "45.5",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "46",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "47",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "47.5",
+          "product": {
+            "price": "4798.90"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "48.5",
+          "product": {
+            "price": "4798.90"
+          }
+        }
+      ]
+    }
+  ],
+  "selected_variant": null
+}

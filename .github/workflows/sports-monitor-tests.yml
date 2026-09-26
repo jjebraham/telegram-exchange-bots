@@ -1,0 +1,19 @@
+name: Sports discount monitor tests
+on:
+  push:
+    paths: ['sports_monitor/**', 'tests/sports/**', 'requirements-sports.txt', '.github/workflows/sports-monitor-tests.yml']
+  pull_request:
+    paths: ['sports_monitor/**', 'tests/sports/**', 'requirements-sports.txt', '.github/workflows/sports-monitor-tests.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r requirements-sports.txt
+      - run: python -m unittest discover -s tests/sports -v

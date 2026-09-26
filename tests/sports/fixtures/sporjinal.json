@@ -1,0 +1,72 @@
+{
+  "product": {
+    "pk": 154895,
+    "name": "Only & Sons Ceres Erkek Siyah Eşofman Altı (22018686-B)",
+    "sku": "297589",
+    "base_code": "22018686-B",
+    "attributes": {
+      "filterable_renk": "Siyah",
+      "integration_renk": "Siyah"
+    },
+    "price": "999",
+    "currency_type": "try",
+    "retail_price": "1999",
+    "absolute_url": "/only-sons-ceres-erkek-siyah-esofman-alti-22018686-b-2/"
+  },
+  "variants": [
+    {
+      "attribute_key": "integration_beden",
+      "options": [
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "XS",
+          "product": {
+            "price": "999"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "S",
+          "product": {
+            "price": "999"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "M",
+          "product": {
+            "price": "999"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "L",
+          "product": {
+            "price": "999"
+          }
+        },
+        {
+          "is_selectable": true,
+          "in_stock": true,
+          "label": "XL",
+          "product": {
+            "price": "999"
+          }
+        },
+        {
+          "is_selectable": false,
+          "in_stock": false,
+          "label": "XXL",
+          "product": {
+            "price": "999"
+          }
+        }
+      ]
+    }
+  ],
+  "selected_variant": null
+}
