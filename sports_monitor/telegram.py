@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 import requests
 from .stores import NAMES
@@ -13,7 +14,7 @@ def price(cents):
 
 def item(product, reason):
     badge = '🔥 تخفیف ویژه' if product.discount >= 50 else '🏷 تخفیف'
-    percent = str(int(product.discount)).translate(PERSIAN)
+    percent = str(int(product.discount.quantize(Decimal('1'), rounding=ROUND_HALF_UP))).translate(PERSIAN)
     checked = datetime.fromtimestamp(product.observed_at, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
     source_note = '\n📊 موجودی و قیمت طبق دادهٔ Ayakapp' if product.source == 'ayakapp' else ''
     return (f'👟 <b>{escape(product.name[:180])}</b>\n'

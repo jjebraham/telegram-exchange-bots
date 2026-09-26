@@ -286,6 +286,10 @@ class TelegramTests(unittest.TestCase):
         text = item(product(source='ayakapp'), 'new')
         self.assertIn('موجودی و قیمت طبق دادهٔ Ayakapp', text)
 
+    def test_discount_percentage_is_rounded_to_match_store_badge(self):
+        text = item(product(original=849900, sale=399900), 'new')
+        self.assertIn('۵۳٪', text)
+
     def test_group_and_length(self):
         deals = [(product(sku=str(i),name='x'*180), 'new') for i in range(20)]
         groups=list(batches(deals,7))
