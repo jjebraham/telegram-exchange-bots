@@ -112,7 +112,25 @@ async def _membership_with_retry(context: ContextTypes.DEFAULT_TYPE, settings, u
     return False
 
 
-def _promo_success_text(campaign, link: str) -> str:
+def _share_activation_variant(user_id: int) -> str:
+    """Stable 50/50 assignment so repeated messages keep the same experiment arm."""
+    return "a" if int(user_id) % 2 == 0 else "b"
+
+
+def _promo_success_text(campaign, link: str, variant: str = "a") -> str:
+    if variant == "b":
+        prize = escape(campaign.prize_text) if campaign.prize_text else "جوایز مسابقه"
+        return (
+            "🎉 <b>وارد مسابقه شدی!</b>\n\n"
+            f"🎁 {prize}\n"
+            f"🏆 {campaign.num_winners} برنده\n\n"
+            f"🎯 <b>۰/{campaign.invites_per_point}</b> — "
+            f"هر <b>{campaign.invites_per_point} دعوت فعال</b> = ۱ امتیاز موقت\n"
+            "📤 <b>همین الان لینک رو فقط برای ۲ نفر بفرست.</b>\n"
+            "وقتی اولین نفر لینک رو باز کنه، همینجا بهت خبر می‌دیم.\n\n"
+            f"<b>🔗 لینک اختصاصی تو:</b>\n{link}"
+        )
+
     if campaign.invites_per_point == 2:
         first_step = "👥 اولین دعوت فعال = نصف راه تا اولین امتیاز"
     else:
@@ -189,14 +207,21 @@ async def auto_complete_promo_join(
         return False
 
     try:
+        activation_variant = _share_activation_variant(user.id)
         await context.bot.send_message(
             chat_id=user.id,
-            text=_promo_success_text(campaign, link),
+            text=_promo_success_text(campaign, link, activation_variant),
             parse_mode=ParseMode.HTML,
             reply_markup=link_keyboard(settings, link, campaign),
             disable_web_page_preview=True,
         )
         db.track_funnel_event(campaign.id, user.id, "entry_auto_join_message_sent", source)
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            f"share_activation_prompt_{activation_variant}",
+            source,
+        )
     except (BadRequest, TelegramError):
         # The entry itself is already valid; /start will show the participant home if
         # Telegram refuses the proactive message for any reason.
@@ -328,11 +353,18 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        activation_variant = _share_activation_variant(user.id)
         await update.message.reply_text(
-            _promo_success_text(campaign, link),
+            _promo_success_text(campaign, link, activation_variant),
             parse_mode=ParseMode.HTML,
             reply_markup=link_keyboard(settings, link, campaign),
             disable_web_page_preview=True,
+        )
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            f"share_activation_prompt_{activation_variant}",
+            first_source,
         )
         return
 
@@ -414,7 +446,8 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await query.answer("لینک اختصاصی‌ات آماده شد 🚀")
-    success_text = _promo_success_text(campaign, link)
+    activation_variant = _share_activation_variant(user.id)
+    success_text = _promo_success_text(campaign, link, activation_variant)
     try:
         await query.edit_message_text(
             success_text,
@@ -425,3 +458,10 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
+    else:
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            f"share_activation_prompt_{activation_variant}",
+            source,
+        )
