@@ -12,10 +12,11 @@ users to credit “Tomanify” with a link to its WordPress plugin. Its README a
 users to contact its maintainer before commercial use. This deployment assumes
 the site's noncommercial use, as confirmed by the site owner.
 
-The live feed includes only a calendar date, not a precise market-observation
-time. The importer therefore keeps that date in `source_reported_date` and uses
-the GitHub file-history commit timestamp as `collected_at`, explicitly as an
-archive timestamp. The chart note explains this to visitors. These points show
+The current feed publishes a calendar date, while older archived
+snapshots used `generated_at` timestamps without a timezone. The importer
+preserves only the calendar date in `source_reported_date` and uses the GitHub
+file-history commit timestamp as `collected_at`, explicitly as an archive
+timestamp. The chart note explains this to visitors. These points show
 published snapshots only; no missing values or intermediate prices are
 invented. The source data is provided as-is.
 
