@@ -61,7 +61,10 @@ class PriceTests(unittest.TestCase):
 
 class ParserTests(unittest.TestCase):
     def fixture(self, store):
-        return (FIXTURES / (store + '.json')).read_text(encoding='utf-8')
+        path = FIXTURES / store
+        if not path.suffix:
+            path = path.with_suffix('.json')
+        return path.read_text(encoding='utf-8')
 
     def test_live_akinon_fixtures(self):
         expected = {'barcin': ('40', 479890), 'superstep': ('36', 519900),
