@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily compact X kiani-hawala
+
+[Timer]
+OnCalendar=*-*-* 19:25:00 Europe/Istanbul
+Persistent=false
+Unit=kiani-x-channel@kiani-hawala.service
+
+[Install]
+WantedBy=timers.target
