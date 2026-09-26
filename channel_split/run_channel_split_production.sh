@@ -23,7 +23,7 @@ fi
 
 post="${1:-}"
 case "$post" in
-  bank-comparison|alanchande-daily-digest|alanchande-iran-gold|alanchande-fx-pulse|alanchande-turkey-gold|alanchande-iran-fx|alanchande-usdt-exchanges|kiani-examples|kiani-examples-reverse|kiani-try|kiani-rates) ;;
+  bank-comparison|alanchande-daily-digest|alanchande-iran-gold|alanchande-fx-pulse|alanchande-turkey-gold|alanchande-iran-fx|alanchande-usdt-exchanges|forward-kiani-try|forward-kiani-rates|kiani-examples|kiani-examples-reverse|kiani-try|kiani-rates) ;;
   *)
     echo "channel-split-production: unsupported post: $post" >&2
     exit 64
