@@ -37,11 +37,29 @@ class TomanifyHistoryTests(unittest.TestCase):
         self.assertEqual(quotes["USD"]["source_reported_date"], feed()["generated_by_tomanify_at"])
         self.assertEqual(quotes["USD"]["methodology_version"], "tomanify-github-archive-commit-time-v1")
 
+    def test_legacy_generated_timestamp_maps_only_its_calendar_date(self) -> None:
+        now = datetime.now(timezone.utc)
+        sha = "9" * 40
+        archived = feed()
+        del archived["generated_by_tomanify_at"]
+        archived["generated_at"] = "2025-10-06 18:04:28"
+        snapshot = build_snapshot(
+            archived, sha, (now - timedelta(minutes=2)).isoformat(), now=now
+        )
+        quote = next(q for q in snapshot["quotes"] if q["base_asset"] == "USD")
+        self.assertEqual(quote["source_reported_date"], "2025-10-06")
+        self.assertIsNone(quote["source_observed_at"])
+
     def test_invalid_feed_date_rate_and_commit_hash_are_rejected(self) -> None:
         now = datetime.now(timezone.utc)
         stamp = (now - timedelta(minutes=2)).isoformat()
         with self.assertRaises(SnapshotError):
             build_snapshot(feed("not-a-date"), "a" * 40, stamp, now=now)
+        legacy_invalid = feed()
+        del legacy_invalid["generated_by_tomanify_at"]
+        legacy_invalid["generated_at"] = "2025-10-06 25:04:28"
+        with self.assertRaises(SnapshotError):
+            build_snapshot(legacy_invalid, "a" * 40, stamp, now=now)
         broken = feed()
         broken["values"]["USD"] = -1
         with self.assertRaises(SnapshotError):
