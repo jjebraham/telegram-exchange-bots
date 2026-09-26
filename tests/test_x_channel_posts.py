@@ -70,6 +70,20 @@ class XChannelTests(unittest.TestCase):
                 self.assertNotIn('تومان مگر موارد دلاری', text)
                 self.assertNotIn('<', text)
 
+    def test_iran_fx_compact_view_keeps_currency_flags(self):
+        source = fixtures()["alanchande-iran-fx"]
+        text = render("alanchande-iran-fx", source)
+
+        for expected in (
+            "🇺🇸 USD",
+            "🇪🇺 EUR",
+            "🇬🇧 GBP",
+            "🇹🇷 TRY",
+            "🇰🇼 KWD",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, text)
+
     def test_missing_rows_and_malformed_prices_fail_closed(self):
         sources = fixtures()
         with self.assertRaises(ValueError):
