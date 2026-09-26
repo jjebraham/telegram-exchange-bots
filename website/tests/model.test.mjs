@@ -65,6 +65,20 @@ test("chart accepts archived published-source snapshots without claiming verific
   assert.deepEqual(points.map((point) => point.value), [235200]);
 });
 
+test("chart accepts mixed verified and published-source history", () => {
+  const points = chartObservations({
+    sampling_kind: "mixed_published_observations",
+    points: [
+      { quote: verified({ collected_at: "2026-09-25T13:00:00+00:00", reference: "235300" }) },
+      { quote: verified({
+        verification_status: "source_published", source_family: "public_market_provider",
+        collected_at: "2026-09-25T12:00:00+00:00", reference: "235200",
+      }) },
+    ],
+  });
+  assert.deepEqual(points.map((point) => point.value), [235200, 235300]);
+});
+
 test("units and decimal precision remain explicit", () => {
   assert.equal(formatPrice(verified(), "84455.10"), "84,455.10");
   assert.equal(formatPrice(verified(), "0.00000582"), "0.00000582");

@@ -201,6 +201,12 @@ class TomanifyHistoryTests(unittest.TestCase):
                 self.assertEqual(history["sampling_kind"], "published_source_observations")
                 self.assertEqual(history["returned_point_count"], 1)
                 self.assertEqual(history["points"][0]["quote"]["verification_status"], "source_published")
+                verified_history = store.history(
+                    "fx:usd:iran-open:toman:reference:v1", now - timedelta(hours=1),
+                    now + timedelta(hours=1), 100,
+                )
+                self.assertEqual(verified_history["sampling_kind"], "verified_publisher_observations")
+                self.assertEqual(verified_history["returned_point_count"], 1)
                 verified_quote = next(q for q in latest if q["series_id"] == "fx:usd:iran-open:toman:reference:v1")
                 self.assertEqual(verified_quote["verification_status"], "verified")
 

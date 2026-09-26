@@ -237,6 +237,13 @@ def history(series_id: str, start: datetime, end: datetime, limit: int) -> dict[
     start_utc = start.astimezone(timezone.utc).isoformat()
     end_utc = end.astimezone(timezone.utc).isoformat()
     with connect_readonly() as db:
+        statuses = {
+            str(row[0])
+            for row in db.execute(
+                "SELECT DISTINCT verification_status FROM quotes WHERE series_id = ?",
+                (series_id,),
+            ).fetchall()
+        }
         total = db.execute(
             """SELECT COUNT(*) FROM quotes WHERE series_id = ?
                AND verification_status IN ('verified', 'source_published')
@@ -265,7 +272,12 @@ def history(series_id: str, start: datetime, end: datetime, limit: int) -> dict[
         "available_to": points[-1]["quote"]["collected_at"] if points else None,
         "observation_count": total,
         "returned_point_count": len(points),
-        "sampling_kind": "published_source_observations",
+        "sampling_kind": (
+            "verified_publisher_observations" if statuses == {"verified"} else
+            "published_source_observations" if statuses == {"source_published"} else
+            "mixed_published_observations" if statuses == {"verified", "source_published"} else
+            "unknown_observations"
+        ),
         "expected_cadence_seconds": None,
         "known_gaps": None,
         "points": points,

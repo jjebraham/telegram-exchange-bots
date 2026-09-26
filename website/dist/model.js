@@ -130,7 +130,7 @@ export function formatPrice(quote, raw) {
 
 // field: optional "bid" or "ask" to chart one side of a two-sided market.
 export function chartObservations(payload, field) {
-  if (!new Set(["verified_publisher_observations", "published_source_observations"]).has(payload?.sampling_kind) ||
+  if (!new Set(["verified_publisher_observations", "published_source_observations", "mixed_published_observations"]).has(payload?.sampling_kind) ||
       !Array.isArray(payload.points)) {
     throw new Error("تاریخچهٔ نمودار معتبر نیست.");
   }
