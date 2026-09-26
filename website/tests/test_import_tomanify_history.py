@@ -50,6 +50,25 @@ class TomanifyHistoryTests(unittest.TestCase):
         self.assertEqual(quote["source_reported_date"], "2025-10-06")
         self.assertIsNone(quote["source_observed_at"])
 
+    def test_generated_date_key_variants_are_supported_without_ambiguity(self) -> None:
+        now = datetime.now(timezone.utc)
+        sha = "8" * 40
+        aliased = feed()
+        reported = aliased.pop("generated_by_tomanify_at")
+        aliased["generated_By_Tomanify_at:"] = reported
+        snapshot = build_snapshot(
+            aliased, sha, (now - timedelta(minutes=2)).isoformat(), now=now
+        )
+        quote = next(q for q in snapshot["quotes"] if q["base_asset"] == "USD")
+        self.assertEqual(quote["source_reported_date"], reported)
+
+        conflicting = dict(aliased)
+        conflicting["generated_by_tomanify_at"] = "2026-09-24"
+        with self.assertRaises(SnapshotError):
+            build_snapshot(
+                conflicting, sha, (now - timedelta(minutes=2)).isoformat(), now=now
+            )
+
     def test_invalid_feed_date_rate_and_commit_hash_are_rejected(self) -> None:
         now = datetime.now(timezone.utc)
         stamp = (now - timedelta(minutes=2)).isoformat()
