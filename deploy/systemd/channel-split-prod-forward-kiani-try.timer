@@ -1,0 +1,10 @@
+[Unit]
+Description=Forward daily 11:40 Kiani TRY post to AlanChande
+
+[Timer]
+OnCalendar=*-*-* 11:42:00 Europe/Istanbul
+Persistent=false
+Unit=channel-split-production@forward-kiani-try.service
+
+[Install]
+WantedBy=timers.target
