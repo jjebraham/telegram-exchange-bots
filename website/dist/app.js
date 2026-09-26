@@ -2,7 +2,7 @@ import {
   CATEGORY_META, CATEGORY_ORDER, bestQuote, changeBetween, chartObservations, cheapestAsk,
   currencyName, formatPercent, formatPrice, freshness, normalizeQuotes, numericPrice,
   observationSegments, quoteUnit, relativeAge, searchKey, sortQuotes,
-} from "./model.js?v=7";
+} from "./model.js?v=8";
 
 const byId = (id) => document.getElementById(id);
 const svgNS = "http://www.w3.org/2000/svg";
@@ -119,11 +119,11 @@ function renderStatus() {
 const BOARD = [
   {
     name: "دلار آمریکا", meta: () => "تومان · بازار آزاد",
-    find: (qs) => ({ quote: bestQuote(qs, (q) => q.category === "iran_fx" && q.base_asset === "USD", state.connected) }),
+    find: (qs) => ({ quote: bestQuote(qs, (q) => q.category === "iran_fx" && q.base_asset === "USD" && q.verification_status === "verified", state.connected) }),
   },
   {
     name: "لیر ترکیه", meta: () => "تومان · بازار آزاد",
-    find: (qs) => ({ quote: bestQuote(qs, (q) => q.category === "iran_fx" && q.base_asset === "TRY", state.connected) }),
+    find: (qs) => ({ quote: bestQuote(qs, (q) => q.category === "iran_fx" && q.base_asset === "TRY" && q.verification_status === "verified", state.connected) }),
   },
   {
     name: "تتر",
@@ -354,7 +354,10 @@ function syncSeries() {
   const seen = new Map();
   for (const quote of state.quotes) if (!seen.has(quote.series_id)) seen.set(quote.series_id, quote);
   if (!seen.has(state.series)) {
-    state.series = bestQuote([...seen.values()], (q) => q.category === "iran_fx" && q.base_asset === "USD", state.connected)?.series_id
+    const options = [...seen.values()];
+    state.series = options.find((q) => q.category === "iran_fx" && q.base_asset === "USD" &&
+      q.source_id === "tomanify:rate-json-default")?.series_id
+      || bestQuote(options, (q) => q.category === "iran_fx" && q.base_asset === "USD", state.connected)?.series_id
       || [...seen.keys()][0] || "";
   }
   const groups = new Map();

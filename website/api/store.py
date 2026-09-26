@@ -18,7 +18,7 @@ PUBLIC_QUOTE_FIELDS = {
     "quote_currency", "unit", "quote_kind", "bid", "ask", "reference", "mid",
     "source_id", "source_family", "source_observed_at", "collected_at", "verified_at",
     "verification_status", "valid_until", "market_open", "methodology_version",
-    "parent_quote_ids", "category", "display_name_fa",
+    "parent_quote_ids", "category", "display_name_fa", "source_reported_date",
 }
 
 
@@ -171,13 +171,25 @@ def ingest_snapshots(
     return {"inserted_snapshots": inserted, "already_present": existing, "quotes": sum(len(p[0]["quotes"]) for p in prepared)}
 
 
+def imported_snapshot_ids(prefix: str) -> set[str]:
+    """Return known append-only snapshot IDs for a source without opening a missing DB."""
+    if not database_path().is_file():
+        return set()
+    with connect_readonly() as db:
+        rows = db.execute(
+            "SELECT snapshot_id FROM snapshots WHERE substr(snapshot_id, 1, ?) = ?",
+            (len(prefix), prefix),
+        ).fetchall()
+    return {str(row["snapshot_id"]) for row in rows}
+
+
 def latest_quotes(
     instrument_ids: list[str] | None = None,
     *,
     now: datetime | None = None,
     stale_after_seconds: int = 3600,
 ) -> list[dict[str, Any]]:
-    filters = ["q.verification_status = 'verified'"]
+    filters = ["q.verification_status IN ('verified', 'source_published')"]
     params: list[Any] = []
     if instrument_ids:
         filters.append("q.instrument_id IN (" + ",".join("?" for _ in instrument_ids) + ")")
@@ -215,7 +227,7 @@ def available_markets() -> list[dict[str, Any]]:
     with connect_readonly() as db:
         rows = db.execute(
             """SELECT DISTINCT category, instrument_id, display_name_fa
-               FROM quotes WHERE verification_status = 'verified'
+               FROM quotes WHERE verification_status IN ('verified', 'source_published')
                ORDER BY category, instrument_id"""
         ).fetchall()
     return [dict(row) for row in rows]
@@ -226,7 +238,8 @@ def history(series_id: str, start: datetime, end: datetime, limit: int) -> dict[
     end_utc = end.astimezone(timezone.utc).isoformat()
     with connect_readonly() as db:
         total = db.execute(
-            """SELECT COUNT(*) FROM quotes WHERE series_id = ? AND verification_status = 'verified'
+            """SELECT COUNT(*) FROM quotes WHERE series_id = ?
+               AND verification_status IN ('verified', 'source_published')
                AND collected_at >= ? AND collected_at <= ?""",
             (series_id, start_utc, end_utc),
         ).fetchone()[0]
@@ -234,7 +247,7 @@ def history(series_id: str, start: datetime, end: datetime, limit: int) -> dict[
             """SELECT quote_json, snapshot_id FROM (
                    SELECT q.quote_json, q.snapshot_id, q.collected_at, s.id AS snapshot_order
                    FROM quotes q JOIN snapshots s ON s.snapshot_id = q.snapshot_id
-                   WHERE q.series_id = ? AND q.verification_status = 'verified'
+                   WHERE q.series_id = ? AND q.verification_status IN ('verified', 'source_published')
                      AND q.collected_at >= ? AND q.collected_at <= ?
                    ORDER BY q.collected_at DESC, s.id DESC LIMIT ?
                ) ORDER BY collected_at ASC, snapshot_order ASC""",
@@ -252,7 +265,7 @@ def history(series_id: str, start: datetime, end: datetime, limit: int) -> dict[
         "available_to": points[-1]["quote"]["collected_at"] if points else None,
         "observation_count": total,
         "returned_point_count": len(points),
-        "sampling_kind": "verified_publisher_observations",
+        "sampling_kind": "published_source_observations",
         "expected_cadence_seconds": None,
         "known_gaps": None,
         "points": points,
@@ -266,16 +279,21 @@ def health() -> dict[str, Any]:
             "latest_collected_at": None,
             "latest_snapshot_id": None,
             "verified_quote_observations": 0,
+            "source_published_quote_observations": 0,
         }
     with connect_readonly() as db:
         row = db.execute(
             "SELECT collected_at, snapshot_id FROM snapshots ORDER BY collected_at DESC, id DESC LIMIT 1"
         ).fetchone()
         count = db.execute("SELECT COUNT(*) FROM quotes WHERE verification_status = 'verified'").fetchone()[0]
+        source_count = db.execute(
+            "SELECT COUNT(*) FROM quotes WHERE verification_status = 'source_published'"
+        ).fetchone()[0]
     return {
         "status": "ready" if row else "waiting_for_verified_data",
         "latest_collected_at": row["collected_at"] if row else None,
         "latest_snapshot_id": row["snapshot_id"] if row else None,
         "verified_quote_observations": count,
+        "source_published_quote_observations": source_count,
     }
 

@@ -54,7 +54,7 @@ export function normalizeQuotes(payload) {
   }
   return payload.quotes.filter((quote) =>
     quote && typeof quote === "object" &&
-    quote.verification_status === "verified" &&
+    ["verified", "source_published"].includes(quote.verification_status) &&
     quote.source_family !== "sample" &&
     typeof quote.series_id === "string" &&
     typeof quote.instrument_id === "string" &&
@@ -130,14 +130,15 @@ export function formatPrice(quote, raw) {
 
 // field: optional "bid" or "ask" to chart one side of a two-sided market.
 export function chartObservations(payload, field) {
-  if (payload?.sampling_kind !== "verified_publisher_observations" || !Array.isArray(payload.points)) {
+  if (!new Set(["verified_publisher_observations", "published_source_observations"]).has(payload?.sampling_kind) ||
+      !Array.isArray(payload.points)) {
     throw new Error("تاریخچهٔ نمودار معتبر نیست.");
   }
   return payload.points.flatMap((point) => {
     const quote = point?.quote;
     const price = field ? numericPrice({ [field]: quote?.[field] }) : numericPrice(quote);
     const time = Date.parse(quote?.collected_at);
-    if (quote?.verification_status !== "verified" || quote?.source_family === "sample" ||
+    if (!["verified", "source_published"].includes(quote?.verification_status) || quote?.source_family === "sample" ||
         !price || !Number.isFinite(time)) return [];
     return [{ time, value: price.value, raw: price.raw }];
   }).sort((a, b) => a.time - b.time);

@@ -26,6 +26,20 @@ observations; gaps are not filled.
 See [Phase 4 deployment](PHASE_4_DEPLOYMENT.md). The frontend needs the API
 reachable at `/api/v1/quotes` and `/api/v1/history` on the same domain.
 
+## Phase 6: free Iran FX chart history
+
+The API can archive Tomanify's public USD, EUR, AED, TRY, and CNY Toman
+snapshots in the existing SQLite database. These appear as separate
+`source_published` series and never merge with Telegram-verified values. The
+importer follows the public GitHub file history, whose commit time is used only
+as an archive timestamp; Tomanify provides a calendar date rather than an exact
+market-observation time. The chart and footer credit Tomanify and link to its
+plugin, as requested by its usage instructions. This integration assumes
+noncommercial use; contact the maintainer before any commercial use.
+
+See [Phase 6 deployment](PHASE_6_TOMANIFY_HISTORY.md) for tests, importer
+operation, and the systemd timer.
+
 ## First trust and UI release
 
 The current working tree includes the first Phase 5 release candidate. The

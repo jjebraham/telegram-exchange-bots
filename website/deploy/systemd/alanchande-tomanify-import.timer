@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh AlanChande Tomanify chart history
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=4h
+Persistent=true
+Unit=alanchande-tomanify-import.service
+
+[Install]
+WantedBy=timers.target

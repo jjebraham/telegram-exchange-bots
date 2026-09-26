@@ -21,11 +21,12 @@ test("quotes reject sample, unverified, invalid, and nondecimal values", () => {
       verified(),
       verified({ series_id: "sample", source_family: "sample" }),
       verified({ series_id: "unverified", verification_status: "unverified" }),
+      verified({ series_id: "published", verification_status: "source_published", source_id: "tomanify:rate-json-default" }),
       verified({ series_id: "invalid", reference: "NaN" }),
     ],
   });
-  assert.equal(values.length, 1);
-  assert.equal(values[0].series_id, verified().series_id);
+  assert.equal(values.length, 2);
+  assert.deepEqual(values.map((quote) => quote.series_id), [verified().series_id, "published"]);
   assert.throws(() => normalizeQuotes({ quotes: [] }));
 });
 
@@ -50,6 +51,18 @@ test("history uses only actual verified observations", () => {
   });
   assert.deepEqual(points.map((point) => point.value), [83000, 84000]);
   assert.throws(() => chartObservations({ sampling_kind: "interpolated", points: [] }));
+});
+
+test("chart accepts archived published-source snapshots without claiming verification", () => {
+  const sourceQuote = verified({
+    verification_status: "source_published", source_family: "public_market_provider",
+    collected_at: "2026-09-25T12:00:00+00:00", reference: "235200",
+  });
+  const points = chartObservations({
+    sampling_kind: "published_source_observations",
+    points: [{ quote: sourceQuote }],
+  });
+  assert.deepEqual(points.map((point) => point.value), [235200]);
 });
 
 test("units and decimal precision remain explicit", () => {
