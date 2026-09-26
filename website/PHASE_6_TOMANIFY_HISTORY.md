@@ -50,7 +50,8 @@ new systemd unit and timer, then run a dry-run before enabling writes:
 
 ```bash
 cd /home/kianirad2020/alanchande-site/website
-.venv/bin/python -m api.import_tomanify_history
+ALANCHANDE_DB_PATH=/var/lib/alanchande/market.sqlite3 \
+  .venv/bin/python -m api.import_tomanify_history
 ```
 
 After confirming the summary, back up the SQLite database and import the
@@ -71,7 +72,8 @@ finally:
     backup.close()
     source.close()
 PY
-.venv/bin/python -m api.import_tomanify_history --apply
+ALANCHANDE_DB_PATH=/var/lib/alanchande/market.sqlite3 \
+  .venv/bin/python -m api.import_tomanify_history --apply
 ```
 
 Install and start the timer, then restart only the website API because its
