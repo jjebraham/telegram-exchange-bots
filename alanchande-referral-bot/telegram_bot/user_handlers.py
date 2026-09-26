@@ -14,7 +14,7 @@ from referral_core import Campaign, ReferralDB
 from .config import Settings, extract_status_change, hours_label, is_configured_channel, telegram_membership
 from .context import services
 from .ui import (
-    back_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
+    back_keyboard, leaderboard_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
     render_home, render_prizes, render_referrals, render_rules, render_stats, render_top,
     render_transparency,
 )
@@ -67,33 +67,74 @@ async def get_or_create_link(context: ContextTypes.DEFAULT_TYPE, campaign: Campa
     return f"https://t.me/{username}?start={payload}"
 
 
+def referral_join_progress_message(
+    campaign: Campaign,
+    counts: dict,
+    result: str,
+) -> tuple[str, str, bool]:
+    """Render the immediate referrer progress message after a join/rejoin."""
+    if result == "reactivated":
+        return (
+            "🔄 <b>یکی از دعوت‌شده‌هات دوباره عضو شد.</b>\n\n"
+            "⏳ زمان تأیید او از صفر شروع شد.\n"
+            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>",
+            "📤 دعوت نفر بعدی",
+            False,
+        )
+
+    remainder = counts["active"] % campaign.invites_per_point
+    need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+
+    # The highest-value state for the current contest: one active referral
+    # means the participant is exactly one person away from the next point.
+    if campaign.invites_per_point == 2 and remainder == 1:
+        first_point = counts["current_points"] == 0
+        title = (
+            "🔥 <b>عالیه! اولین دعوتت ثبت شد ✅</b>"
+            if first_point
+            else "🔥 <b>یک دعوت جدید ثبت شد ✅</b>"
+        )
+        progress_name = "اولین امتیاز" if first_point else "امتیاز بعدی"
+        return (
+            f"{title}\n\n"
+            f"🎯 <b>پیشرفت {progress_name}:</b>\n"
+            "█████░░░░░ <b>۱/۲</b>\n\n"
+            "فقط <b>۱ نفر دیگه</b> مونده تا امتیاز موقتت ساخته بشه.\n\n"
+            f"🎟 اگر این دوست <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته بماند، "
+            "سهم این دعوت برای قرعه‌کشی تأیید می‌شود.",
+            "📤 فقط ۱ نفر دیگه",
+            True,
+        )
+
+    return (
+        "🎉 <b>یک نفر جدید با لینک تو عضو شد!</b>\n\n"
+        f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>\n"
+        f"🔥 تا امتیاز موقت بعدی: <b>{need}</b> دعوت فعال\n\n"
+        f"🎟 اگر این دوست <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته بماند، "
+        "سهمش برای قرعه‌کشی تأیید می‌شود.",
+        "📤 دعوت نفر بعدی",
+        False,
+    )
+
+
 async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Campaign, user,
                                referrer_id: int, result: str | None) -> None:
     if result not in {"created", "reactivated"}:
         return
     _, db = services(context)
     counts = db.campaign_counts(campaign, referrer_id)
-    remainder = counts["active"] % campaign.invites_per_point
-    need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+    text, share_button_text, one_more_prompt = referral_join_progress_message(
+        campaign,
+        counts,
+        result,
+    )
     log.info(
         "Referral %s: joined=%s referrer=%s campaign=%s",
         result, user.id, referrer_id, campaign.slug,
     )
     if result == "created":
-        text = (
-            "🎉 <b>یک نفر جدید با لینک تو عضو شد!</b>\n\n"
-            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>\n"
-            f"🔥 تا امتیاز موقت بعدی: <b>{need}</b> دعوت فعال\n\n"
-            f"🎟 اگر این دوست <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته بماند، "
-            "سهمش برای قرعه‌کشی تأیید می‌شود."
-        )
         db.track_funnel_event(campaign.id, user.id, "join_confirmed", "referral")
     else:
-        text = (
-            "🔄 <b>یکی از دعوت‌شده‌هات دوباره عضو شد.</b>\n\n"
-            "⏳ زمان تأیید او از صفر شروع شد.\n"
-            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>"
-        )
         db.track_funnel_event(campaign.id, user.id, "rejoin", "")
     try:
         await context.bot.send_message(
@@ -101,10 +142,17 @@ async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Cam
             text,
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📤 دعوت نفر بعدی", callback_data="menu:link"),
+                InlineKeyboardButton(share_button_text, callback_data="menu:link"),
                 InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
             ]]),
         )
+        if one_more_prompt:
+            db.track_funnel_event(
+                campaign.id,
+                referrer_id,
+                "referral_one_more_prompt_sent",
+                "referral",
+            )
     except (Forbidden, BadRequest):
         pass
     except TelegramError:
@@ -339,6 +387,18 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = render_referrals(campaign, db, user.id)
     elif data == "menu:top":
         text = render_top(campaign, db, user.id)
+        link = None
+        payload = db.get_invite_link(campaign.id, user.id)
+        if payload and payload.startswith("ref_"):
+            try:
+                username = context.bot.username
+                if not username:
+                    username = (await context.bot.get_me()).username
+                if username:
+                    link = f"https://t.me/{username}?start={payload}"
+            except TelegramError:
+                log.warning("Could not resolve bot username for leaderboard share button")
+        markup = leaderboard_keyboard(link, campaign)
     elif data == "menu:rules":
         text = render_rules(campaign)
     elif data == "menu:prizes":
@@ -413,6 +473,13 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await notify_referral_join(context, campaign, user, referrer_id, "reactivated")
             from .referral_success import send_participant_welcome
             await send_participant_welcome(context, campaign, user)
+            return
+
+        # Promo/organic entrants used to have to return to the bot and press a
+        # second membership-check button. Complete their entry as soon as the
+        # channel membership update arrives; the old button remains a fallback.
+        from .promo_handlers import auto_complete_promo_join
+        await auto_complete_promo_join(context, campaign, user)
 
     elif was_member and not is_member_now:
         campaign = db.live_campaign()

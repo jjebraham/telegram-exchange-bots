@@ -2,7 +2,85 @@
 
 Dedicated referral/giveaway bot for [`@alanchande_com`](https://t.me/alanchande_com), intentionally isolated from the exchange bot.
 
+## Owned-audience seed acquisition
+
+Admins can run `/owned_sources [campaign_slug]` to compare `meditation_b`,
+`kriptofarsi_b`, and `trstudy_b`, including sources with no traffic yet. It shows
+tracked links, unique first-touch starts, new/returning classifications,
+start-to-entry rates, link holders, holders with downstream opens, unique openers,
+and joined/active/qualified referrals. `/sources` provides detailed auto-entry
+diagnostics and sharing activation for all sources, split across messages.
+
+Prepare each audience's post with the existing admin command:
+
+```text
+/promo_post meditation b
+/promo_post kriptofarsi b
+/promo_post trstudy b
+```
+
+These commands return drafts in the admin chat; they do not publish to channels.
+For these three audiences, variant B uses an audience-specific introduction,
+three entry/share steps, the campaign's continuous membership requirement and
+qualification cutoff. The tracked URL is included in the text as well as the
+button, so copying the draft text preserves acquisition tracking. Participants
+must share their own personal link to earn referral credit. Main-channel drafts,
+variant A, and `/publish_promo` remain unchanged; `/publish_promo` targets the
+configured channel, not an audience selected by source name.
+Use the matching tracked link and preserve its source slug when posting. Promo
+links and post drafts target the live campaign, even when viewing an older report.
+No schema migration or campaign configuration is required.
+
+Before acquisition, smoke-test existing-member auto-entry and non-member
+channel-join auto-entry using fresh accounts. Save `/owned_sources` and `/sources`
+baselines plus the UTC posting time, then launch one audience at a time. Compare
+increments after the same elapsed time (for example, 24 hours), keeping sample
+sizes visible. First-touch source is retained across repeat promo clicks;
+historical referral trees remain legacy/untracked. Reports are campaign-to-date,
+not isolated post-deploy or 24-hour cohorts. A holder's downstream open is not
+proof of native Share completion. Telegram post views are not measured, so these
+reports cannot calculate view-to-start rates. Zero starts means no measured
+acquisition yet; a rate without a denominator is shown as `n/a`.
+
 ## Current design
+
+### Launch markers and 24-hour activation
+
+Immediately before publishing, save an immutable measurement marker:
+
+```text
+/launch_mark meditation_b meditation_sep24
+/launch_report meditation_sep24 paeez1405
+```
+
+Use `kriptofarsi_b` or `trstudy_b` for the other audiences. To observe newly
+referral-acquired users from now forward, use:
+
+```text
+/launch_mark referral referral_sep24
+/launch_report referral_sep24 paeez1405
+```
+
+Both commands are admin-only. Markers apply to the live campaign; reports can
+select an older campaign. Labels are unique per campaign and cannot be reset:
+repeating a label returns the original source, timestamp and baseline. Use a
+different label for another launch. Markers record the time the command runs,
+not a verified publication time; they do not publish messages or backdate traffic.
+
+The baseline stores campaign-to-date source metrics. The report independently
+selects new first-touch users from the marker onward, excluding earlier visitors
+and anyone with a personal link predating their first tracked start. It reports
+entries and exact downstream opens for that cohort. The completed 24-hour rate
+uses only holders whose personal links are at least 24 hours old; opens at exactly
+24 hours count, later opens do not. Pending holders, including early successes,
+are shown separately. No completed holders means `n/a`, not zero conversion.
+
+These are ongoing cohorts, not fixed 24-hour acquisition windows. Overlapping
+markers can share users and must not be added together. Reports use exact
+`referral_open_received` events, not historical inferred opens. Source attribution
+does not establish which particular post caused a start. Existing tracking and
+campaign rules are unchanged. Startup adds only the `growth_launches` analytics
+table; no existing records are rewritten.
 
 - Persistent random bot deep-link per participant/campaign: `https://t.me/Alanchandebot?start=ref_...`
 - First referrer is permanent inside a campaign.

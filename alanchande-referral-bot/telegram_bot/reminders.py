@@ -468,7 +468,7 @@ async def nudge_pass(application: Application) -> dict:
     early_rows = _early_share_nudge_candidates(
         db,
         campaign.id,
-        utcnow() - timedelta(hours=settings.early_share_nudge_hours),
+        utcnow() - timedelta(minutes=settings.early_share_nudge_minutes),
         limit=100,
     )
     early_sent = 0

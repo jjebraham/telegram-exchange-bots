@@ -10,7 +10,11 @@ from unittest.mock import patch
 from referral_core import ReferralDB
 from telegram_bot.config import Settings
 from telegram_bot.growth import qualification_cutoff_text
-from telegram_bot.promo_handlers import _entry_text
+from telegram_bot.promo_handlers import (
+    _entry_text,
+    _promo_success_text,
+    _share_activation_variant,
+)
 from telegram_bot.reminders import (
     _early_share_nudge_text,
     _engagement_v2_candidates,
@@ -240,7 +244,23 @@ class GrowthActivationTests(unittest.TestCase):
                 "legacy/untracked",
             )
 
-    def test_early_share_nudge_defaults_to_two_hours(self):
+    def test_share_activation_variant_is_stable_and_balanced_by_user_id(self):
+        self.assertEqual(_share_activation_variant(10), "a")
+        self.assertEqual(_share_activation_variant(11), "b")
+        self.assertEqual(_share_activation_variant(10), "a")
+
+    def test_share_activation_variant_b_is_short_and_action_focused(self):
+        text = _promo_success_text(
+            self._campaign(),
+            "https://t.me/testbot?start=ref_1_10",
+            "b",
+        )
+        self.assertIn("۰/2", text)
+        self.assertIn("فقط برای ۲ نفر", text)
+        self.assertIn("۲۱ میلیون تومان", text)
+        self.assertNotIn("آخرین زمان ورود دعوت جدید", text)
+
+    def test_early_share_nudge_defaults_to_five_minutes(self):
         env = {
             "BOT_TOKEN": "123:test",
             "CHANNEL_ID": "-1001234567890",
@@ -248,7 +268,8 @@ class GrowthActivationTests(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=True):
             settings = Settings.from_env()
-        self.assertEqual(settings.early_share_nudge_hours, 2)
+        self.assertEqual(settings.early_share_nudge_minutes, 5)
+        self.assertEqual(settings.nudge_check_seconds, 300)
 
 
 if __name__ == "__main__":

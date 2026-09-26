@@ -41,6 +41,7 @@ from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
 from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
 from iran_fx_adonis import fetch_adonis_try_sell_toman
+from iran_fx_dolarchand import fetch_dolarchand_iran_fx
 from iran_fx_pashizi import fetch_pashizi_iran_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from kiani_shared_pricing import (
@@ -75,6 +76,7 @@ from official_bank_verifier import (
     fetch_kuveyt_quote,
     fetch_ziraat_quote,
 )
+from daily_market_digest import collect_digest
 from admin_alerts import maybe_notify_admin, maybe_notify_source_health
 from market_safety import (
     VERIFIED,
@@ -338,6 +340,7 @@ def main() -> int:
             "alanchande-usdt-seven",
             "alanchande-markets",
             "alanchande-daily",
+            "alanchande-daily-digest",
             "kiani-rates",
             "kiani-try",
             "kiani-examples",
@@ -365,7 +368,10 @@ def main() -> int:
         help="Show recent market-safety audit decisions, then exit",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print posts instead of sending to Telegram")
+    parser.add_argument("--export-json", action="store_true", help="Read-only assessed message export for X")
     args = parser.parse_args()
+    if args.export_json and (args.record_history or args.history_status or args.safety_status):
+        parser.error("--export-json cannot be combined with history actions")
 
     # (token_env, destination_env, text, post_key, safety_assessment)
     jobs: list[
@@ -373,6 +379,8 @@ def main() -> int:
     ] = []
     sent_market_posts: set[str] = set()
     verified_sent_market_posts: set[str] = set()
+    daily_digest_cache: Any | None = None
+    daily_digest_publish_cache: dict[str, Decimal] | None = None
     rates_cache: dict[str, Decimal] | None = None
     usd_quotes_cache: list[Any] | None = None
     eur_quotes_cache: list[Any] | None = None
@@ -384,6 +392,9 @@ def main() -> int:
     iran_fx_adonis_try_cache: Decimal | None = None
     iran_fx_adonis_attempted = False
     iran_fx_adonis_error: str | None = None
+    iran_fx_dolarchand_cache: dict[str, Decimal] | None = None
+    iran_fx_dolarchand_attempted = False
+    iran_fx_dolarchand_errors: dict[str, str] = {}
     iran_fx_publish_cache: dict[str, Decimal] | None = None
     iran_gold_cache: Any | None = None
     iran_gold_external_cache: dict[str, Decimal] | None = None
@@ -578,6 +589,49 @@ def main() -> int:
                 )
 
         return iran_fx_external_cache or {}
+
+    def get_iran_fx_dolarchand_safe(
+        codes: Any,
+    ) -> dict[str, Decimal]:
+        nonlocal iran_fx_dolarchand_cache
+        nonlocal iran_fx_dolarchand_attempted
+        nonlocal iran_fx_dolarchand_errors
+
+        if not iran_fx_dolarchand_attempted:
+            iran_fx_dolarchand_attempted = True
+            rates, errors = fetch_dolarchand_iran_fx(codes)
+            iran_fx_dolarchand_cache = rates
+            iran_fx_dolarchand_errors = errors
+
+            if rates:
+                detail = (
+                    f"parsed {len(rates)} currencies"
+                    + (
+                        f"; {len(errors)} unavailable"
+                        if errors
+                        else ""
+                    )
+                )
+                note_source_health(
+                    "iran:dolarchand-fx",
+                    not bool(errors),
+                    detail,
+                )
+            else:
+                detail = (
+                    "; ".join(
+                        f"{code}={message}"
+                        for code, message in sorted(errors.items())[:5]
+                    )
+                    or "no Dolarchand FX rows available"
+                )
+                note_source_health(
+                    "iran:dolarchand-fx",
+                    False,
+                    detail,
+                )
+
+        return iran_fx_dolarchand_cache or {}
 
     def get_iran_fx_adonis_try_safe() -> Decimal | None:
         nonlocal iran_fx_adonis_try_cache
@@ -998,6 +1052,22 @@ def main() -> int:
         # AlanChande history intentionally depends only on neutral market feeds.
         return build_snapshot(get_usd_quotes(), get_eur_quotes())
 
+    def build_safe_daily_digest() -> tuple[str, PostSafetyAssessment]:
+        nonlocal daily_digest_cache
+        nonlocal daily_digest_publish_cache
+
+        if daily_digest_cache is None:
+            daily_digest_cache = collect_digest(history_db)
+            daily_digest_publish_cache = dict(daily_digest_cache.published_values)
+            for source_key, error in daily_digest_cache.source_health.items():
+                note_source_health(
+                    source_key,
+                    error is None,
+                    error or "",
+                )
+
+        return daily_digest_cache.text, daily_digest_cache.assessment
+
     def add_alanchande(
         text: str,
         post_key: str | None = None,
@@ -1123,10 +1193,17 @@ def main() -> int:
 
         rates = get_iran_fx()
         external = get_iran_fx_external_safe()
+        dolarchand = get_iran_fx_dolarchand_safe(rates.keys())
         adonis_try = get_iran_fx_adonis_try_safe()
 
         observations = []
         for code, value in rates.items():
+            # TRY has distinct Iran/Turkey-facing source conventions. Keep the
+            # global 2% ceiling for other currencies; allow only a bounded
+            # 3.5% TRY consensus spread. Wider divergence still blocks the board.
+            max_source_deviation_pct = (
+                Decimal("3.50") if code == "TRY" else Decimal("2.00")
+            )
             source_values: dict[str, Decimal] = {"tgju": value}
             unavailable: list[str] = []
 
@@ -1134,6 +1211,14 @@ def main() -> int:
                 source_values["pashizi"] = external[code]
             elif iran_fx_external_error:
                 unavailable.append(iran_fx_external_error)
+
+            if code in dolarchand:
+                source_values["dolarchand"] = dolarchand[code]
+            elif code in iran_fx_dolarchand_errors:
+                unavailable.append(
+                    f"dolarchand-fx:{code}: "
+                    f"{iran_fx_dolarchand_errors[code]}"
+                )
 
             if code == "TRY":
                 if adonis_try is not None:
@@ -1146,7 +1231,7 @@ def main() -> int:
                     market_key=f"iran-fx:{code}/TOMAN",
                     source_values=source_values,
                     min_sources=2,
-                    max_source_deviation_pct=Decimal("2.00"),
+                    max_source_deviation_pct=max_source_deviation_pct,
                     suspicious_move_pct=Decimal("6.00"),
                     strong_quorum=3,
                     unavailable_sources=tuple(unavailable),
@@ -1302,6 +1387,10 @@ def main() -> int:
         text, safety = build_safe_fx_pulse()
         add_alanchande(text, "fx-pulse", safety)
 
+    if args.post == "alanchande-daily-digest":
+        text, safety = build_safe_daily_digest()
+        add_alanchande(text, "daily-digest", safety)
+
     if args.post == "alanchande-iran-fx":
         text, safety = build_safe_iran_fx()
         add_alanchande(text, "iran-fx", safety)
@@ -1424,6 +1513,16 @@ def main() -> int:
 
     if args.post in {"kiani-examples-reverse", "demo-formats"}:
         add_kiani(build_kiani_toman_receive_post(get_rates()))
+
+    if args.export_json:
+        if len(jobs) != 1:
+            raise ValueError("X export requires exactly one post")
+        _, _, text, _, safety = jobs[0]
+        if safety is not None and safety.decision != VERIFIED:
+            raise ValueError(f"X export blocked: {safety.reason}")
+        print(json.dumps({"post": args.post, "text": text,
+                          "verified": safety is None or safety.decision == VERIFIED}, ensure_ascii=False))
+        return 0
 
     if args.dry_run:
         print(f"MARKET_SAFETY_MODE={safety_mode}")
@@ -1625,6 +1724,18 @@ def main() -> int:
             iran_fx_publish_cache,
         )
         print(f"recorded verified Iran FX snapshot -> {timestamp}")
+
+    if "daily-digest" in verified_sent_market_posts:
+        if daily_digest_publish_cache is None:
+            raise RuntimeError(
+                "Verified daily digest has no consensus publish snapshot"
+            )
+        timestamp = record_published_values(
+            history_db,
+            "daily-digest",
+            daily_digest_publish_cache,
+        )
+        print(f"recorded verified daily digest snapshot -> {timestamp}")
 
     if send_failures:
         print(

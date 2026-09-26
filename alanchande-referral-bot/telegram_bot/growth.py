@@ -14,6 +14,8 @@ from telegram.ext import Application, ContextTypes
 
 from referral_core import Campaign, parse_datetime, utcnow
 from .context import is_admin, services
+from .config import hours_label
+from .reporting import reply_report
 
 log = logging.getLogger("alanchande_referral_bot")
 ISTANBUL = timezone(timedelta(hours=3))
@@ -38,6 +40,20 @@ _ONBOARDING_EVENTS = {
     "entry_cta_membership_error",
     "entry_link_created",
     "entry_link_creation_error",
+    "entry_auto_existing_member",
+    "entry_auto_join_completed",
+    "entry_auto_join_message_sent",
+    "entry_auto_join_message_error",
+    "entry_auto_join_error",
+    "entry_cta_completed",
+    "referral_welcome_sent",
+    "referral_link_included",
+    "referral_share_prompt_sent",
+    "referral_share_prompt_v2_sent",
+    "referral_welcome_error",
+    "referral_link_creation_error",
+    "share_activation_prompt_a",
+    "share_activation_prompt_b",
 }
 
 
@@ -247,6 +263,20 @@ def source_performance(db, campaign: Campaign) -> dict:
             "cta_member_error": 0,
             "entry_link_created": 0,
             "entry_link_error": 0,
+            "entry_auto_existing_member": 0,
+            "entry_auto_join_completed": 0,
+            "entry_auto_join_message_sent": 0,
+            "entry_auto_join_message_error": 0,
+            "entry_auto_join_error": 0,
+            "entry_cta_completed": 0,
+            "referral_welcome_sent": 0,
+            "referral_link_included": 0,
+            "referral_share_prompt_sent": 0,
+            "referral_share_prompt_v2_sent": 0,
+            "referral_welcome_error": 0,
+            "referral_link_creation_error": 0,
+            "share_activation_prompt_a": 0,
+            "share_activation_prompt_b": 0,
         })
 
     for uid, source in first_source.items():
@@ -281,6 +311,36 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["cta_member_error"] = len(events.get("entry_cta_membership_error", set()))
         item["entry_link_created"] = len(events.get("entry_link_created", set()))
         item["entry_link_error"] = len(events.get("entry_link_creation_error", set()))
+        item["entry_auto_existing_member"] = len(
+            events.get("entry_auto_existing_member", set())
+        )
+        item["entry_auto_join_completed"] = len(
+            events.get("entry_auto_join_completed", set())
+        )
+        item["entry_auto_join_message_sent"] = len(
+            events.get("entry_auto_join_message_sent", set())
+        )
+        item["entry_auto_join_message_error"] = len(
+            events.get("entry_auto_join_message_error", set())
+        )
+        item["entry_auto_join_error"] = len(
+            events.get("entry_auto_join_error", set())
+        )
+        item["entry_cta_completed"] = len(events.get("entry_cta_completed", set()))
+        item["referral_welcome_sent"] = len(events.get("referral_welcome_sent", set()))
+        item["referral_link_included"] = len(events.get("referral_link_included", set()))
+        item["referral_share_prompt_sent"] = len(events.get("referral_share_prompt_sent", set()))
+        item["referral_share_prompt_v2_sent"] = len(events.get("referral_share_prompt_v2_sent", set()))
+        item["referral_welcome_error"] = len(events.get("referral_welcome_error", set()))
+        item["referral_link_creation_error"] = len(
+            events.get("referral_link_creation_error", set())
+        )
+        item["share_activation_prompt_a"] = len(
+            events.get("share_activation_prompt_a", set())
+        )
+        item["share_activation_prompt_b"] = len(
+            events.get("share_activation_prompt_b", set())
+        )
 
     candidate_seen: set[int] = set()
     for row in list(pending) + list(refs):
@@ -386,9 +446,30 @@ def weekly_post_text(db, campaign: Campaign, promo_link: str) -> str:
     return "\n".join(lines)
 
 
-def promo_post_text(campaign: Campaign, promo_link: str, variant: str) -> str:
+def promo_post_text(campaign: Campaign, promo_link: str, variant: str, source: str | None = None) -> str:
     left = remaining_text((campaign.end_dt - utcnow()).total_seconds())
     cutoff = qualification_cutoff_text(campaign)
+
+    owned_audience = {
+        "meditation_b": "مدیتیشن",
+        "kriptofarsi_b": "کریپتوفارسی",
+        "trstudy_b": "TRStudy",
+    }.get(promo_source_with_variant(source, variant)) if source else None
+    if owned_audience:
+        return (
+            f"🎁 <b>دعوت از همراهان {owned_audience} به مسابقه «الان چنده؟»</b>\n\n"
+            f"🏆 {campaign.num_winners} برنده در مسابقه <b>{escape(campaign.name)}</b>\n"
+            f"💰 {escape(campaign.prize_text)}\n\n"
+            "۱) لینک زیر را باز کن و دکمه Start ربات را بزن.\n"
+            "۲) عضو کانال «الان چنده؟» شو و لینک اختصاصی خودت را بگیر.\n"
+            "۳) برای شروع، لینک اختصاصی‌ات را برای یک دوست علاقه‌مند بفرست.\n\n"
+            f"⭐ هر {campaign.invites_per_point} دعوت فعال = ۱ امتیاز موقت\n"
+            f"🎟 دعوت‌ها پس از {hours_label(campaign.min_stay_hours)} عضویت پیوسته تأیید می‌شوند.\n"
+            "برندگان با قرعه‌کشی وزن‌دار و بر اساس بلیت‌های تأییدشده انتخاب می‌شوند؛ جایزه تضمینی نیست.\n\n"
+            "✅ اعضای فعلی کانال هم می‌توانند شرکت کنند.\n"
+            f"⏳ آخرین زمان ورود دعوت جدید برای تأیید پیش از قرعه‌کشی: <b>{cutoff}</b>\n\n"
+            f"👇 ورود و مشاهده شرایط مسابقه:\n{escape(promo_link)}"
+        )
 
     if variant == "b":
         return (
@@ -467,7 +548,7 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     lines.append("")
     if not report["rows"]:
         lines.append("No source data yet.")
-    for row in report["rows"][:20]:
+    for row in report["rows"]:
         lines.extend([
             f"• {row['source']}",
             f"  starts={row['starts']} entered={row['entered']} links={row['links']} "
@@ -482,13 +563,26 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"initial_ok={row['initial_member_passed']} initial_no={row['initial_member_failed']} "
             f"cta_ok={row['cta_member_passed']} cta_no={row['cta_member_failed']} "
             f"link_ok={row['entry_link_created']} link_err={row['entry_link_error']}",
+            f"  auto-entry: existing={row['entry_auto_existing_member']} "
+            f"joined={row['entry_auto_join_completed']} "
+            f"msg_ok={row['entry_auto_join_message_sent']} "
+            f"msg_err={row['entry_auto_join_message_error']} "
+            f"auto_err={row['entry_auto_join_error']} "
+            f"fallback_cta={row['entry_cta_completed']}",
+            f"  referral path: welcome={row['referral_welcome_sent']} "
+            f"link={row['referral_link_included']} prompt={row['referral_share_prompt_sent']} "
+            f"prompt_v2={row['referral_share_prompt_v2_sent']} "
+            f"welcome_err={row['referral_welcome_error']} "
+            f"link_err={row['referral_link_creation_error']}",
+            f"  activation A/B: A={row['share_activation_prompt_a']} "
+            f"B={row['share_activation_prompt_b']}",
             f"  start→enter={_pct(row['start_to_entered_pct'])} | "
             f"new start→enter={_pct(row['new_start_to_entered_pct'])} | "
             f"shown→cta={_pct(row['entry_cta_pct'])} | candidate→join={_pct(row['candidate_to_join_pct'])}",
         ])
     lines.append("\nclassified starts are available only after this onboarding instrumentation was deployed.")
     lines.append("legacy/untracked = activity whose referrer predates first-touch source tracking.")
-    await update.message.reply_text("\n".join(lines))
+    await reply_report(update.message, "\n".join(lines))
 
 
 async def cmd_funnel_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -572,7 +666,7 @@ async def cmd_promo_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     username = await _bot_username(context)
     link = build_promo_link(username, source, variant_arg)
     await update.message.reply_text(
-        promo_post_text(campaign, link, variant_arg),
+        promo_post_text(campaign, link, variant_arg, source=source),
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🎁 شرکت در مسابقه", url=link)],

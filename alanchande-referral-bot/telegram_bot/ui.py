@@ -6,6 +6,11 @@ from urllib.parse import urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+try:
+    from telegram import CopyTextButton
+except ImportError:  # Compatibility with older python-telegram-bot 21.x builds.
+    CopyTextButton = None
+
 from referral_core import Campaign, ReferralDB, utcnow
 from .config import Settings, hours_label, remaining_label
 
@@ -15,7 +20,7 @@ IRAN = timezone(timedelta(hours=3, minutes=30))
 
 def main_keyboard(settings: Settings) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 دعوت دوستان", callback_data="menu:link")],
+        [InlineKeyboardButton("🔗 لینک دعوت من", callback_data="menu:link")],
         [InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
          InlineKeyboardButton("👥 دعوت‌های من", callback_data="menu:referrals")],
         [InlineKeyboardButton("🏆 جدول مسابقه", callback_data="menu:top"),
@@ -30,7 +35,17 @@ def back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")]])
 
 
-def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
+def copy_link_button(link: str) -> InlineKeyboardButton:
+    """Return Telegram's native copy button when supported, otherwise a safe fallback."""
+    if CopyTextButton is not None:
+        return InlineKeyboardButton(
+            "📋 کپی لینک",
+            copy_text=CopyTextButton(text=link),
+        )
+    return InlineKeyboardButton("🔗 نمایش لینک", callback_data="menu:link")
+
+
+def invitation_share_url(link: str, campaign: Campaign | None = None) -> str:
     if campaign:
         share_text = (
             f"🎁 بیا در مسابقه {campaign.name} «الان چنده؟» شرکت کن!\n"
@@ -43,13 +58,60 @@ def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = Non
             "با لینک من وارد شو 👇"
         )
 
+    return "https://t.me/share/url?" + urlencode({
+        "url": link,
+        "text": share_text,
+    })
+
+
+def leaderboard_keyboard(link: str | None, campaign: Campaign) -> InlineKeyboardMarkup:
+    # A visitor without a personal link must use the existing membership flow.
+    invite = (
+        InlineKeyboardButton("📤 دعوت از یک دوست", url=invitation_share_url(link, campaign))
+        if link else InlineKeyboardButton("🔗 دریافت لینک دعوت من", callback_data="menu:link")
+    )
+    return InlineKeyboardMarkup([
+        [invite],
+        [InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")],
+    ])
+
+
+def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
+    share_url = invitation_share_url(link, campaign)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
+        [copy_link_button(link)],
+        [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
+        [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
+    ])
+
+
+def referral_activation_keyboard(
+    settings: Settings,
+    link: str,
+    campaign: Campaign,
+) -> InlineKeyboardMarkup:
+    """First-session share CTA for participants acquired through a referral."""
+    del settings  # Reserved for future channel-aware share copy.
+
+    contest_hook = (
+        "قرعه‌کشی ۲۱ میلیون تومانی «الان چنده؟»"
+        if campaign.slug == "paeez1405"
+        else f"مسابقه {campaign.name} «الان چنده؟»"
+    )
+    share_text = (
+        f"🎁 دعوتت کردم به {contest_hook}\n"
+        f"🏆 {campaign.num_winners} برنده داریم.\n\n"
+        "اگر دوست داشتی شرکت کنی، از لینک من وارد شو و شرایط مسابقه رو ببین 👇"
+    )
     share_url = "https://t.me/share/url?" + urlencode({
         "url": link,
         "text": share_text,
     })
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
+        [InlineKeyboardButton("📤 همین الان برای ۱ نفر", url=share_url)],
+        [copy_link_button(link)],
         [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
         [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
     ])
@@ -259,28 +321,40 @@ def _mask_name(first_name: str | None, username: str | None, user_id: int) -> st
 
 
 def render_top(campaign: Campaign, db: ReferralDB, user_id: int | None = None) -> str:
+    # Set each paragraph's base direction before any Latin name or neutral emoji.
+    rtl = "\u200f"
+    digits = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+    number = lambda value: str(value).translate(digits)
+    # Names can contain their own directional controls; do not let those escape
+    # the isolate or consume the two visible characters used for masking.
+    controls = dict.fromkeys(map(ord, "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"))
+    title = f"{rtl}<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>"
     rows = db.leaderboard(campaign, limit=10)
     if not rows:
         return (
-            f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n\n"
-            "هنوز امتیازی در جدول ثبت نشده؛ اولین نفر باش! 🚀"
+            f"{title}\n\n"
+            f"{rtl}هنوز امتیازی در جدول ثبت نشده؛ اولین نفر باش! 🚀"
         )
     medals = ["🥇", "🥈", "🥉"]
-    lines = [f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n"]
+    lines = [f"{title}\n{rtl}بر اساس امتیاز موقت"]
     for index, row in enumerate(rows):
-        badge = medals[index] if index < 3 else f"{index + 1}."
-        name = _mask_name(row["first_name"], row["username"], row["user_id"])
+        badge = f"{medals[index]} " if index < 3 else ""
+        name = _mask_name(
+            (row["first_name"] or "").translate(controls),
+            (row["username"] or "").translate(controls),
+            row["user_id"],
+        )
         lines.append(
-            f"{badge} <b>{name}</b>\n"
-            f"⭐ موقت: <b>{row['current_points']}</b> | "
-            f"🎟 تأییدشده: <b>{row['confirmed_points']}</b>"
+            f"{rtl}{number(index + 1)}) {badge}\u2068<b>{name}</b>\u2069\n"
+            f"{rtl}⭐ امتیاز موقت: <b>{number(row['current_points'])}</b> | "
+            f"🎟 بلیت تأییدشده: <b>{number(row['confirmed_points'])}</b>"
         )
     if user_id is not None:
         rank, total = db.leaderboard_position(campaign, user_id)
         if rank is not None:
-            lines.append(f"\n📍 رتبه تو: <b>#{rank}</b> از <b>{total}</b>")
+            lines.append(f"{rtl}📍 رتبه تو: <b>{number(rank)}</b> از <b>{number(total)}</b>")
     lines.append(
-        "\nℹ️ این جدول فقط پیشرفت فعلی را نشان می‌دهد و ترتیب آن تعیین‌کننده برنده نیست. "
+        f"{rtl}ℹ️ این جدول فقط پیشرفت فعلی را نشان می‌دهد و ترتیب آن تعیین‌کننده برنده نیست. "
         "برندگان با قرعه‌کشی وزن‌دار و فقط بر اساس 🎟 بلیت‌های تأییدشده انتخاب می‌شوند."
     )
     return "\n\n".join(lines)

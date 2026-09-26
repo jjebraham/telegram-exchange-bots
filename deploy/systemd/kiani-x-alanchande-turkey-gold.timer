@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily compact X alanchande-turkey-gold
+
+[Timer]
+OnCalendar=*-*-* 11:25:00 Europe/Istanbul
+Persistent=false
+Unit=kiani-x-channel@alanchande-turkey-gold.service
+
+[Install]
+WantedBy=timers.target

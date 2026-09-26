@@ -75,8 +75,9 @@ def _entry_text(campaign, is_member: bool, variant: str = "default") -> str:
 
     steps = (
         "1️⃣ وارد کانال شو و روی دکمه عضویت بزن.\n"
-        "2️⃣ بعد به <b>همین چت</b> برگرد.\n"
-        "3️⃣ روی «✅ عضو شدم؛ شروع مسابقه» بزن."
+        "2️⃣ بعد از عضویت، ربات به‌صورت خودکار لینک اختصاصی‌ات را می‌فرستد ✅\n"
+        "3️⃣ اگر پیام خودکار نیامد، به <b>همین چت</b> برگرد و "
+        "«✅ عضو شدم؛ شروع مسابقه» را بزن."
     )
     if variant == "b":
         return (
@@ -109,6 +110,125 @@ async def _membership_with_retry(context: ContextTypes.DEFAULT_TYPE, settings, u
     if last_error:
         raise last_error
     return False
+
+
+def _share_activation_variant(user_id: int) -> str:
+    """Stable 50/50 assignment so repeated messages keep the same experiment arm."""
+    return "a" if int(user_id) % 2 == 0 else "b"
+
+
+def _promo_success_text(campaign, link: str, variant: str = "a") -> str:
+    if variant == "b":
+        prize = escape(campaign.prize_text) if campaign.prize_text else "جوایز مسابقه"
+        return (
+            "🎉 <b>وارد مسابقه شدی!</b>\n\n"
+            f"🎁 {prize}\n"
+            f"🏆 {campaign.num_winners} برنده\n\n"
+            f"🎯 <b>۰/{campaign.invites_per_point}</b> — "
+            f"هر <b>{campaign.invites_per_point} دعوت فعال</b> = ۱ امتیاز موقت\n"
+            "📤 <b>همین الان لینک رو فقط برای ۲ نفر بفرست.</b>\n"
+            "وقتی اولین نفر لینک رو باز کنه، همینجا بهت خبر می‌دیم.\n\n"
+            f"<b>🔗 لینک اختصاصی تو:</b>\n{link}"
+        )
+
+    if campaign.invites_per_point == 2:
+        first_step = "👥 اولین دعوت فعال = نصف راه تا اولین امتیاز"
+    else:
+        first_step = f"👥 برای اولین امتیاز به {campaign.invites_per_point} دعوت فعال نیاز داری"
+
+    return (
+        "🎉 <b>عالیه! وارد مسابقه شدی.</b>\n\n"
+        "لینک اختصاصی‌ات آماده است؛ بهترین کار اینه که همین الان برای چند نفر بفرستیش 👇\n\n"
+        f"<b>🔗 لینک تو:</b>\n{link}\n\n"
+        f"{first_step}\n"
+        f"⭐ هر {campaign.invites_per_point} دعوت فعال = ۱ امتیاز موقت\n"
+        "🎟 بعد از کامل‌شدن دوره عضویت، بلیت قرعه‌کشی تأیید می‌شود.\n\n"
+        f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}"
+    )
+
+
+def _pending_promo_source(db, campaign_id: int, user_id: int) -> str | None:
+    """Return the tracked source for a user waiting to join the channel."""
+    with db.connect() as conn:
+        row = conn.execute(
+            """SELECT source FROM funnel_events
+               WHERE campaign_id=? AND user_id=? AND event_type='entry_needs_membership'
+               ORDER BY created_at DESC LIMIT 1""",
+            (campaign_id, user_id),
+        ).fetchone()
+    return str(row["source"] or "organic") if row else None
+
+
+async def _activate_promo_participant(
+    context: ContextTypes.DEFAULT_TYPE,
+    campaign,
+    user,
+    source: str,
+    completion_event: str,
+) -> str:
+    """Create the participant link and record one completed promo-entry path."""
+    _, db = services(context)
+    link = await get_or_create_link(context, campaign, user)
+    db.track_funnel_event(campaign.id, user.id, "entry_link_created", source)
+    db.track_funnel_event(campaign.id, user.id, "entered_contest", source)
+    db.track_funnel_event(campaign.id, user.id, "link_created", source)
+    db.track_funnel_event(campaign.id, user.id, completion_event, source)
+    return link
+
+
+async def auto_complete_promo_join(
+    context: ContextTypes.DEFAULT_TYPE,
+    campaign,
+    user,
+) -> bool:
+    """Complete a promo entrant automatically when Telegram reports their channel join."""
+    settings, db = services(context)
+
+    # Existing participants and referral-path users are handled elsewhere.
+    if db.get_invite_link(campaign.id, user.id):
+        return False
+
+    source = _pending_promo_source(db, campaign.id, user.id)
+    if not source:
+        return False
+
+    try:
+        link = await _activate_promo_participant(
+            context,
+            campaign,
+            user,
+            source,
+            "entry_auto_join_completed",
+        )
+    except Exception:
+        db.track_funnel_event(campaign.id, user.id, "entry_link_creation_error", source)
+        db.track_funnel_event(campaign.id, user.id, "entry_auto_join_error", source)
+        log.exception("Could not auto-complete promo entry after channel join user=%s", user.id)
+        return False
+
+    try:
+        activation_variant = _share_activation_variant(user.id)
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=_promo_success_text(campaign, link, activation_variant),
+            parse_mode=ParseMode.HTML,
+            reply_markup=link_keyboard(settings, link, campaign),
+            disable_web_page_preview=True,
+        )
+        db.track_funnel_event(campaign.id, user.id, "entry_auto_join_message_sent", source)
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            f"share_activation_prompt_{activation_variant}",
+            source,
+        )
+    except (BadRequest, TelegramError):
+        # The entry itself is already valid; /start will show the participant home if
+        # Telegram refuses the proactive message for any reason.
+        db.track_funnel_event(campaign.id, user.id, "entry_auto_join_message_error", source)
+        log.info("Promo entry completed but success message could not be sent user=%s", user.id)
+
+    return True
 
 
 async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,18 +334,47 @@ async def cmd_start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "entry_initial_membership_passed" if is_member else "entry_initial_membership_failed",
         first_source,
     )
+    if is_member:
+        db.track_funnel_event(campaign.id, user.id, "entry_existing_member", first_source)
+        try:
+            link = await _activate_promo_participant(
+                context,
+                campaign,
+                user,
+                first_source,
+                "entry_auto_existing_member",
+            )
+        except Exception:
+            db.track_funnel_event(campaign.id, user.id, "entry_link_creation_error", first_source)
+            log.exception("Could not auto-enter existing channel member user=%s", user.id)
+            await update.message.reply_text(
+                "عضویتت تأیید شد ✅ ولی ساخت لینک اختصاصی فعلاً ممکن نشد. "
+                "چند لحظه بعد دوباره /start را بزن."
+            )
+            return
+
+        activation_variant = _share_activation_variant(user.id)
+        await update.message.reply_text(
+            _promo_success_text(campaign, link, activation_variant),
+            parse_mode=ParseMode.HTML,
+            reply_markup=link_keyboard(settings, link, campaign),
+            disable_web_page_preview=True,
+        )
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            f"share_activation_prompt_{activation_variant}",
+            first_source,
+        )
+        return
+
     db.track_funnel_event(campaign.id, user.id, "entry_screen_shown", first_source)
-    db.track_funnel_event(
-        campaign.id,
-        user.id,
-        "entry_existing_member" if is_member else "entry_needs_membership",
-        first_source,
-    )
+    db.track_funnel_event(campaign.id, user.id, "entry_needs_membership", first_source)
 
     await update.message.reply_text(
-        _entry_text(campaign, is_member, promo_variant(source)),
+        _entry_text(campaign, False, promo_variant(source)),
         parse_mode=ParseMode.HTML,
-        reply_markup=_entry_keyboard(settings.channel_url, campaign.id, is_member),
+        reply_markup=_entry_keyboard(settings.channel_url, campaign.id, False),
     )
     db.track_funnel_event(campaign.id, user.id, "entry_screen_delivered", first_source)
 
@@ -283,32 +432,22 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        link = await get_or_create_link(context, campaign, user)
+        link = await _activate_promo_participant(
+            context,
+            campaign,
+            user,
+            source,
+            "entry_cta_completed",
+        )
     except Exception:
         db.track_funnel_event(campaign.id, user.id, "entry_link_creation_error", source)
         log.exception("Could not create promotional participant link for %s", user.id)
         await query.answer("ساخت لینک با خطا روبه‌رو شد. دوباره امتحان کن.", show_alert=True)
         return
 
-    db.track_funnel_event(campaign.id, user.id, "entry_link_created", source)
-    db.track_funnel_event(campaign.id, user.id, "entered_contest", source)
-    db.track_funnel_event(campaign.id, user.id, "link_created", source)
-
-    if campaign.invites_per_point == 2:
-        first_step = "👥 اولین دعوت فعال = نصف راه تا اولین امتیاز"
-    else:
-        first_step = f"👥 برای اولین امتیاز به {campaign.invites_per_point} دعوت فعال نیاز داری"
-
     await query.answer("لینک اختصاصی‌ات آماده شد 🚀")
-    success_text = (
-        "🎉 <b>عالیه! وارد مسابقه شدی.</b>\n\n"
-        "لینک اختصاصی‌ات آماده است؛ بهترین کار اینه که همین الان برای چند نفر بفرستیش 👇\n\n"
-        f"<b>🔗 لینک تو:</b>\n{link}\n\n"
-        f"{first_step}\n"
-        f"⭐ هر {campaign.invites_per_point} دعوت فعال = ۱ امتیاز موقت\n"
-        "🎟 بعد از کامل‌شدن دوره عضویت، بلیت قرعه‌کشی تأیید می‌شود.\n\n"
-        f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}"
-    )
+    activation_variant = _share_activation_variant(user.id)
+    success_text = _promo_success_text(campaign, link, activation_variant)
     try:
         await query.edit_message_text(
             success_text,
@@ -319,3 +458,10 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
+    else:
+        db.track_funnel_event(
+            campaign.id,
+            user.id,
+            f"share_activation_prompt_{activation_variant}",
+            source,
+        )

@@ -39,6 +39,8 @@ from .growth import (
 )
 from .live_runtime import on_chat_member, post_init, post_stop
 from .promo_handlers import cmd_start_entry, on_promo_enter
+from .owned_audiences import cmd_owned_sources
+from .launch_tracking import cmd_launch_mark, cmd_launch_report
 from .publish import cmd_publish_promo, on_publish_promo_callback
 from .referral_success import on_referral_check_and_welcome
 from .share_activation import cmd_sources
@@ -219,6 +221,9 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("funnel", cmd_funnel_clear))
     app.add_handler(CommandHandler("trend", cmd_trend))
     app.add_handler(CommandHandler("sources", cmd_sources))
+    app.add_handler(CommandHandler("owned_sources", cmd_owned_sources))
+    app.add_handler(CommandHandler("launch_mark", cmd_launch_mark))
+    app.add_handler(CommandHandler("launch_report", cmd_launch_report))
     app.add_handler(CommandHandler("promo_link", cmd_promo_link))
     app.add_handler(CommandHandler("promo_post", cmd_promo_post))
     app.add_handler(CommandHandler("publish_promo", cmd_publish_promo))
