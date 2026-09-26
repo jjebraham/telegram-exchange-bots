@@ -11,7 +11,10 @@ from sports_monitor.parsing import documents, parse_product, discover, ParseErro
 from sports_monitor.state import State
 from sports_monitor.telegram import batches, item, send, DeliveryError
 from sports_monitor.network import Client, FetchError
-from sports_monitor.runner import fetch_url, lock
+from sports_monitor.runner import fetch_url, lock, scan_store
+from sports_monitor.ayakapp import (discover_products as discover_ayakapp,
+                                    listing_url as ayakapp_listing_url,
+                                    parse_product as parse_ayakapp_product)
 from sports_monitor.stores import STORES
 
 NOW = 1_790_443_000
@@ -152,6 +155,42 @@ class ParserTests(unittest.TestCase):
         html = '<script type="application/json">'+json.dumps(data)+'</script>'
         with self.assertRaises(ParseError): parse_product('barcin', 'https://www.barcin.com/unrelated', html, NOW)
 
+    def test_ayakapp_discovers_only_the_requested_retailer(self):
+        html = self.fixture('ayakapp-listing.html')
+        urls = discover_ayakapp('sneaks', 'https://ayakapp.com/firmalar/sneaksup', html)
+        self.assertEqual(len(urls), 1)
+        self.assertIn('/sneaksup-nike-pegasus', urls[0])
+        self.assertEqual(ayakapp_listing_url('adidas'), 'https://ayakapp.com/firmalar/adidas')
+        with self.assertRaises(ValueError):
+            discover_ayakapp('sneaks', 'https://evil.example/firmalar/sneaksup', html)
+
+    def test_ayakapp_jsonld_prices_sizes_link_and_running_filter(self):
+        url = ('https://ayakapp.com/urunler/adidas/ultraboost-5/varyasyonlar/'
+               'id8819/adidas-adidas-id8819')
+        p = parse_ayakapp_product('adidas', url, self.fixture('ayakapp-product.html'), NOW)
+        self.assertEqual(p.original, 849900)
+        self.assertEqual(p.sale, 399900)
+        self.assertEqual(p.sizes, ('40', '40.5', '42'))
+        self.assertEqual(p.url, 'https://www.adidas.com.tr/tr/ultraboost-5-ayakkabi/ID8819.html')
+        self.assertEqual(p.verify_url, url)
+        self.assertEqual(p.source, 'ayakapp')
+        self.assertTrue(p.running_shoe)
+
+    def test_ayakapp_stale_or_unverifiable_data_fails_closed(self):
+        url = ('https://ayakapp.com/urunler/adidas/ultraboost-5/varyasyonlar/'
+               'id8819/adidas-adidas-id8819')
+        html = self.fixture('ayakapp-product.html')
+        with self.assertRaisesRegex(ValueError, 'older than 24 hours|old or imprecise'):
+            parse_ayakapp_product('adidas', url, html.replace('Bugün Güncelleme', '3 hafta önce Güncelleme'), NOW)
+        with self.assertRaisesRegex(ValueError, 'different retailer'):
+            parse_ayakapp_product('yali', url, html, NOW)
+        with self.assertRaisesRegex(ValueError, 'Missing direct retailer product link'):
+            parse_ayakapp_product('adidas', url,
+                                  html.replace('www.adidas.com.tr', 'evil.example'), NOW)
+        with self.assertRaisesRegex(ValueError, 'discount badge does not match'):
+            parse_ayakapp_product('adidas', url,
+                                  html.replace('₺4.500 tasarruf', '₺3.500 tasarruf'), NOW)
+
 
 class StateTests(unittest.TestCase):
     def setUp(self): self.state = State(':memory:')
@@ -240,6 +279,10 @@ class TelegramTests(unittest.TestCase):
         self.assertNotIn('rundiscountbot', text)
         self.assertLess(text.index('سایزهای'), text.index('🏪'))
 
+    def test_ayakapp_fallback_is_disclosed_in_persian(self):
+        text = item(product(source='ayakapp'), 'new')
+        self.assertIn('موجودی و قیمت طبق دادهٔ Ayakapp', text)
+
     def test_group_and_length(self):
         deals = [(product(sku=str(i),name='x'*180), 'new') for i in range(20)]
         groups=list(batches(deals,7))
@@ -275,6 +318,34 @@ class RuntimeTests(unittest.TestCase):
 
     def test_format_keeps_page(self):
         self.assertEqual(fetch_url(STORES[0], 'https://www.barcin.com/outlet/?page=2'), 'https://www.barcin.com/outlet/?page=2&format=json')
+
+    def test_ayakapp_is_used_only_after_a_403_listing(self):
+        primary = Mock()
+        primary.get.side_effect = FetchError('HTTP 403')
+        fallback = Mock()
+        page = 'https://ayakapp.com/firmalar/adidas'
+        product_url = ('https://ayakapp.com/urunler/adidas/ultraboost-5/varyasyonlar/'
+                       'id8819/adidas-adidas-id8819')
+        fallback.get.side_effect = [
+            (page, (FIXTURES / 'ayakapp-listing.html').read_text(encoding='utf-8')),
+            (product_url, (FIXTURES / 'ayakapp-product.html').read_text(encoding='utf-8')),
+        ]
+        with patch('sports_monitor.runner.Client', side_effect=[primary, fallback]):
+            products, report = scan_store(next(s for s in STORES if s.key == 'adidas'), [], 2, 10)
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products[0].source, 'ayakapp')
+        self.assertEqual(report['primary_error']['error'], 'HTTP 403')
+        self.assertEqual(report['data_source'], 'ayakapp')
+        self.assertTrue(report['limited'])
+
+    def test_ayakapp_fallback_is_not_used_for_non_403_errors(self):
+        primary = Mock()
+        primary.get.side_effect = FetchError('HTTP 503')
+        with patch('sports_monitor.runner.Client', return_value=primary) as client:
+            products, report = scan_store(next(s for s in STORES if s.key == 'adidas'), [], 2, 10)
+        self.assertEqual(products, [])
+        self.assertNotIn('data_source', report)
+        self.assertEqual(client.call_count, 1)
 
     def test_cross_host_not_fetched(self):
         c=Client('https://www.barcin.com',delay=0)

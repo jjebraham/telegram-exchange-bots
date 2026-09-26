@@ -48,6 +48,8 @@ class Product:
     sizes: tuple[str, ...]
     observed_at: int
     running_shoe: bool = False
+    verify_url: str | None = None
+    source: str = 'retailer'
 
     def __post_init__(self):
         if not self.name or not self.sku or not (0 < self.sale <= self.original):
@@ -56,6 +58,10 @@ class Product:
             raise ValueError('Running shoe classification must be explicit')
         object.__setattr__(self, 'url', canonical(self.url))
         object.__setattr__(self, 'sizes', normalize_sizes(self.sizes))
+        if self.verify_url is not None:
+            object.__setattr__(self, 'verify_url', canonical(self.verify_url))
+        if self.source not in ('retailer', 'ayakapp'):
+            raise ValueError('Unknown product data source')
 
     @property
     def key(self):

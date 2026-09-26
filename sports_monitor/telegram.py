@@ -15,8 +15,9 @@ def item(product, reason):
     badge = '🔥 تخفیف ویژه' if product.discount >= 50 else '🏷 تخفیف'
     percent = str(int(product.discount)).translate(PERSIAN)
     checked = datetime.fromtimestamp(product.observed_at, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    source_note = '\n📊 موجودی و قیمت طبق دادهٔ Ayakapp' if product.source == 'ayakapp' else ''
     return (f'👟 <b>{escape(product.name[:180])}</b>\n'
-            f'📏 سایزهای موجود: {escape("، ".join(product.sizes))}\n'
+            f'📏 سایزهای موجود: {escape("، ".join(product.sizes))}{source_note}\n'
             f'🏪 {escape(NAMES[product.store])} | {REASONS[reason]}\n'
             f'<s>{price(product.original)}</s> ← <b>{price(product.sale)} لیر</b>\n'
             f'{badge}: <b>{percent}٪</b>\n'

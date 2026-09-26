@@ -13,6 +13,9 @@ from urllib.parse import urlsplit, parse_qsl, urlencode, urlunsplit
 from .model import qualifies
 from .network import Client, FetchError
 from .parsing import discover, parse_product, ParseError
+from .ayakapp import (STORE_SLUGS, discover_products as discover_ayakapp,
+                      listing_url as ayakapp_listing_url,
+                      parse_product as parse_ayakapp_product)
 from .state import State
 from .stores import STORES
 from .telegram import batches, send, DeliveryError
@@ -85,7 +88,45 @@ def scan_store(store, known, max_pages, max_products):
                     report['errors'].append({'url': url, 'error': str(exc)[:180]})
         report['parsed'] = len(products)
     except (FetchError, ValueError, KeyError, TypeError) as exc:
+        if (isinstance(exc, FetchError) and str(exc) == 'HTTP 403'
+                and store.key in STORE_SLUGS):
+            fallback_products, fallback_report = scan_ayakapp_store(store, max_products)
+            fallback_report['primary_error'] = {'stage': 'direct_listing', 'error': str(exc)}
+            return fallback_products, fallback_report
         report['errors'].append({'stage': 'listing', 'error': str(exc)[:180]})
+    finally:
+        client.session.close()
+    return list(products.values()), report
+
+
+def scan_ayakapp_store(store, max_products):
+    """Use only Ayakapp's public seller page after a retailer returns HTTP 403."""
+    client = Client('https://ayakapp.com')
+    products = {}
+    report = {'store': store.key, 'data_source': 'ayakapp', 'listing_pages': 0,
+              'discovered': 0, 'parsed': 0, 'errors': [], 'limited': True,
+              'coverage_note': 'Ayakapp server-rendered seller listing only; pagination is unverified'}
+    try:
+        page_url, html = client.get(ayakapp_listing_url(store.key))
+        report['listing_pages'] = 1
+        urls = discover_ayakapp(store.key, page_url, html)
+        report['discovered'] = len(urls)
+        report['limited'] = True  # A large retailer catalog is only partially rendered.
+        if not urls:
+            report['errors'].append({'stage': 'ayakapp_discovery',
+                                     'error': 'No retailer-specific Ayakapp product links found'})
+        for url in urls[:max_products]:
+            try:
+                final, product_html = client.get(url)
+                product = parse_ayakapp_product(store.key, final, product_html, int(time.time()))
+                products[product.key] = product
+            except (FetchError, ParseError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                report['product_errors'] = report.get('product_errors', 0) + 1
+                if len(report['errors']) < 10:
+                    report['errors'].append({'url': url, 'error': str(exc)[:180]})
+        report['parsed'] = len(products)
+    except (FetchError, ValueError, KeyError, TypeError) as exc:
+        report['errors'].append({'stage': 'ayakapp_listing', 'error': str(exc)[:180]})
     finally:
         client.session.close()
     return list(products.values()), report
@@ -126,10 +167,15 @@ def run(args):
             if len(fresh) >= args.top:
                 break
             store = next(s for s in selected if s.key == p.store)
-            client = Client(store.root)
+            ayakapp_source = p.source == 'ayakapp' and p.verify_url
+            client = Client('https://ayakapp.com' if ayakapp_source else store.root)
             try:
-                final, html = client.get(fetch_url(store, p.url))
-                current = parse_product(store.key, final, html, int(time.time()))
+                if ayakapp_source:
+                    final, html = client.get(p.verify_url)
+                    current = parse_ayakapp_product(store.key, final, html, int(time.time()))
+                else:
+                    final, html = client.get(fetch_url(store, p.url))
+                    current = parse_product(store.key, final, html, int(time.time()))
                 if current.key != p.key:
                     raise ParseError('Product identity changed on recheck')
                 if current.fingerprint != p.fingerprint:

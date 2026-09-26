@@ -8,13 +8,23 @@ Existing exchange bots and their publishing workflows are unchanged.
 
 ## Validation status and limits
 
-On 2026-09-26, limited live scans successfully parsed product prices and explicit
-available sizes from Barçın, Sporjinal, Sneaks Up, SuperStep, Sportive, Koray Spor,
-and Yalı Spor. adidas Türkiye returned HTTP 403. Its conservative per-variant
-JSON-LD fallback is **unverified**; complete eight-store production coverage is
-not yet established. No attempt is made to bypass access controls. Verify adidas
-on the intended server; an accessible official stock feed or a verified adapter
-will be needed if the same response persists there.
+The latest user-provided server scan (2026-09-27) parsed direct product data from
+Barçın, Sporjinal, Sportive, and SuperStep. Sneaks Up, Koray Spor, Yalı Spor, and
+adidas Türkiye returned HTTP 403. Complete eight-store production coverage is
+not established. No attempt is made to bypass access controls.
+
+If Sneaks Up, Koray Spor, Yalı Spor, or adidas Türkiye returns HTTP 403, the
+monitor now tries that retailer's public Ayakapp listing. It reads only
+retailer-specific Product JSON-LD and direct retailer links, requires explicit
+available sizes, and rechecks each finalist on Ayakapp before posting. The
+displayed product update must say “today” or a recent hour/minute; older or
+imprecise dates are rejected. Telegram identifies Ayakapp as the data source for
+these items. Ayakapp's server-rendered listing currently exposes only a small
+initial product set and no verified pagination, so this fallback is partial and
+the scan is reported as limited. Ayakapp's own terms say that copying,
+redistribution, or commercial use of site content requires prior written
+permission; they do not state a separate noncommercial exception. Check the
+current terms before relying on this fallback for channel posts.
 
 Full catalog coverage is bounded by `--max-pages` (100 per store) and
 `--max-products` (5000 per store). Raise these after measuring server runtime.
