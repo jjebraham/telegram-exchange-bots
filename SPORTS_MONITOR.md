@@ -1,7 +1,10 @@
 # Turkish sports discount monitor
 
-An isolated Python 3.11+ scanner and Persian Telegram publisher. Existing exchange
-bots and their publishing workflows are unchanged.
+An isolated Python 3.11+ scanner and Persian Telegram publisher. It only selects
+running shoes: the title must identify a shoe, plus a running category or a
+recognized running-shoe model. Running apparel, basketball/football shoes, and
+lifestyle sneakers are excluded. Unknown models fail closed and are skipped.
+Existing exchange bots and their publishing workflows are unchanged.
 
 ## Validation status and limits
 
@@ -30,7 +33,8 @@ evictable Actions cache. This change does not automatically deploy or post.
 ## Deal and repost rules
 
 - Require valid TRY prices, a product identity and explicitly available sizes.
-- Accept discounts >=35%. Accept 25–34% only if the current price is >=10% below
+- First require a running shoe as described above. Accept discounts >=35%.
+  Accept 25–34% only if the current price is >=10% below
   the prior 30-day low, with at least three previous observations. Moderate
   discounts therefore need a warm-up period; no arbitrary brand bonuses.
 - Rank by discount, absolute savings, then size availability; select up to ten

@@ -7,7 +7,7 @@ from unittest.mock import patch, Mock
 import requests
 
 from sports_monitor.model import Product, money, canonical, normalize_sizes, qualifies, change_reason
-from sports_monitor.parsing import documents, parse_product, discover, ParseError
+from sports_monitor.parsing import documents, parse_product, discover, ParseError, running_shoe
 from sports_monitor.state import State
 from sports_monitor.telegram import batches, item, send, DeliveryError
 from sports_monitor.network import Client, FetchError
@@ -20,7 +20,7 @@ FIXTURES = Path(__file__).parent / 'fixtures'
 
 def product(**kwargs):
     return replace(Product('yali', 'JQ2941-E', 'adidas Ultraboost', 100000, 50000,
-                           'https://www.yalispor.com.tr/urun/test', ('42',), NOW), **kwargs)
+                           'https://www.yalispor.com.tr/urun/test', ('42',), NOW, running_shoe=True), **kwargs)
 
 
 class PriceTests(unittest.TestCase):
@@ -107,6 +107,22 @@ class ParserTests(unittest.TestCase):
         p = parse_product('yali', 'https://www.yalispor.com.tr/urun/adidas-ultraboost-5-strung-erkek-spor-ayakkabi-siyah', self.fixture('yali'), NOW)
         self.assertEqual(p.sizes, ('42.5',))
         self.assertEqual(p.discount, 50)
+        self.assertTrue(p.running_shoe)
+
+    def test_running_shoe_category_and_models(self):
+        self.assertTrue(running_shoe('adidas Supernova Rise Erkek Spor Ayakkabı', ['Koşu Ayakkabısı']))
+        self.assertTrue(running_shoe('adidas Ultraboost 5 Erkek Spor Ayakkabı'))
+        self.assertTrue(running_shoe('Nike Pegasus 41 Erkek Spor Ayakkabı'))
+        self.assertTrue(running_shoe('ASICS Gel Nimbus 27 Kadın Spor Ayakkabı'))
+        self.assertFalse(running_shoe('Nike Pegasus Running Ceket', ['Koşu']))
+        self.assertFalse(running_shoe('adidas Ultraboost Sweatshirt', ['Running']))
+        self.assertFalse(running_shoe('Nike Dunk Low Retro Erkek Spor Ayakkabı', ['Basketbol']))
+        self.assertFalse(running_shoe('adidas Samba OG Unisex Sneaker', ['Lifestyle']))
+
+    def test_running_only_applies_to_both_discount_tiers(self):
+        non_running = product(running_shoe=False)
+        self.assertFalse(qualifies(non_running))
+        self.assertFalse(qualifies(product(running_shoe=False, sale=70000), 90000, 10))
 
     def test_block_page_fails_closed(self):
         for store in STORES:

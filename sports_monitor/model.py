@@ -47,10 +47,13 @@ class Product:
     url: str
     sizes: tuple[str, ...]
     observed_at: int
+    running_shoe: bool = False
 
     def __post_init__(self):
         if not self.name or not self.sku or not (0 < self.sale <= self.original):
             raise ValueError('Missing identity or invalid price range')
+        if not isinstance(self.running_shoe, bool):
+            raise ValueError('Running shoe classification must be explicit')
         object.__setattr__(self, 'url', canonical(self.url))
         object.__setattr__(self, 'sizes', normalize_sizes(self.sizes))
 
@@ -75,7 +78,7 @@ class Product:
 
 
 def qualifies(product, historical_low=None, history_count=0):
-    if not product.sizes:
+    if not product.running_shoe or not product.sizes:
         return False
     if product.discount >= 35:
         return True
