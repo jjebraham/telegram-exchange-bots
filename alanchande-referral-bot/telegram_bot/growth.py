@@ -52,6 +52,8 @@ _ONBOARDING_EVENTS = {
     "referral_share_prompt_v2_sent",
     "referral_welcome_error",
     "referral_link_creation_error",
+    "share_activation_prompt_a",
+    "share_activation_prompt_b",
 }
 
 
@@ -273,6 +275,8 @@ def source_performance(db, campaign: Campaign) -> dict:
             "referral_share_prompt_v2_sent": 0,
             "referral_welcome_error": 0,
             "referral_link_creation_error": 0,
+            "share_activation_prompt_a": 0,
+            "share_activation_prompt_b": 0,
         })
 
     for uid, source in first_source.items():
@@ -330,6 +334,12 @@ def source_performance(db, campaign: Campaign) -> dict:
         item["referral_welcome_error"] = len(events.get("referral_welcome_error", set()))
         item["referral_link_creation_error"] = len(
             events.get("referral_link_creation_error", set())
+        )
+        item["share_activation_prompt_a"] = len(
+            events.get("share_activation_prompt_a", set())
+        )
+        item["share_activation_prompt_b"] = len(
+            events.get("share_activation_prompt_b", set())
         )
 
     candidate_seen: set[int] = set()
@@ -564,6 +574,8 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"prompt_v2={row['referral_share_prompt_v2_sent']} "
             f"welcome_err={row['referral_welcome_error']} "
             f"link_err={row['referral_link_creation_error']}",
+            f"  activation A/B: A={row['share_activation_prompt_a']} "
+            f"B={row['share_activation_prompt_b']}",
             f"  start→enter={_pct(row['start_to_entered_pct'])} | "
             f"new start→enter={_pct(row['new_start_to_entered_pct'])} | "
             f"shown→cta={_pct(row['entry_cta_pct'])} | candidate→join={_pct(row['candidate_to_join_pct'])}",
