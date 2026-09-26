@@ -103,7 +103,7 @@ def _source_reported_date(payload: dict[str, Any]) -> date:
         raise SnapshotError("Tomanify generated date must be YYYY-MM-DD")
 
     legacy = payload.get("generated_at")
-    if isinstance(legacy, str) and re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", legacy):
+    if isinstance(legacy, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", legacy):
         try:
             reported = date.fromisoformat(legacy)
         except ValueError as exc:
@@ -111,7 +111,7 @@ def _source_reported_date(payload: dict[str, Any]) -> date:
         if reported.isoformat() == legacy:
             return reported
     if isinstance(legacy, str) and re.fullmatch(
-        r"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}", legacy
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", legacy
     ):
         try:
             return datetime.strptime(legacy, "%Y-%m-%d %H:%M:%S").date()
