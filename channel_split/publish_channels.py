@@ -111,6 +111,11 @@ from rate_change_history import (
     percentage_changes,
     record_published_values,
 )
+from telegram_forwarding import (
+    forward_daily_slot,
+    record_source_message,
+)
+
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
@@ -215,6 +220,16 @@ def _history_db_path() -> Path:
     if path.is_absolute():
         return path
     return Path(__file__).resolve().parent / path
+
+
+def _kiani_forward_db_path() -> Path:
+    configured = os.environ.get("KIANI_FORWARD_DB", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_absolute():
+            return path
+        return Path(__file__).resolve().parent / path
+    return Path(__file__).resolve().parent / "kiani_forward_state.sqlite3"
 
 
 def build_default_alanchande_usdt_post() -> str:
@@ -341,6 +356,8 @@ def main() -> int:
             "alanchande-markets",
             "alanchande-daily",
             "alanchande-daily-digest",
+            "forward-kiani-try",
+            "forward-kiani-rates",
             "kiani-rates",
             "kiani-try",
             "kiani-examples",
@@ -1080,13 +1097,60 @@ def main() -> int:
             )
         )
 
-    def add_kiani(text: str) -> None:
+    def add_kiani(text: str, post_key: str | None = None) -> None:
         jobs.append(
-            ("KIANI_TELEGRAM_BOT_TOKEN", "KIANI_CHANNEL_ID", text, None, None)
+            (
+                "KIANI_TELEGRAM_BOT_TOKEN",
+                "KIANI_CHANNEL_ID",
+                text,
+                post_key,
+                None,
+            )
         )
 
     history_db = _history_db_path()
     safety_mode = normalize_mode(os.environ.get("MARKET_SAFETY_MODE", "shadow"))
+
+    if args.post in {"forward-kiani-try", "forward-kiani-rates"}:
+        source_key, expected_local_time = {
+            "forward-kiani-try": ("kiani-try", "11:40"),
+            "forward-kiani-rates": ("kiani-rates", "12:10"),
+        }[args.post]
+        source_chat_id = _required_env("KIANI_CHANNEL_ID")
+        destination_chat_id = _required_env("ALANCHANDE_CHANNEL_ID")
+        forward_token = (
+            os.environ.get("KIANI_FORWARD_TELEGRAM_BOT_TOKEN", "").strip()
+            or _required_env("KIANI_TELEGRAM_BOT_TOKEN")
+        )
+        outcome = forward_daily_slot(
+            _kiani_forward_db_path(),
+            source_key=source_key,
+            expected_local_time=expected_local_time,
+            token=forward_token,
+            source_chat_id=source_chat_id,
+            destination_chat_id=destination_chat_id,
+            tolerance_minutes=12,
+            dry_run=args.dry_run,
+        )
+        if outcome.status == "already-forwarded":
+            print(
+                f"forward skipped -> {source_key} already forwarded "
+                f"for {outcome.local_date}"
+            )
+        elif outcome.status == "dry-run-ready":
+            print(
+                f"forward dry-run ready -> {source_key} "
+                f"message_id={outcome.source_message_id} "
+                f"{source_chat_id} -> {destination_chat_id}"
+            )
+        else:
+            print(
+                f"forwarded -> {source_key} "
+                f"source_message_id={outcome.source_message_id} "
+                f"destination_message_id={outcome.forwarded_message_id} "
+                f"{source_chat_id} -> {destination_chat_id}"
+            )
+        return 0
 
     if args.record_history:
         snapshot = current_history_snapshot()
@@ -1480,7 +1544,7 @@ def main() -> int:
         add_alanchande(fetch_and_build_direct_usdt_comparison())
 
     if args.post in {"kiani-rates", "all"}:
-        add_kiani(build_kiani_rate_post(get_rates()))
+        add_kiani(build_kiani_rate_post(get_rates()), "kiani-rates")
 
     if args.post in {"kiani-try", "demo-formats"}:
         add_kiani(
@@ -1496,7 +1560,8 @@ def main() -> int:
                     "https://wa.me/905392905686",
                 ).strip()
                 or "https://wa.me/905392905686",
-            )
+            ),
+            "kiani-try",
         )
 
     if args.post in {"kiani-examples", "demo-formats"}:
@@ -1598,7 +1663,7 @@ def main() -> int:
         try:
             token = _required_env(token_env)
             chat_id = _required_env(destination_env)
-            telegram_send(token, chat_id, text)
+            send_result = telegram_send(token, chat_id, text)
         except Exception as exc:
             failure = (
                 f"{destination_env}"
@@ -1620,6 +1685,32 @@ def main() -> int:
             continue
 
         print(f"sent -> {destination_env} using {token_env}")
+
+        if (
+            destination_env == "KIANI_CHANNEL_ID"
+            and post_key in {"kiani-try", "kiani-rates"}
+        ):
+            try:
+                result_payload = send_result.get("result")
+                if not isinstance(result_payload, dict):
+                    raise RuntimeError("Telegram response has no result object")
+                message_id = int(result_payload["message_id"])
+                record_source_message(
+                    _kiani_forward_db_path(),
+                    source_key=post_key,
+                    message_id=message_id,
+                    source_chat_id=chat_id,
+                )
+                print(
+                    f"recorded Kiani forward source -> "
+                    f"{post_key} message_id={message_id}"
+                )
+            except Exception as exc:
+                print(
+                    f"WARNING: Kiani forward source state failed for "
+                    f"{post_key}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
 
         if post_key is not None:
             sent_market_posts.add(post_key)
