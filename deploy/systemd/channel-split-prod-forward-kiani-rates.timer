@@ -1,0 +1,10 @@
+[Unit]
+Description=Forward daily 12:10 Kiani rates post to AlanChande
+
+[Timer]
+OnCalendar=*-*-* 12:12:00 Europe/Istanbul
+Persistent=false
+Unit=channel-split-production@forward-kiani-rates.service
+
+[Install]
+WantedBy=timers.target
