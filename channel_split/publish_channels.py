@@ -118,6 +118,7 @@ from telegram_forwarding import (
 
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
+DEFAULT_TRY_RATES_URL = "http://127.0.0.1:8000/api/rates/try"
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 
 
@@ -198,6 +199,42 @@ def fetch_kiani_rates(
         return {key: _positive_decimal(raw[key], key) for key in keys}
 
     raise RuntimeError(f"Could not load Kiani rates: {last_error}")
+
+
+def fetch_canonical_try_rates(
+    url: str | None = None,
+    timeout: int = 15,
+) -> dict[str, Decimal]:
+    endpoint = (
+        url
+        or os.environ.get("KIANI_TRY_RATES_URL", "").strip()
+        or DEFAULT_TRY_RATES_URL
+    )
+    request = Request(
+        endpoint,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "Kiani-TelegramPublisher/2.0",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+    except HTTPError as exc:
+        raise RuntimeError(
+            f"Canonical TRY API returned HTTP {exc.code}"
+        ) from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Canonical TRY API unavailable: {exc}") from exc
+
+    raw = payload.get("rates") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        raise RuntimeError("Canonical TRY API response has no rates object")
+
+    return {
+        key: _positive_decimal(raw.get(key), key)
+        for key in ("buy_lira", "sell_lira")
+    }
 
 
 def _fmt_int(value: Decimal) -> str:
@@ -496,6 +533,19 @@ def main() -> int:
                 market_usdt_try,
                 adjustments,
             )
+
+            try:
+                canonical_try = fetch_canonical_try_rates()
+                rates_cache["buy_lira"] = canonical_try["buy_lira"]
+                rates_cache["sell_lira"] = canonical_try["sell_lira"]
+                note_source_health("kiani:canonical-try-api", True)
+            except Exception as exc:
+                note_source_health(
+                    "kiani:canonical-try-api",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                )
+                raise
         return rates_cache
 
     def get_usd_quotes() -> list[Any]:
