@@ -45,6 +45,7 @@ class ProvisionalPointsTests(unittest.TestCase):
         self.assertEqual(counts["current_points"], 1)
         self.assertEqual(counts["confirmed_points"], 0)
         self.assertEqual(counts["points"], 0)
+        self.assertEqual(counts["qualifiable_pending"], 3)
 
         self.db.mark_left(101, self.now + timedelta(minutes=1))
         counts = self.db.campaign_counts(self.campaign, 10, self.now + timedelta(minutes=1))
@@ -56,6 +57,22 @@ class ProvisionalPointsTests(unittest.TestCase):
         self.assertEqual(counts["active"], 1)
         self.assertEqual(counts["current_points"], 0)
         self.assertEqual(counts["confirmed_points"], 0)
+
+    def test_late_pending_referrals_do_not_count_toward_next_ticket(self):
+        within_cutoff = self.now + timedelta(days=20)
+        beyond_cutoff = self.campaign.final_qualification_cutoff + timedelta(days=1)
+        self.db.record_join(
+            self.campaign, 101, 10, "within", "Within", within_cutoff
+        )
+        self.db.record_join(
+            self.campaign, 102, 10, "late", "Late", beyond_cutoff
+        )
+
+        counts = self.db.campaign_counts(
+            self.campaign, 10, self.now + timedelta(days=25)
+        )
+        self.assertEqual(counts["pending"], 2)
+        self.assertEqual(counts["qualifiable_pending"], 1)
 
 
 if __name__ == "__main__":

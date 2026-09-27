@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from telegram_bot import ui
@@ -34,6 +35,26 @@ class LinkAccessUiTests(unittest.TestCase):
         else:
             self.assertEqual(copy_button.text, "🔗 نمایش لینک")
             self.assertEqual(copy_button.callback_data, "menu:link")
+
+    def test_ticket_holder_share_ctas_name_the_next_two_friends(self):
+        campaign = SimpleNamespace(
+            slug="paeez1405",
+            name="پاییز ۱۴۰۵",
+            num_winners=5,
+            invites_per_point=2,
+            max_points=20,
+            final_qualification_cutoff=datetime.now(timezone.utc) + timedelta(days=30),
+        )
+        counts = {"active": 2, "current_points": 1, "confirmed_points": 1}
+        link = "https://t.me/Alanchandebot?start=ref_6_example"
+
+        main = ui.main_keyboard(self.settings(), campaign, counts)
+        leaderboard = ui.leaderboard_keyboard(link, campaign, counts)
+        share = ui.link_keyboard(self.settings(), link, campaign, counts)
+
+        self.assertEqual(main.inline_keyboard[0][0].text, "📤 دعوت ۲ دوست دیگر")
+        self.assertEqual(leaderboard.inline_keyboard[0][0].text, "📤 دعوت ۲ دوست دیگر")
+        self.assertEqual(share.inline_keyboard[0][0].text, "📤 دعوت ۲ دوست دیگر")
 
     def test_referral_activation_keyboard_keeps_one_friend_cta_and_copy(self):
         link = "https://t.me/Alanchandebot?start=ref_6_example"

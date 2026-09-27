@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import parse_qs, urlparse
@@ -9,9 +10,16 @@ from telegram_bot.user_handlers import on_menu_callback
 
 class LeaderboardShareTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.campaign = SimpleNamespace(id=6, name="پاییز ۱۴۰۵", num_winners=5)
+        self.campaign = SimpleNamespace(
+            id=6, name="پاییز ۱۴۰۵", num_winners=5,
+            invites_per_point=2, max_points=20,
+            final_qualification_cutoff=datetime.now(timezone.utc) + timedelta(days=30),
+        )
         self.db = Mock()
         self.db.live_campaign.return_value = self.campaign
+        self.db.campaign_counts.return_value = {
+            "active": 2, "current_points": 1, "confirmed_points": 1,
+        }
         self.bot = SimpleNamespace(username="Alanchandebot", get_me=AsyncMock())
         self.context = SimpleNamespace(bot=self.bot, application=SimpleNamespace(bot_data={
             "settings": SimpleNamespace(), "db": self.db,
@@ -34,7 +42,7 @@ class LeaderboardShareTests(unittest.IsolatedAsyncioTestCase):
         self.db.get_invite_link.return_value = "ref_6_viewerSecret"
         keyboard = await self.open_top()
         self.db.get_invite_link.assert_called_once_with(6, 42)
-        self.assertEqual(keyboard[0][0].text, "📤 دعوت از یک دوست")
+        self.assertEqual(keyboard[0][0].text, "📤 دعوت ۲ دوست دیگر")
         parts = urlparse(keyboard[0][0].url)
         self.assertEqual((parts.netloc, parts.path), ("t.me", "/share/url"))
         params = parse_qs(parts.query)
