@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+from ..admin_auth import create_admin_session_token, optional_admin_session
 from ..database import get_db
 from ..auth import (
     hash_password,
@@ -191,15 +192,15 @@ class AdminCredentials(BaseModel):
 
 
 class FaqRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     question: str
     answer: str
 
 
 class AdminResetPasswordRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     new_password: str
 
 
@@ -215,8 +216,8 @@ class PasswordResetCompleteRequest(BaseModel):
 
 
 class AdminSendMessageRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     message: str
     user_id: int | None = None
 
@@ -247,6 +248,22 @@ def _require_roles(username: str, password: str, allowed: set[str]) -> str:
 
 def _is_admin(username: str, password: str) -> bool:
     return _admin_role(username, password) == "admin"
+
+
+def _require_admin_access(
+    session: dict[str, str] | None,
+    allowed: set[str],
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
+    if session is not None:
+        role = session.get("role")
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="admin_role_forbidden")
+        return str(role)
+    if username is None or password is None:
+        raise HTTPException(status_code=401, detail="admin_auth_required")
+    return _require_roles(username, password, allowed)
 
 
 def _write_admin_log(action: str, details: dict | None = None):
@@ -683,13 +700,30 @@ async def admin_login(req: AdminCredentials):
     role = _admin_role(req.username, req.password)
     if not role:
         raise HTTPException(status_code=401, detail="invalid_admin_credentials")
+    try:
+        token = create_admin_session_token(req.username, role)
+    except RuntimeError as exc:
+        logger.error("Admin session token creation failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="admin_session_not_configured",
+        ) from exc
     _write_admin_log("admin_login", {"username": req.username, "role": role})
-    return {"status": "success", "role": role}
+    return {
+        "status": "success",
+        "role": role,
+        "username": req.username,
+        "token": token,
+    }
 
 
 @router.get("/admin/users")
-async def admin_users(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_users(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support", "viewer"}, username, password)
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, first_name, last_name, phone_number, national_id, dob, bank_card_number, kyc_status, verification_level
@@ -698,9 +732,34 @@ async def admin_users(username: str, password: str):
     return {"users": [dict(row) for row in rows]}
 
 
+@router.get("/admin/users/{user_id}")
+async def admin_user_detail(
+    user_id: int,
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support"}, username, password)
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT id, first_name, last_name, phone_number, national_id, dob,
+                      bank_card_number, kyc_status, verification_level
+               FROM users WHERE id = ?""",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="user_not_found")
+    return {"user": dict(row)}
+
+
 @router.delete("/admin/users/{user_id}")
-async def admin_delete_user(user_id: int, username: str, password: str):
-    _require_roles(username, password, {"admin"})
+async def admin_delete_user(
+    user_id: int,
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin"}, username, password)
     with get_db() as conn:
         conn.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -709,25 +768,47 @@ async def admin_delete_user(user_id: int, username: str, password: str):
 
 
 @router.get("/admin/faqs")
-async def admin_get_faqs(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_get_faqs(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support", "viewer"}, username, password)
     with get_db() as conn:
-        rows = conn.execute("SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC").fetchall()
+        rows = conn.execute(
+            "SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC"
+        ).fetchall()
     return {"faqs": [dict(row) for row in rows]}
 
 
 @router.post("/admin/faqs")
-async def admin_add_faq(req: FaqRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def admin_add_faq(
+    req: FaqRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
     with get_db() as conn:
-        conn.execute("INSERT INTO faqs (question, answer) VALUES (?, ?)", (req.question, req.answer))
+        conn.execute(
+            "INSERT INTO faqs (question, answer) VALUES (?, ?)",
+            (req.question, req.answer),
+        )
     _write_admin_log("add_faq", {"question": req.question})
     return {"status": "created"}
 
 
 @router.delete("/admin/faqs/{faq_id}")
-async def admin_delete_faq(faq_id: int, username: str, password: str):
-    _require_roles(username, password, {"admin", "support"})
+async def admin_delete_faq(
+    faq_id: int,
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support"}, username, password)
     with get_db() as conn:
         conn.execute("DELETE FROM faqs WHERE id = ?", (faq_id,))
     _write_admin_log("delete_faq", {"faq_id": faq_id})
@@ -735,21 +816,43 @@ async def admin_delete_faq(faq_id: int, username: str, password: str):
 
 
 @router.get("/admin/logs")
-async def admin_logs(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_logs(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support", "viewer"}, username, password)
     with get_db() as conn:
-        rows = conn.execute("SELECT id, action, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 300").fetchall()
+        rows = conn.execute(
+            "SELECT id, action, details, created_at FROM admin_logs "
+            "ORDER BY id DESC LIMIT 300"
+        ).fetchall()
     return {"logs": [dict(row) for row in rows]}
 
 
 @router.post("/admin/users/{user_id}/reset-password")
-async def admin_reset_user_password(user_id: int, req: AdminResetPasswordRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def admin_reset_user_password(
+    user_id: int,
+    req: AdminResetPasswordRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
     with get_db() as conn:
-        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="user_not_found")
-        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(req.new_password), user_id))
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(req.new_password), user_id),
+        )
     _write_admin_log("reset_user_password", {"user_id": user_id})
     return {"status": "success"}
 
@@ -824,8 +927,16 @@ async def complete_password_reset(req: PasswordResetCompleteRequest):
 
 
 @router.post("/admin/messages/send")
-async def admin_send_message(req: AdminSendMessageRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def admin_send_message(
+    req: AdminSendMessageRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
 
     with get_db() as conn:
         if req.user_id:
