@@ -23,6 +23,11 @@ DEFAULTS = {
     "user_usdt_to_try_adjustment_pct": Decimal("-2.00"),
 }
 
+TRY_ADJUSTMENT_KEYS = (
+    "user_tl_buy_adjustment_pct",
+    "user_tl_sell_adjustment_pct",
+)
+
 
 def _parse_pct(raw: object, key: str) -> Decimal:
     try:
@@ -65,6 +70,38 @@ def load_shared_adjustments(db_path: Path | None = None) -> dict[str, Decimal]:
     return found
 
 
+def load_try_adjustments(db_path: Path | None = None) -> dict[str, Decimal]:
+    """Load only the two TRY/Toman adjustments used by the canonical TRY quote."""
+
+    path = db_path or Path(
+        os.environ.get("KIANI_PRICING_DB_PATH", str(DEFAULT_PRICING_DB))
+    ).expanduser()
+    if not path.is_file():
+        raise RuntimeError(f"Kiani pricing database is missing: {path}")
+
+    try:
+        connection = sqlite3.connect(path, timeout=3)
+        try:
+            connection.execute("PRAGMA busy_timeout = 3000")
+            rows = connection.execute(
+                "SELECT key, value FROM pricing_settings WHERE key IN (?, ?)",
+                TRY_ADJUSTMENT_KEYS,
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Could not read Kiani pricing database: {exc}") from exc
+
+    found = {str(key): _parse_pct(value, str(key)) for key, value in rows}
+    missing = [key for key in TRY_ADJUSTMENT_KEYS if key not in found]
+    if missing:
+        raise RuntimeError(
+            "Kiani pricing database is missing required TRY settings: "
+            + ", ".join(missing)
+        )
+    return found
+
+
 def fetch_btcturk_usdt_try(
     url: str = BTCTURK_USDTTRY_URL,
     timeout: int = 15,
@@ -102,6 +139,31 @@ def _factor(adjustment_pct: Decimal) -> Decimal:
 
 def _round_10(value: Decimal) -> Decimal:
     return value.quantize(Decimal("1E1"), rounding=ROUND_HALF_UP)
+
+
+def calculate_kiani_try_rates(
+    market_usdt_toman: Decimal,
+    market_usdt_try: Decimal,
+    adjustments: dict[str, Decimal],
+) -> dict[str, Decimal]:
+    """Calculate only Toman↔TRY customer quotes with channel semantics."""
+
+    if market_usdt_toman <= 0 or market_usdt_try <= 0:
+        raise ValueError("Market prices must be positive")
+
+    missing = sorted(set(TRY_ADJUSTMENT_KEYS) - set(adjustments))
+    if missing:
+        raise ValueError("Missing Kiani TRY adjustments: " + ", ".join(missing))
+
+    base_try_toman = market_usdt_toman / market_usdt_try
+    return {
+        "buy_lira": _round_10(
+            base_try_toman * _factor(adjustments["user_tl_buy_adjustment_pct"])
+        ),
+        "sell_lira": _round_10(
+            base_try_toman * _factor(adjustments["user_tl_sell_adjustment_pct"])
+        ),
+    }
 
 
 def calculate_kiani_rates(
