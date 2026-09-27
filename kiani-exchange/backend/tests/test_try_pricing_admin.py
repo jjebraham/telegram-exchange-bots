@@ -46,7 +46,7 @@ class TryPricingAdminTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False), patch.object(
             pricing, "_write_admin_log"
         ):
-            result = asyncio.run(pricing.admin_update_try_pricing(request))
+            result = asyncio.run(pricing.admin_update_try_pricing(request, session=None))
 
         self.assertEqual(result["status"], "success")
         with sqlite3.connect(db) as connection:
@@ -74,7 +74,7 @@ class TryPricingAdminTests(unittest.TestCase):
 
         with patch.dict(os.environ, env, clear=False):
             with self.assertRaises(HTTPException) as caught:
-                asyncio.run(pricing.admin_update_try_pricing(request))
+                asyncio.run(pricing.admin_update_try_pricing(request, session=None))
 
         self.assertEqual(caught.exception.status_code, 400)
 
