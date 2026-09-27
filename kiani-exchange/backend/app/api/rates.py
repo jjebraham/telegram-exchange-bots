@@ -3,7 +3,10 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, HTTPException
 
-from ..canonical_try_rates import get_canonical_try_rates
+from ..canonical_try_rates import (
+    get_canonical_hawala_try_rate,
+    get_canonical_try_rates,
+)
 from ..price_cache import price_cache
 
 router = APIRouter()
@@ -43,6 +46,26 @@ def _legacy_non_try_rates(usdt_irr: object, usdt_try: object) -> dict[str, float
     }
 
 
+async def _canonical_hawala_try_payload():
+    try:
+        result = await asyncio.to_thread(get_canonical_hawala_try_rate)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to fetch canonical Hawala TRY rate: {type(exc).__name__}",
+        ) from exc
+
+    return {
+        "hawala_try": int(result["hawala_try"]),
+        "adjustment_pct": str(result["adjustment_pct"]),
+        "market_usdt_toman": str(result["market_usdt_toman"]),
+        "market_usdt_try": str(result["market_usdt_try"]),
+        "source_count": result["source_count"],
+        "market_age_seconds": round(float(result["market_age_seconds"]), 3),
+        "source": "channel-hybrid-usdt+btcturk",
+    }
+
+
 async def _canonical_try_payload():
     try:
         result = await asyncio.to_thread(get_canonical_try_rates)
@@ -72,6 +95,13 @@ async def get_try_rates():
     return {"rates": await _canonical_try_payload()}
 
 
+@router.get("/rates/hawala-try")
+async def get_hawala_try_rate():
+    """Canonical Hawala TRY/Toman payout using the shared Hawala adjustment."""
+
+    return {"rates": await _canonical_hawala_try_payload()}
+
+
 @router.get("/rates/current")
 async def get_current_rates():
     try:
@@ -84,6 +114,7 @@ async def get_current_rates():
         )
 
     canonical_try = await _canonical_try_payload()
+    canonical_hawala_try = await _canonical_hawala_try_payload()
     compatibility = _legacy_non_try_rates(usdt_irr, usdt_try)
     return {
         "rates": {
@@ -99,5 +130,8 @@ async def get_current_rates():
             "TRY_BUY_ADJUSTMENT_PCT": canonical_try["buy_adjustment_pct"],
             "TRY_SELL_ADJUSTMENT_PCT": canonical_try["sell_adjustment_pct"],
             "TRY_RATE_SOURCE": canonical_try["source"],
+            "HAWALA_TRY_TOMAN": canonical_hawala_try["hawala_try"],
+            "HAWALA_TRY_ADJUSTMENT_PCT": canonical_hawala_try["adjustment_pct"],
+            "HAWALA_TRY_RATE_SOURCE": canonical_hawala_try["source"],
         }
     }
