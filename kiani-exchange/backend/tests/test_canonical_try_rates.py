@@ -72,5 +72,49 @@ class CanonicalTryRatesTests(unittest.TestCase):
         )
 
 
+    def test_hawala_uses_same_cached_market_snapshot(self):
+        snapshot = SimpleNamespace(
+            quotes=[
+                SimpleNamespace(buy_toman=Decimal("235000")),
+                SimpleNamespace(buy_toman=Decimal("236000")),
+                SimpleNamespace(buy_toman=Decimal("237000")),
+            ]
+        )
+
+        with (
+            patch.object(
+                canonical,
+                "collect_hybrid_usdt_snapshot",
+                return_value=snapshot,
+            ) as collect_mock,
+            patch.object(
+                canonical,
+                "fetch_btcturk_usdt_try",
+                return_value=Decimal("49"),
+            ) as btcturk_mock,
+            patch.object(
+                canonical,
+                "load_try_adjustments",
+                return_value={
+                    "user_tl_buy_adjustment_pct": Decimal("1"),
+                    "user_tl_sell_adjustment_pct": Decimal("-2"),
+                },
+            ),
+            patch.object(
+                canonical,
+                "load_hawala_try_adjustment",
+                return_value=Decimal("-2"),
+            ),
+        ):
+            try_rates = canonical.get_canonical_try_rates()
+            hawala = canonical.get_canonical_hawala_try_rate()
+
+        self.assertEqual(collect_mock.call_count, 1)
+        self.assertEqual(btcturk_mock.call_count, 1)
+        self.assertEqual(hawala["hawala_try"], try_rates["sell_lira"])
+        self.assertEqual(hawala["adjustment_pct"], Decimal("-2"))
+
+
+
 if __name__ == "__main__":
     unittest.main()
