@@ -5,6 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
+from ..admin_auth import optional_admin_session
 from ..canonical_try_rates import get_canonical_try_rates
 from ..database import get_db
 from ..auth import get_current_user_id
@@ -55,8 +56,8 @@ class NotifyTransactionRequest(BaseModel):
 
 
 class StatusUpdateRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     status: str
     receipt_photo_url: Optional[str] = None
     receipt_description: Optional[str] = None
@@ -103,6 +104,22 @@ def _require_roles(username: str, password: str, allowed: set[str]) -> str:
     if role not in allowed:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return role
+
+
+def _require_admin_access(
+    session: dict[str, str] | None,
+    allowed: set[str],
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
+    if session is not None:
+        role = session.get("role")
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="admin_role_forbidden")
+        return str(role)
+    if username is None or password is None:
+        raise HTTPException(status_code=401, detail="admin_auth_required")
+    return _require_roles(username, password, allowed)
 
 
 @router.post("/transactions")
@@ -300,8 +317,17 @@ async def cancel_transaction(
 
 
 @router.post("/admin/transactions/{reference_number}/update-status")
-async def update_transaction_status(reference_number: str, req: StatusUpdateRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def update_transaction_status(
+    reference_number: str,
+    req: StatusUpdateRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
 
     valid_statuses = [
         "Pending",
@@ -341,8 +367,17 @@ async def update_transaction_status(reference_number: str, req: StatusUpdateRequ
 
 
 @router.get("/admin/transactions")
-async def admin_list_transactions(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_list_transactions(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support", "viewer"},
+        username,
+        password,
+    )
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, user_name, user_phone, exchange_pair, exchange_type, send_amount,
@@ -353,8 +388,17 @@ async def admin_list_transactions(username: str, password: str):
 
 
 @router.get("/admin/reports")
-async def admin_reports(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_reports(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support", "viewer"},
+        username,
+        password,
+    )
     with get_db() as conn:
         totals = conn.execute(
             """SELECT COUNT(*) AS total_orders,
