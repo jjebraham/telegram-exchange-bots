@@ -28,6 +28,8 @@ TRY_ADJUSTMENT_KEYS = (
     "user_tl_sell_adjustment_pct",
 )
 
+HAWALA_TRY_ADJUSTMENT_KEY = "hawala_try_adjustment_pct"
+
 
 def _parse_pct(raw: object, key: str) -> Decimal:
     try:
@@ -102,6 +104,36 @@ def load_try_adjustments(db_path: Path | None = None) -> dict[str, Decimal]:
     return found
 
 
+def load_hawala_try_adjustment(db_path: Path | None = None) -> Decimal:
+    """Load the Hawala TRY percentage from the shared pricing database."""
+
+    path = db_path or Path(
+        os.environ.get("KIANI_PRICING_DB_PATH", str(DEFAULT_PRICING_DB))
+    ).expanduser()
+    if not path.is_file():
+        raise RuntimeError(f"Kiani pricing database is missing: {path}")
+
+    try:
+        connection = sqlite3.connect(path, timeout=3)
+        try:
+            connection.execute("PRAGMA busy_timeout = 3000")
+            row = connection.execute(
+                "SELECT value FROM pricing_settings WHERE key = ?",
+                (HAWALA_TRY_ADJUSTMENT_KEY,),
+            ).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Could not read Kiani pricing database: {exc}") from exc
+
+    if row is None:
+        raise RuntimeError(
+            "Kiani pricing database is missing required Hawala TRY setting: "
+            + HAWALA_TRY_ADJUSTMENT_KEY
+        )
+    return _parse_pct(row[0], HAWALA_TRY_ADJUSTMENT_KEY)
+
+
 def fetch_btcturk_usdt_try(
     url: str = BTCTURK_USDTTRY_URL,
     timeout: int = 15,
@@ -164,6 +196,20 @@ def calculate_kiani_try_rates(
             base_try_toman * _factor(adjustments["user_tl_sell_adjustment_pct"])
         ),
     }
+
+
+def calculate_hawala_try_rate(
+    market_usdt_toman: Decimal,
+    market_usdt_try: Decimal,
+    adjustment_pct: Decimal,
+) -> Decimal:
+    """Calculate the Hawala TRY/Toman payout from the canonical market base."""
+
+    if market_usdt_toman <= 0 or market_usdt_try <= 0:
+        raise ValueError("Market prices must be positive")
+
+    base_try_toman = market_usdt_toman / market_usdt_try
+    return _round_10(base_try_toman * _factor(adjustment_pct))
 
 
 def calculate_kiani_rates(
