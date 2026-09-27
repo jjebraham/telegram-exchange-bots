@@ -30,6 +30,7 @@ from .admin_handlers import (
     cmd_verify,
 )
 from .config import Settings
+from .activation_campaigns import cmd_activation_preview, cmd_activation_report, on_activation_callback
 from .context import is_admin, services
 from .growth import (
     cmd_funnel_clear,
@@ -208,6 +209,7 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     app.add_handler(CallbackQueryHandler(on_promo_enter, pattern=r"^promo:enter:"))
     app.add_handler(CallbackQueryHandler(on_publish_promo_callback, pattern=r"^publishpromo:"))
+    app.add_handler(CallbackQueryHandler(on_activation_callback, pattern=r"^activate:"))
     app.add_handler(CallbackQueryHandler(on_referral_check_and_welcome, pattern=r"^ref:check:"))
     app.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
@@ -221,6 +223,8 @@ def create_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("funnel", cmd_funnel_clear))
     app.add_handler(CommandHandler("trend", cmd_trend))
     app.add_handler(CommandHandler("sources", cmd_sources))
+    app.add_handler(CommandHandler("activation_preview", cmd_activation_preview))
+    app.add_handler(CommandHandler("activation_report", cmd_activation_report))
     app.add_handler(CommandHandler("owned_sources", cmd_owned_sources))
     app.add_handler(CommandHandler("launch_mark", cmd_launch_mark))
     app.add_handler(CommandHandler("launch_report", cmd_launch_report))

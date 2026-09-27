@@ -14,7 +14,7 @@ from referral_core import Campaign, ReferralDB
 from .config import Settings, extract_status_change, hours_label, is_configured_channel, telegram_membership
 from .context import services
 from .ui import (
-    back_keyboard, leaderboard_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
+    back_keyboard, invitation_share_url, leaderboard_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
     next_ticket_progress, referrer_share_button_text,
     render_home, render_prizes, render_referrals, render_rules, render_stats, render_top,
     render_transparency,
@@ -585,12 +585,19 @@ async def qualification_pass(application: Application) -> None:
             )
             send_kwargs = {"parse_mode": ParseMode.HTML}
             if first_ticket_nudge:
+                payload = db.get_invite_link(campaign.id, referrer_id) if hasattr(db, "get_invite_link") else None
+                username = getattr(application.bot, "username", None)
+                personal_link = (
+                    f"https://t.me/{username}?start={payload}"
+                    if username and payload and payload.startswith(f"ref_{campaign.id}_") else None
+                )
                 send_kwargs["reply_markup"] = InlineKeyboardMarkup([[
                     InlineKeyboardButton(
                         referrer_share_button_text(
                             campaign, counts, "📤 دعوت از دوستان"
                         ),
-                        callback_data="menu:link",
+                        **({"url": invitation_share_url(personal_link, campaign)}
+                           if personal_link else {"callback_data": "menu:link"}),
                     )
                 ]])
             await application.bot.send_message(

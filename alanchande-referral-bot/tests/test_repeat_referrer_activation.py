@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlparse
 
 from telegram_bot.ui import main_keyboard, next_ticket_progress, render_home
 from telegram_bot.user_handlers import qualification_pass
@@ -19,6 +20,7 @@ def campaign():
         invites_per_point=2,
         min_stay_hours=168,
         max_points=20,
+        num_winners=5,
         final_qualification_cutoff=now + timedelta(days=20),
     )
 
@@ -127,6 +129,21 @@ class FirstTicketNudgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(button.callback_data, "menu:link")
         self.assertEqual(button.text, "📤 دعوت ۲ دوست دیگر")
         self.assertIn((6, 42, "first_ticket_nudge_sent"), db.events)
+
+    async def test_first_ticket_nudge_directly_shares_the_personal_campaign_link(self):
+        db = FakeQualificationDB(campaign())
+        db.get_invite_link = lambda campaign_id, user_id: "ref_6_personal-token"
+        bot = SimpleNamespace(username="TestBot", send_message=AsyncMock())
+        application = SimpleNamespace(bot_data={"db": db}, bot=bot)
+
+        await qualification_pass(application)
+
+        nudge = next(call for call in bot.send_message.await_args_list
+                     if "اولین بلیت تأییدشده‌ات ثبت شد" in call.args[1])
+        button = nudge.kwargs["reply_markup"].inline_keyboard[0][0]
+        query = parse_qs(urlparse(button.url).query)
+        self.assertEqual(query["url"], ["https://t.me/TestBot?start=ref_6_personal-token"])
+        self.assertIn("مسابقه", query["text"][0])
 
     def test_existing_eligible_pending_referrals_are_counted_before_new_cta(self):
         active_campaign = campaign()

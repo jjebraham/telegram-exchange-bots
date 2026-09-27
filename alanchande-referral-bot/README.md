@@ -82,6 +82,27 @@ does not establish which particular post caused a start. Existing tracking and
 campaign rules are unchanged. Startup adds only the `growth_launches` analytics
 table; no existing records are rewritten.
 
+### One-time referral activation
+
+Admins can preview two one-time audiences in a private bot chat:
+
+```text
+/activation_preview next_ticket
+/activation_preview first_friend
+```
+
+The first audience contains participants with exactly one confirmed ticket and
+explains how many active referrals remain before ticket two. The second contains
+referral-first participants whose personal link has had no tracked downstream
+activity for at least 24 hours. Each preview shows the personalized message and
+share button; the admin must press **Send to this group** to begin delivery.
+Each audience is frozen per campaign after its first confirmation. The bot checks
+eligibility again before each message and resumes only unsent recipients if a run
+is interrupted. `/activation_report [campaign_slug]` shows deliveries and
+post-delivery opens, joins, and ticket gains. Ticket gains can include older
+referrals maturing, so the report is observational rather than causal. Telegram
+does not expose native share completion.
+
 - Persistent random bot deep-link per participant/campaign: `https://t.me/Alanchandebot?start=ref_...`
 - First referrer is permanent inside a campaign.
 - No self-referral.
@@ -356,7 +377,13 @@ Do not run `.venv/bin/python bot.py` manually at the same time as Supervisor.
 ```bash
 cd /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot || exit 1
 
-git pull --ff-only origin feature/alanchande-referral-bot-20260914
+set -a
+source .env
+set +a
+BACKUP_DIR=/home/kianirad2020/alanchande-backups \
+  .venv/bin/python scripts/backup_db.py
+
+git pull --ff-only origin feature/alanchande-referral-activation-v2
 
 .venv/bin/python -m unittest discover -s tests -v
 
@@ -372,4 +399,4 @@ The DB migration runs automatically during bot initialization and is additive.
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-GitHub Actions compiles the project and runs the full test suite on Python 3.10 and 3.12.
+GitHub Actions compiles the bot and runs its full test suite on Python 3.11 and 3.12.

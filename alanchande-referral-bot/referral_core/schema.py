@@ -165,4 +165,27 @@ CREATE TABLE IF NOT EXISTS growth_launches (
     baseline_json TEXT NOT NULL,
     PRIMARY KEY(campaign_id, label)
 );
+CREATE TABLE IF NOT EXISTS activation_runs (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    segment TEXT NOT NULL CHECK(segment IN ('next_ticket','first_friend')),
+    admin_id INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    PRIMARY KEY(campaign_id, segment)
+);
+CREATE TABLE IF NOT EXISTS activation_recipients (
+    campaign_id INTEGER NOT NULL,
+    segment TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(state IN ('pending','sending','sent','failed','skipped','unknown')),
+    attempted_at TEXT,
+    sent_at TEXT,
+    baseline_json TEXT NOT NULL DEFAULT '{}',
+    message_id INTEGER,
+    reason TEXT,
+    PRIMARY KEY(campaign_id, segment, user_id),
+    FOREIGN KEY(campaign_id, segment) REFERENCES activation_runs(campaign_id, segment)
+        ON DELETE CASCADE
+);
 """
