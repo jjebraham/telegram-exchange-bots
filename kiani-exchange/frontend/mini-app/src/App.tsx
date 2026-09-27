@@ -254,14 +254,16 @@ function App() {
       const derived = deriveRates(usdt_irr, usdt_try);
       const canonicalBuy = Number(data.rates.TRY_BUY_TOMAN);
       const canonicalSell = Number(data.rates.TRY_SELL_TOMAN);
+      if (
+        !Number.isFinite(canonicalBuy) || canonicalBuy <= 0 ||
+        !Number.isFinite(canonicalSell) || canonicalSell <= 0
+      ) {
+        throw new Error('Canonical TRY rates are unavailable');
+      }
       setRates({
         ...derived,
-        buy_lira: Number.isFinite(canonicalBuy) && canonicalBuy > 0
-          ? canonicalBuy
-          : derived.buy_lira,
-        sell_lira: Number.isFinite(canonicalSell) && canonicalSell > 0
-          ? canonicalSell
-          : derived.sell_lira,
+        buy_lira: canonicalBuy,
+        sell_lira: canonicalSell,
       });
     } catch (error) {
       console.error('Rate fetch error:', error);
@@ -1861,6 +1863,7 @@ function AdminPanelPage() {
   const [tryBuyPct, setTryBuyPct] = useState('');
   const [trySellPct, setTrySellPct] = useState('');
   const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingCanEdit, setPricingCanEdit] = useState(false);
 
   const loadAll = async () => {
     const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
@@ -1881,6 +1884,7 @@ function AdminPanelPage() {
       const pricingData = await p.json();
       setTryBuyPct(String(pricingData.pricing?.buy_lira?.adjustment_pct ?? ''));
       setTrySellPct(String(pricingData.pricing?.sell_lira?.adjustment_pct ?? ''));
+      setPricingCanEdit(Boolean(pricingData.can_edit));
     }
   };
 
@@ -1934,15 +1938,15 @@ function AdminPanelPage() {
         <div className="grid md:grid-cols-2 gap-3">
           <label className="text-sm">
             <span className="block mb-1">خرید لیر از ما — Toman → TRY (%)</span>
-            <input className="w-full border p-2 rounded" inputMode="decimal" value={tryBuyPct} onChange={(e)=>setTryBuyPct(e.target.value)} />
+            <input className="w-full border p-2 rounded disabled:bg-gray-100" disabled={!pricingCanEdit} inputMode="decimal" value={tryBuyPct} onChange={(e)=>setTryBuyPct(e.target.value)} />
           </label>
           <label className="text-sm">
             <span className="block mb-1">فروش لیر به ما — TRY → Toman (%)</span>
-            <input className="w-full border p-2 rounded" inputMode="decimal" value={trySellPct} onChange={(e)=>setTrySellPct(e.target.value)} />
+            <input className="w-full border p-2 rounded disabled:bg-gray-100" disabled={!pricingCanEdit} inputMode="decimal" value={trySellPct} onChange={(e)=>setTrySellPct(e.target.value)} />
           </label>
         </div>
         <div className="text-xs text-gray-500 mt-2">محدوده مجاز: ‎-50% تا +50%. مقدار مثبت نرخ را بالا و مقدار منفی نرخ را پایین می‌برد.</div>
-        <button onClick={saveTryPricing} disabled={pricingSaving} className="mt-3 bg-indigo-600 text-white px-4 py-2 rounded disabled:opacity-50">
+        <button onClick={saveTryPricing} disabled={pricingSaving || !pricingCanEdit} className="mt-3 bg-indigo-600 text-white px-4 py-2 rounded disabled:opacity-50">
           {pricingSaving ? 'در حال ذخیره...' : 'ذخیره درصد نرخ لیر'}
         </button>
       </div>
