@@ -1,8 +1,7 @@
-"""Run the existing interactive bot with live pricing percentages.
+"""Run the existing interactive bot with canonical Toman↔TRY pricing.
 
-The production bot file is intentionally left unchanged. This entry point reads it,
-strictly replaces the reviewed hard-coded pricing expressions in memory, compiles
-the transformed source, and then runs its async ``main`` function.
+Only the four TRY/Toman handlers are patched in memory. USDT and TRY/USDT
+conversion handlers are intentionally left unchanged.
 """
 
 from __future__ import annotations
