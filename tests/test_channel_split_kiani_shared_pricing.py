@@ -10,8 +10,10 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 
 from kiani_shared_pricing import (  # noqa: E402
     DEFAULTS,
+    calculate_hawala_try_rate,
     calculate_kiani_rates,
     calculate_kiani_try_rates,
+    load_hawala_try_adjustment,
     load_shared_adjustments,
     load_try_adjustments,
 )
@@ -104,6 +106,64 @@ class KianiSharedPricingTests(unittest.TestCase):
         self.assertEqual(try_only["sell_lira"], full["sell_lira"])
         self.assertEqual(try_only["buy_lira"] % Decimal("10"), Decimal("0"))
         self.assertEqual(try_only["sell_lira"] % Decimal("10"), Decimal("0"))
+
+
+
+    def test_hawala_try_uses_same_base_and_rounding_as_sell_rate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "pricing.sqlite3"
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "CREATE TABLE pricing_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.executemany(
+                "INSERT INTO pricing_settings (key, value) VALUES (?, ?)",
+                [
+                    ("user_tl_buy_adjustment_pct", "1"),
+                    ("user_tl_sell_adjustment_pct", "-2"),
+                    ("hawala_try_adjustment_pct", "-2"),
+                ],
+            )
+            connection.commit()
+            connection.close()
+
+            try_adjustments = load_try_adjustments(db)
+            hawala_adjustment = load_hawala_try_adjustment(db)
+
+        market_usdt_toman = Decimal("235656")
+        market_usdt_try = Decimal("48.947")
+
+        try_rates = calculate_kiani_try_rates(
+            market_usdt_toman,
+            market_usdt_try,
+            try_adjustments,
+        )
+        hawala_rate = calculate_hawala_try_rate(
+            market_usdt_toman,
+            market_usdt_try,
+            hawala_adjustment,
+        )
+
+        self.assertEqual(hawala_adjustment, Decimal("-2"))
+        self.assertEqual(hawala_rate, try_rates["sell_lira"])
+        self.assertEqual(hawala_rate % Decimal("10"), Decimal("0"))
+
+    def test_hawala_try_setting_remains_independent(self):
+        base_toman = Decimal("235656")
+        usdt_try = Decimal("48.947")
+
+        sell_rate = calculate_hawala_try_rate(
+            base_toman,
+            usdt_try,
+            Decimal("-2"),
+        )
+        hawala_rate = calculate_hawala_try_rate(
+            base_toman,
+            usdt_try,
+            Decimal("-3"),
+        )
+
+        self.assertNotEqual(hawala_rate, sell_rate)
 
 
 
