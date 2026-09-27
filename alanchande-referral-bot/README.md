@@ -79,8 +79,8 @@ These are ongoing cohorts, not fixed 24-hour acquisition windows. Overlapping
 markers can share users and must not be added together. Reports use exact
 `referral_open_received` events, not historical inferred opens. Source attribution
 does not establish which particular post caused a start. Existing tracking and
-campaign rules are unchanged. Startup adds only the `growth_launches` analytics
-table; no existing records are rewritten.
+campaign rules are unchanged. Startup creates the `growth_launches` analytics
+table and two additive activation-ledger tables; existing records are not rewritten.
 
 ### One-time referral activation
 
@@ -400,3 +400,4 @@ The DB migration runs automatically during bot initialization and is additive.
 ```
 
 GitHub Actions compiles the bot and runs its full test suite on Python 3.11 and 3.12.
+
