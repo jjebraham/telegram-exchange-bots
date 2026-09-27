@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch, Mock
+from types import SimpleNamespace
+from unittest.mock import patch, Mock, MagicMock
 import requests
 
 from sports_monitor.model import Product, money, canonical, normalize_sizes, qualifies, change_reason
@@ -11,10 +12,7 @@ from sports_monitor.parsing import documents, parse_product, discover, ParseErro
 from sports_monitor.state import State
 from sports_monitor.telegram import batches, item, send, DeliveryError
 from sports_monitor.network import Client, FetchError
-from sports_monitor.runner import fetch_url, lock, scan_store
-from sports_monitor.ayakapp import (discover_products as discover_ayakapp,
-                                    listing_url as ayakapp_listing_url,
-                                    parse_product as parse_ayakapp_product)
+from sports_monitor.runner import fetch_url, lock, scan_store, run
 from sports_monitor.stores import STORES
 
 NOW = 1_790_443_000
@@ -158,42 +156,6 @@ class ParserTests(unittest.TestCase):
         html = '<script type="application/json">'+json.dumps(data)+'</script>'
         with self.assertRaises(ParseError): parse_product('barcin', 'https://www.barcin.com/unrelated', html, NOW)
 
-    def test_ayakapp_discovers_only_the_requested_retailer(self):
-        html = self.fixture('ayakapp-listing.html')
-        urls = discover_ayakapp('sneaks', 'https://ayakapp.com/firmalar/sneaksup', html)
-        self.assertEqual(len(urls), 1)
-        self.assertIn('/sneaksup-nike-pegasus', urls[0])
-        self.assertEqual(ayakapp_listing_url('adidas'), 'https://ayakapp.com/firmalar/adidas')
-        with self.assertRaises(ValueError):
-            discover_ayakapp('sneaks', 'https://evil.example/firmalar/sneaksup', html)
-
-    def test_ayakapp_jsonld_prices_sizes_link_and_running_filter(self):
-        url = ('https://ayakapp.com/urunler/adidas/ultraboost-5/varyasyonlar/'
-               'id8819/adidas-adidas-id8819')
-        p = parse_ayakapp_product('adidas', url, self.fixture('ayakapp-product.html'), NOW)
-        self.assertEqual(p.original, 849900)
-        self.assertEqual(p.sale, 399900)
-        self.assertEqual(p.sizes, ('40', '40.5', '42'))
-        self.assertEqual(p.url, 'https://www.adidas.com.tr/tr/ultraboost-5-ayakkabi/ID8819.html')
-        self.assertEqual(p.verify_url, url)
-        self.assertEqual(p.source, 'ayakapp')
-        self.assertTrue(p.running_shoe)
-
-    def test_ayakapp_stale_or_unverifiable_data_fails_closed(self):
-        url = ('https://ayakapp.com/urunler/adidas/ultraboost-5/varyasyonlar/'
-               'id8819/adidas-adidas-id8819')
-        html = self.fixture('ayakapp-product.html')
-        with self.assertRaisesRegex(ValueError, 'older than 24 hours|old or imprecise'):
-            parse_ayakapp_product('adidas', url, html.replace('Bugün Güncelleme', '3 hafta önce Güncelleme'), NOW)
-        with self.assertRaisesRegex(ValueError, 'different retailer'):
-            parse_ayakapp_product('yali', url, html, NOW)
-        with self.assertRaisesRegex(ValueError, 'Missing direct retailer product link'):
-            parse_ayakapp_product('adidas', url,
-                                  html.replace('www.adidas.com.tr', 'evil.example'), NOW)
-        with self.assertRaisesRegex(ValueError, 'discount badge does not match'):
-            parse_ayakapp_product('adidas', url,
-                                  html.replace('₺4.500 tasarruf', '₺3.500 tasarruf'), NOW)
-
 
 class StateTests(unittest.TestCase):
     def setUp(self): self.state = State(':memory:')
@@ -264,6 +226,30 @@ class StateTests(unittest.TestCase):
         self.state.observe(product(observed_at=NOW))
         self.assertEqual(self.state.history(product(), NOW), (50000, 1))
 
+    def test_legacy_ayakapp_rows_do_not_qualify_or_drive_repost_history(self):
+        legacy = product(store='barcin', url='https://www.barcin.com/shoe',
+                         original=100000, sale=80000, source='ayakapp',
+                         verify_url='https://ayakapp.com/urunler/shoe')
+        for offset, sale in enumerate((80000, 85000, 90000), start=1):
+            self.state.observe(replace(legacy, sale=sale, observed_at=NOW-offset))
+        current = replace(legacy, sale=70000, observed_at=NOW, source='retailer',
+                          verify_url=None)
+        self.assertEqual(self.state.history(current, NOW), (None, 0))
+        self.assertIsNone(self.state.previous(current.key))
+        self.assertIsNone(self.state.reason(current, '@test', NOW))
+        # Retain legacy URLs for discovery/deduplication so migration does not
+        # discard product identity history.
+        self.assertIn(legacy.url, self.state.known_urls('barcin'))
+
+    def test_legacy_ayakapp_stock_does_not_trigger_restock_repost(self):
+        legacy = product(source='ayakapp', verify_url='https://ayakapp.com/urunler/shoe',
+                         sizes=('40', '41'))
+        self.posted(legacy)
+        self.state.observe(replace(legacy, sizes=(), observed_at=NOW+1))
+        current = replace(legacy, source='retailer', verify_url=None,
+                          sizes=('40', '41', '42'), observed_at=NOW+86401)
+        self.assertIsNone(self.state.reason(current, '@test', NOW+86401))
+
     def test_state_survives_restart(self):
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d)/'state.db')
@@ -282,9 +268,12 @@ class TelegramTests(unittest.TestCase):
         self.assertNotIn('rundiscountbot', text)
         self.assertLess(text.index('سایزهای'), text.index('🏪'))
 
-    def test_ayakapp_fallback_is_disclosed_in_persian(self):
-        text = item(product(source='ayakapp'), 'new')
-        self.assertIn('موجودی و قیمت طبق دادهٔ Ayakapp', text)
+    def test_legacy_third_party_rows_load_but_are_never_formatted(self):
+        legacy = product(source='ayakapp', verify_url='https://ayakapp.com/urunler/x')
+        self.assertEqual(Product.loads(legacy.dumps()).source, 'ayakapp')
+        with self.assertRaises(ValueError):
+            item(legacy, 'new')
+        self.assertNotIn('Ayakapp', item(product(), 'new'))
 
     def test_discount_percentage_is_rounded_to_match_store_badge(self):
         text = item(product(original=849900, sale=399900), 'new')
@@ -326,33 +315,134 @@ class RuntimeTests(unittest.TestCase):
     def test_format_keeps_page(self):
         self.assertEqual(fetch_url(STORES[0], 'https://www.barcin.com/outlet/?page=2'), 'https://www.barcin.com/outlet/?page=2&format=json')
 
-    def test_ayakapp_is_used_only_after_a_403_listing(self):
+    def store(self, key):
+        return next(s for s in STORES if s.key == key)
+
+    def test_403_challenge_is_blocked_with_no_fallback(self):
         primary = Mock()
-        primary.get.side_effect = FetchError('HTTP 403')
-        fallback = Mock()
-        page = 'https://ayakapp.com/firmalar/adidas'
-        product_url = ('https://ayakapp.com/urunler/adidas/ultraboost-5/varyasyonlar/'
-                       'id8819/adidas-adidas-id8819')
-        fallback.get.side_effect = [
-            (page, (FIXTURES / 'ayakapp-listing.html').read_text(encoding='utf-8')),
-            (product_url, (FIXTURES / 'ayakapp-product.html').read_text(encoding='utf-8')),
-        ]
-        with patch('sports_monitor.runner.Client', side_effect=[primary, fallback]):
-            products, report = scan_store(next(s for s in STORES if s.key == 'adidas'), [], 2, 10)
-        self.assertEqual(len(products), 1)
-        self.assertEqual(products[0].source, 'ayakapp')
-        self.assertEqual(report['primary_error']['error'], 'HTTP 403')
-        self.assertEqual(report['data_source'], 'ayakapp')
+        primary.get.side_effect = FetchError('HTTP 403 (Cloudflare challenge)', 403, True)
+        with patch('sports_monitor.runner.Client', return_value=primary) as client:
+            products, report = scan_store(self.store('sneaks'), [], 2, 10)
+        self.assertEqual(products, [])
+        self.assertEqual(client.call_count, 1)  # no second client, no other host
+        self.assertEqual(primary.get.call_count, 1)
+        self.assertEqual(report['status'], 'blocked')
+        self.assertTrue(report['errors'][0]['access_blocked'])
+        self.assertTrue(report['errors'][0]['challenge'])
+        self.assertNotIn('data_source', report)
+
+    def test_non_403_listing_error_is_degraded_not_blocked(self):
+        primary = Mock()
+        primary.get.side_effect = FetchError('HTTP 503', 503)
+        with patch('sports_monitor.runner.Client', return_value=primary) as client:
+            products, report = scan_store(self.store('adidas'), [], 2, 10)
+        self.assertEqual(products, [])
+        self.assertEqual(client.call_count, 1)
+        self.assertEqual(report['status'], 'degraded')
+
+    def test_block_during_product_fetch_stops_the_store(self):
+        primary = Mock()
+        primary.get.side_effect = [('https://www.sneaksup.com/sezon-sonu-indirimi', ''),
+                                   FetchError('HTTP 403', 403)]
+        links = ['https://www.sneaksup.com/a-p-1', 'https://www.sneaksup.com/b-p-2',
+                 'https://www.sneaksup.com/c-p-3']
+        with patch('sports_monitor.runner.Client', return_value=primary), \
+             patch('sports_monitor.runner.discover', return_value=(links, [])):
+            products, report = scan_store(self.store('sneaks'), [], 2, 10)
+        self.assertEqual(primary.get.call_count, 2)  # listing + first product only
+        self.assertEqual(report['status'], 'blocked')
         self.assertTrue(report['limited'])
 
-    def test_ayakapp_fallback_is_not_used_for_non_403_errors(self):
-        primary = Mock()
-        primary.get.side_effect = FetchError('HTTP 503')
-        with patch('sports_monitor.runner.Client', return_value=primary) as client:
-            products, report = scan_store(next(s for s in STORES if s.key == 'adidas'), [], 2, 10)
-        self.assertEqual(products, [])
-        self.assertNotIn('data_source', report)
-        self.assertEqual(client.call_count, 1)
+    def test_yali_is_disabled_and_never_fetched(self):
+        yali = self.store('yali')
+        self.assertFalse(yali.enabled)
+        self.assertTrue(yali.disabled_reason)
+        with patch('sports_monitor.runner.Client') as client:
+            products, report = scan_store(yali, [], 2, 10)
+        client.assert_not_called()
+        self.assertEqual((products, report['status']), ([], 'disabled'))
+
+    def test_only_yali_is_disabled(self):
+        self.assertEqual([s.key for s in STORES if not s.enabled], ['yali'])
+
+    def test_run_reports_disabled_store_without_fetching_or_degrading(self):
+        with tempfile.TemporaryDirectory() as d, patch('sports_monitor.runner.Client') as client:
+            args = SimpleNamespace(publish=False, db=str(Path(d) / 'db.sqlite3'),
+                                   report=str(Path(d) / 'report.json'), stores=['yali'],
+                                   max_pages=2, max_products=10, top=10, group_size=7)
+            self.assertEqual(run(args), 0)
+            report = json.loads(Path(args.report).read_text(encoding='utf-8'))
+        client.assert_not_called()
+        self.assertEqual(report['stores'][0]['status'], 'disabled')
+        self.assertEqual(report['messages'], [])
+
+    def test_client_detects_cloudflare_challenge_without_retry(self):
+        for status in (200, 403):
+            with self.subTest(status=status):
+                c = Client('https://www.sneaksup.com', delay=0)
+                response = MagicMock(status_code=status, headers={'cf-mitigated': 'challenge', 'server': 'cloudflare'})
+                response.__enter__.return_value = response
+                with patch.object(c.session, 'get', return_value=response) as get:
+                    with self.assertRaises(FetchError) as caught:
+                        c.get('https://www.sneaksup.com/sezon-sonu-indirimi')
+                self.assertEqual(get.call_count, 1)
+                self.assertEqual(caught.exception.status, status)
+                self.assertTrue(caught.exception.challenge)
+                self.assertTrue(caught.exception.access_blocked)
+                c.session.close()
+
+    def test_scan_blocked_mid_product_fetch_has_no_finalist_rechecks(self):
+        first = product(store='sneaks', sku='one', url='https://www.sneaksup.com/one')
+        state = Mock()
+        state.known_urls.return_value = []
+        state.reason.return_value = 'new'
+        blocked_report = {'store': 'sneaks', 'status': 'blocked', 'errors': [],
+                          'limited': True, 'listing_pages': 1, 'discovered': 3, 'parsed': 1}
+        with tempfile.TemporaryDirectory() as d, \
+                patch('sports_monitor.runner.State', return_value=state), \
+                patch('sports_monitor.runner.scan_store', return_value=([first], blocked_report)), \
+                patch('sports_monitor.runner.Client') as client:
+            args = SimpleNamespace(publish=False, db=str(Path(d) / 'db.sqlite3'),
+                                   report=str(Path(d) / 'report.json'), stores=['sneaks'],
+                                   max_pages=2, max_products=10, top=10, group_size=7)
+            self.assertEqual(run(args), 2)
+            report = json.loads(Path(args.report).read_text(encoding='utf-8'))
+        client.assert_not_called()
+        state.reason.assert_not_called()
+        state.observe.assert_not_called()
+        self.assertEqual(report['eligible'], 0)
+        self.assertEqual(report['selected'], 0)
+        self.assertEqual(report['stores'][0]['status'], 'blocked')
+
+    def test_recheck_block_stops_later_requests_and_discards_store_finalists(self):
+        products = [product(store='sneaks', sku=str(n),
+                            url=f'https://www.sneaksup.com/product-{n}') for n in range(3)]
+        state = Mock()
+        state.known_urls.return_value = []
+        state.reason.return_value = 'new'
+        first_client = Mock()
+        first_client.get.return_value = (products[0].url, '<html/>')
+        second_client = Mock()
+        second_client.get.side_effect = FetchError('HTTP 403', 403)
+        clients = [first_client, second_client]
+        store_report = {'store': 'sneaks', 'status': 'ok', 'errors': [], 'limited': False,
+                        'listing_pages': 1, 'discovered': 3, 'parsed': 3}
+        with tempfile.TemporaryDirectory() as d, \
+                patch('sports_monitor.runner.State', return_value=state), \
+                patch('sports_monitor.runner.scan_store', return_value=(products, store_report)), \
+                patch('sports_monitor.runner.Client', side_effect=clients) as client, \
+                patch('sports_monitor.runner.parse_product', return_value=products[0]):
+            args = SimpleNamespace(publish=False, db=str(Path(d) / 'db.sqlite3'),
+                                   report=str(Path(d) / 'report.json'), stores=['sneaks'],
+                                   max_pages=2, max_products=10, top=10, group_size=7)
+            self.assertEqual(run(args), 2)
+            report = json.loads(Path(args.report).read_text(encoding='utf-8'))
+        self.assertEqual(client.call_count, 2)
+        self.assertEqual(first_client.get.call_count, 1)
+        self.assertEqual(second_client.get.call_count, 1)
+        self.assertEqual(report['stores'][0]['status'], 'blocked')
+        self.assertEqual(report['selected'], 0)
+        self.assertTrue(report['recheck_errors'][0]['access_blocked'])
 
     def test_cross_host_not_fetched(self):
         c=Client('https://www.barcin.com',delay=0)

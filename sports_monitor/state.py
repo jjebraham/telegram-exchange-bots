@@ -29,13 +29,20 @@ class State:
         ''')
 
     def history(self, product, now):
-        row = self.db.execute('SELECT MIN(sale), COUNT(DISTINCT observed_at) FROM observations WHERE product_key=? AND observed_at>=? AND observed_at<?',
-                              (product.key, now - 30 * 86400, now)).fetchone()
-        return row[0], row[1]
+        rows = self.db.execute('SELECT sale, observed_at, payload FROM observations WHERE product_key=? AND observed_at>=? AND observed_at<?',
+                               (product.key, now - 30 * 86400, now)).fetchall()
+        retailer_rows = [row for row in rows if Product.loads(row['payload']).source == 'retailer']
+        if not retailer_rows:
+            return None, 0
+        return min(row['sale'] for row in retailer_rows), len({row['observed_at'] for row in retailer_rows})
 
     def previous(self, key):
-        row = self.db.execute('SELECT payload FROM observations WHERE product_key=? ORDER BY id DESC LIMIT 1', (key,)).fetchone()
-        return Product.loads(row[0]) if row else None
+        rows = self.db.execute('SELECT payload FROM observations WHERE product_key=? ORDER BY id DESC', (key,)).fetchall()
+        for row in rows:
+            product = Product.loads(row['payload'])
+            if product.source == 'retailer':
+                return product
+        return None
 
     def reason(self, product, destination, now):
         if not qualifies(product, *self.history(product, now)):
@@ -49,7 +56,8 @@ class State:
         restock_seen = False
         if row:
             observations = self.db.execute('SELECT payload FROM observations WHERE product_key=? AND observed_at>?', (product.key, row[1])).fetchall()
-            restock_seen = any(not Product.loads(o[0]).sizes for o in observations)
+            restock_seen = any(p.source == 'retailer' and not p.sizes
+                               for p in (Product.loads(o[0]) for o in observations))
         return change_reason(product, posted, previous, elapsed=now - row[1] if row else 0, restock_seen=restock_seen)
 
     def observe(self, product):

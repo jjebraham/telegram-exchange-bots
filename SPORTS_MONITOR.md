@@ -13,18 +13,37 @@ Barçın, Sporjinal, Sportive, and SuperStep. Sneaks Up, Koray Spor, Yalı Spor,
 adidas Türkiye returned HTTP 403. Complete eight-store production coverage is
 not established. No attempt is made to bypass access controls.
 
-If Sneaks Up, Koray Spor, Yalı Spor, or adidas Türkiye returns HTTP 403, the
-monitor now tries that retailer's public Ayakapp listing. It reads only
-retailer-specific Product JSON-LD and direct retailer links, requires explicit
-available sizes, and rechecks each finalist on Ayakapp before posting. The
-displayed product update must say “today” or a recent hour/minute; older or
-imprecise dates are rejected. Telegram identifies Ayakapp as the data source for
-these items. Ayakapp's server-rendered listing currently exposes only a small
-initial product set and no verified pagination, so this fallback is partial and
-the scan is reported as limited. Ayakapp's own terms say that copying,
-redistribution, or commercial use of site content requires prior written
-permission; they do not state a separate noncommercial exception. Check the
-current terms before relying on this fallback for channel posts.
+### Source policy
+
+The monitor reads only each retailer's own public pages with ordinary requests.
+There is no third-party data source. The former Ayakapp fallback was removed:
+the external research found no documented approved feed, and no written
+permission has been provided for this project. Its terms (Section 5) require
+prior written permission for copying/distribution, and it returned a Cloudflare
+challenge to this server.
+
+| Store | Status | Notes |
+| --- | --- | --- |
+| Barçın, Sporjinal, Sportive, SuperStep | enabled | Parsed on the 2026-09-27 server scan. |
+| Sneaks Up | enabled, best-effort | robots.txt allows `/sezon-sonu-indirimi` and product pages. Server received 403. |
+| adidas Türkiye | enabled, best-effort | robots.txt allows `/tr/outlet` and `/*.html` product pages. The adapter never calls the disallowed `/api/products/*/availability`. Server received 403; parser has no live fixture. |
+| Koray Spor | enabled, best-effort | robots.txt allows the listing paths. Server received 403; no verified discounted running-shoe listing yet. |
+| Yalı Spor | **disabled** | Membership agreement restricts automated loading/copying of site data. Never fetched until access is permitted. Re-enable in `stores.py` only after that. |
+
+A 401/403 or a response with `cf-mitigated: challenge` marks the store
+`blocked` in the scan report, including a challenge returned with HTTP 200. The
+store is not retried in that scan; a block during listing, product fetching, or
+finalist rechecking stops further requests to that store and excludes its
+products from that scan's posts. No workaround is attempted (no proxies,
+alternate identities, browser impersonation, challenge solving, private
+endpoints, or third-party mirrors). Each store report has a
+`status` of `ok`, `degraded`, `blocked`, or `disabled`. A deliberately disabled
+store does not by itself make the scan degraded.
+
+Only `retailer`-sourced observations from enabled stores can be published. Old
+history rows from the removed fallback still load for deduplication but are
+never formatted or posted. Prices and sizes are observations at scan time; a
+six-hour cadence is a recheck interval, not a stock guarantee.
 
 Full catalog coverage is bounded by `--max-pages` (100 per store) and
 `--max-products` (5000 per store). Raise these after measuring server runtime.
@@ -157,7 +176,8 @@ Cron uses the server's timezone. Review reports/logs and configure your existing
 server alerting to flag exit 1/2. Exit 0: healthy completed scan; 1: configuration
 or runtime failure; 2: degraded/limited coverage or delivery uncertainty. Don't
 ignore a repeatedly empty store. CLI `--stores` accepts `barcin sporjinal sneaks
-superstep sportive koray yali adidas` for focused diagnostics.
+superstep sportive koray yali adidas` for focused diagnostics; a disabled store
+is reported as disabled and not fetched.
 
 ## Delivery recovery and backups
 

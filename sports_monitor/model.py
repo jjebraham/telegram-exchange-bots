@@ -48,6 +48,9 @@ class Product:
     sizes: tuple[str, ...]
     observed_at: int
     running_shoe: bool = False
+    # verify_url/source remain only so history rows written by the removed
+    # Ayakapp fallback still deserialize. New products are always 'retailer',
+    # and the runner and formatter refuse to publish anything else.
     verify_url: str | None = None
     source: str = 'retailer'
 

@@ -11,6 +11,8 @@ the parsers are retained. These are regression fixtures, never live posting data
 - Sneaks Up: `/adidas-samba-og-ig9030-001-sneaker-p-139139`
 - Yalı: `/urun/adidas-ultraboost-5-strung-erkek-spor-ayakkabi-siyah`, embedded
   public product data inspected in the browser; subsequently HTTP scanner worked.
+  The Yalı store is now disabled pending permission; the parser fixture is kept
+  only so re-enabling does not require rebuilding it.
 
 There is no live adidas fixture: this host received HTTP 403. adidas's generic
 per-variant JSON-LD fallback is unverified and must not be represented as tested

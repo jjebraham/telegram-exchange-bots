@@ -5,7 +5,15 @@ import requests
 
 
 class FetchError(RuntimeError):
-    pass
+    def __init__(self, message, status=None, challenge=False):
+        super().__init__(message)
+        self.status = status
+        self.challenge = challenge
+
+    @property
+    def access_blocked(self):
+        """401/403 or a Cloudflare challenge: the site refused us. Never retry or work around it."""
+        return self.challenge or self.status in (401, 403)
 
 
 class Client:
@@ -25,6 +33,10 @@ class Client:
                         raise FetchError('Unexpected storefront redirect')
                     self.last_request = time.monotonic()
                     with self.session.get(url, timeout=(10, 35), allow_redirects=False, stream=True) as response:
+                        challenge = response.headers.get('cf-mitigated', '').strip().lower() == 'challenge'
+                        if challenge:
+                            raise FetchError(f'HTTP {response.status_code} (Cloudflare challenge)',
+                                             response.status_code, True)
                         if response.status_code in (301, 302, 303, 307, 308):
                             target = urljoin(url, response.headers['Location'])
                             # Some shops normalize www away on their own domain.
@@ -37,7 +49,7 @@ class Client:
                                 time.sleep(min(30, int(response.headers.get('Retry-After', 2 ** (attempt + 1)))))
                                 break
                         if response.status_code != 200:
-                            raise FetchError(f'HTTP {response.status_code}')
+                            raise FetchError(f'HTTP {response.status_code}', response.status_code)
                         body = bytearray()
                         for chunk in response.iter_content(65536):
                             body.extend(chunk)

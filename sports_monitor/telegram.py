@@ -13,12 +13,13 @@ def price(cents):
 
 
 def item(product, reason):
+    if product.source != 'retailer':
+        raise ValueError('Only first-party retailer observations may be published')
     badge = '🔥 تخفیف ویژه' if product.discount >= 50 else '🏷 تخفیف'
     percent = str(int(product.discount.quantize(Decimal('1'), rounding=ROUND_HALF_UP))).translate(PERSIAN)
     checked = datetime.fromtimestamp(product.observed_at, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
-    source_note = '\n📊 موجودی و قیمت طبق دادهٔ Ayakapp' if product.source == 'ayakapp' else ''
     return (f'👟 <b>{escape(product.name[:180])}</b>\n'
-            f'📏 سایزهای موجود: {escape("، ".join(product.sizes))}{source_note}\n'
+            f'📏 سایزهای موجود: {escape("، ".join(product.sizes))}\n'
             f'🏪 {escape(NAMES[product.store])} | {REASONS[reason]}\n'
             f'<s>{price(product.original)}</s> ← <b>{price(product.sale)} لیر</b>\n'
             f'{badge}: <b>{percent}٪</b>\n'

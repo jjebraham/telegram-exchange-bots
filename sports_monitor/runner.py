@@ -13,9 +13,6 @@ from urllib.parse import urlsplit, parse_qsl, urlencode, urlunsplit
 from .model import qualifies
 from .network import Client, FetchError
 from .parsing import discover, parse_product, ParseError
-from .ayakapp import (STORE_SLUGS, discover_products as discover_ayakapp,
-                      listing_url as ayakapp_listing_url,
-                      parse_product as parse_ayakapp_product)
 from .state import State
 from .stores import STORES
 from .telegram import batches, send, DeliveryError
@@ -56,11 +53,29 @@ def lock(path):
                 fcntl.flock(stream, fcntl.LOCK_UN)
 
 
+def disabled_report(store):
+    return {'store': store.key, 'status': 'disabled', 'reason': store.disabled_reason,
+            'listing_pages': 0, 'discovered': 0, 'parsed': 0, 'errors': [], 'limited': False}
+
+
+def blocked_error(stage, exc):
+    return {'stage': stage, 'error': str(exc)[:180], 'access_blocked': True,
+            'challenge': exc.challenge, 'action': 'none; no workaround is attempted'}
+
+
 def scan_store(store, known, max_pages, max_products):
+    """Read only the retailer's own public pages with ordinary requests.
+
+    A 401/403 or challenge stops this store for the scan and is reported as
+    blocked. There is no third-party fallback and no retry against a refusal.
+    """
+    if not store.enabled:
+        return [], disabled_report(store)
     client = Client(store.root)
     pending = [store.root + p for p in store.listings]
     seen, urls, products = set(), set(known), {}
-    report = {'store': store.key, 'listing_pages': 0, 'discovered': 0, 'parsed': 0, 'errors': [], 'limited': False}
+    report = {'store': store.key, 'status': 'ok', 'listing_pages': 0, 'discovered': 0,
+              'parsed': 0, 'errors': [], 'limited': False}
     try:
         while pending and len(seen) < max_pages:
             url = pending.pop(0)
@@ -81,54 +96,34 @@ def scan_store(store, known, max_pages, max_products):
                 final, html = client.get(fetch_url(store, url))
                 product = parse_product(store.key, final, html, int(time.time()))
                 products[product.key] = product
-            except (FetchError, ParseError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            except FetchError as exc:
+                if exc.access_blocked:
+                    # Stop requesting this store as soon as it refuses access.
+                    report['status'] = 'blocked'
+                    report['limited'] = True
+                    report['errors'].append(blocked_error('product', exc))
+                    break
+                report['product_errors'] = report.get('product_errors', 0) + 1
+                if len(report['errors']) < 10:
+                    report['errors'].append({'url': url, 'error': str(exc)[:180]})
+            except (ParseError, ValueError, KeyError, TypeError, AttributeError) as exc:
                 # Limit log volume, but retain the full error count.
                 report['product_errors'] = report.get('product_errors', 0) + 1
                 if len(report['errors']) < 10:
                     report['errors'].append({'url': url, 'error': str(exc)[:180]})
         report['parsed'] = len(products)
-    except (FetchError, ValueError, KeyError, TypeError) as exc:
-        if (isinstance(exc, FetchError) and str(exc) == 'HTTP 403'
-                and store.key in STORE_SLUGS):
-            fallback_products, fallback_report = scan_ayakapp_store(store, max_products)
-            fallback_report['primary_error'] = {'stage': 'direct_listing', 'error': str(exc)}
-            return fallback_products, fallback_report
+    except FetchError as exc:
+        if exc.access_blocked:
+            report['status'] = 'blocked'
+            report['errors'].append(blocked_error('listing', exc))
+        else:
+            report['errors'].append({'stage': 'listing', 'error': str(exc)[:180]})
+    except (ValueError, KeyError, TypeError) as exc:
         report['errors'].append({'stage': 'listing', 'error': str(exc)[:180]})
     finally:
         client.session.close()
-    return list(products.values()), report
-
-
-def scan_ayakapp_store(store, max_products):
-    """Use only Ayakapp's public seller page after a retailer returns HTTP 403."""
-    client = Client('https://ayakapp.com')
-    products = {}
-    report = {'store': store.key, 'data_source': 'ayakapp', 'listing_pages': 0,
-              'discovered': 0, 'parsed': 0, 'errors': [], 'limited': True,
-              'coverage_note': 'Ayakapp server-rendered seller listing only; pagination is unverified'}
-    try:
-        page_url, html = client.get(ayakapp_listing_url(store.key))
-        report['listing_pages'] = 1
-        urls = discover_ayakapp(store.key, page_url, html)
-        report['discovered'] = len(urls)
-        report['limited'] = True  # A large retailer catalog is only partially rendered.
-        if not urls:
-            report['errors'].append({'stage': 'ayakapp_discovery',
-                                     'error': 'No retailer-specific Ayakapp product links found'})
-        for url in urls[:max_products]:
-            try:
-                final, product_html = client.get(url)
-                product = parse_ayakapp_product(store.key, final, product_html, int(time.time()))
-                products[product.key] = product
-            except (FetchError, ParseError, ValueError, KeyError, TypeError, AttributeError) as exc:
-                report['product_errors'] = report.get('product_errors', 0) + 1
-                if len(report['errors']) < 10:
-                    report['errors'].append({'url': url, 'error': str(exc)[:180]})
-        report['parsed'] = len(products)
-    except (FetchError, ValueError, KeyError, TypeError) as exc:
-        report['errors'].append({'stage': 'ayakapp_listing', 'error': str(exc)[:180]})
-    finally:
-        client.session.close()
+    if report['status'] == 'ok' and (report['errors'] or report['limited']):
+        report['status'] = 'degraded'
     return list(products.values()), report
 
 
@@ -143,39 +138,48 @@ def run(args):
         with sqlite3.connect(f'file:{Path(args.db).resolve().as_posix()}?mode=ro', uri=True) as source:
             source.backup(state.db)
     selected = [s for s in STORES if not args.stores or s.key in args.stores]
+    active = [s for s in selected if s.enabled]
     report = {'started_at': now, 'publish': args.publish, 'stores': [], 'messages': [], 'recheck_errors': []}
     try:
         futures = {}
         observed = []
-        with ThreadPoolExecutor(max_workers=min(8, len(selected))) as pool:
-            for store in selected:
+        for store in selected:
+            if not store.enabled:
+                result = disabled_report(store)
+                report['stores'].append(result)
+                print(json.dumps(result, ensure_ascii=False), file=sys.stderr, flush=True)
+        with ThreadPoolExecutor(max_workers=max(1, min(8, len(active)))) as pool:
+            for store in active:
                 futures[pool.submit(scan_store, store, state.known_urls(store.key), args.max_pages, args.max_products)] = store
             for future in as_completed(futures):
                 products, result = future.result()
                 report['stores'].append(result)
                 observed.extend(products)
                 print(json.dumps(result, ensure_ascii=False), file=sys.stderr, flush=True)
+        blocked_stores = {s['store'] for s in report['stores'] if s['status'] == 'blocked'}
+        # A store that refused access partway through its scan contributes no
+        # candidates from that scan; do not re-fetch its earlier products.
+        observed = [p for p in observed if p.store not in blocked_stores]
         # Determine eligibility before inserting the current scan into history.
         candidates = [(p, state.reason(p, destination, int(time.time()))) for p in observed]
         for p in observed:
             state.observe(p)
-        candidates = [(p, reason) for p, reason in candidates if reason]
+        # Only first-party retailer observations from enabled stores may be published.
+        candidates = [(p, reason) for p, reason in candidates
+                      if reason and p.source == 'retailer' and any(s.key == p.store for s in active)]
         candidates.sort(key=lambda pair: (pair[0].discount, pair[0].original - pair[0].sale, len(pair[0].sizes)), reverse=True)
         fresh = []
         # Re-read finalists just before publishing; earlier observations may be hours old.
         for p, reason in candidates:
             if len(fresh) >= args.top:
                 break
-            store = next(s for s in selected if s.key == p.store)
-            ayakapp_source = p.source == 'ayakapp' and p.verify_url
-            client = Client('https://ayakapp.com' if ayakapp_source else store.root)
+            if p.store in blocked_stores:
+                continue
+            store = next(s for s in active if s.key == p.store)
+            client = Client(store.root)
             try:
-                if ayakapp_source:
-                    final, html = client.get(p.verify_url)
-                    current = parse_ayakapp_product(store.key, final, html, int(time.time()))
-                else:
-                    final, html = client.get(fetch_url(store, p.url))
-                    current = parse_product(store.key, final, html, int(time.time()))
+                final, html = client.get(fetch_url(store, p.url))
+                current = parse_product(store.key, final, html, int(time.time()))
                 if current.key != p.key:
                     raise ParseError('Product identity changed on recheck')
                 if current.fingerprint != p.fingerprint:
@@ -184,7 +188,23 @@ def run(args):
                     continue
                 fresh.append((current, reason))
             except (FetchError, ValueError, KeyError, TypeError, AttributeError) as exc:
-                report['recheck_errors'].append({'url': p.url, 'error': str(exc)[:180]})
+                error = {'url': p.url, 'error': str(exc)[:180]}
+                if isinstance(exc, FetchError) and exc.access_blocked:
+                    error['access_blocked'] = True
+                    blocked_stores.add(p.store)
+                    store_report = next(s for s in report['stores'] if s['store'] == p.store)
+                    store_report['status'] = 'blocked'
+                    store_report['limited'] = True
+                    store_report['errors'].append({
+                        'stage': 'recheck', 'error': str(exc)[:180],
+                        'access_blocked': True, 'challenge': exc.challenge,
+                        'action': 'none; no workaround is attempted',
+                    })
+                    # Discard earlier finalists from this store too. They were
+                    # checked before the refusal, but the store is now blocked
+                    # for this scan and must receive no further requests.
+                    fresh = [(item, why) for item, why in fresh if item.store != p.store]
+                report['recheck_errors'].append(error)
             finally:
                 client.session.close()
         report['eligible'] = len(candidates)
@@ -206,7 +226,7 @@ def run(args):
             state.delivered(batch, message_id, int(time.time()))
             report['messages'].append({'outbox_id': batch, 'message_id': message_id, 'destination': destination})
         report['finished_at'] = int(time.time())
-        report['degraded'] = bool(report['recheck_errors']) or any(s['errors'] or s['limited'] for s in report['stores']) or any('error' in m for m in report['messages'])
+        report['degraded'] = bool(report['recheck_errors']) or any(s['status'] in ('degraded', 'blocked') for s in report['stores']) or any('error' in m for m in report['messages'])
         if args.publish:
             with state.db:
                 state.db.execute('INSERT INTO scans(started_at,finished_at,report) VALUES(?,?,?)', (now, report['finished_at'], json.dumps(report)))
