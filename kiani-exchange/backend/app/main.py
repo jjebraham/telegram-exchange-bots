@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from .database import init_db
-from .api import rates, users, transactions
+from .api import pricing, rates, users, transactions
 from .price_cache import price_cache
 
 # Load environment variables from .env file
@@ -30,6 +30,7 @@ app.add_middleware(
 )
 
 app.include_router(rates.router, prefix="/api", tags=["rates"])
+app.include_router(pricing.router, prefix="/api", tags=["pricing"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])
 
