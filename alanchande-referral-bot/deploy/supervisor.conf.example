@@ -1,0 +1,16 @@
+[program:alanchande_referral_bot]
+directory=/home/kianirad2020/telegram_bot_repo/alanchande-referral-bot
+command=/bin/bash -lc 'set -a && source /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot/.env && set +a && exec /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot/.venv/bin/python /home/kianirad2020/telegram_bot_repo/alanchande-referral-bot/bot.py'
+autostart=true
+autorestart=true
+startsecs=5
+stopasgroup=true
+killasgroup=true
+user=kianirad2020
+environment=PYTHONUNBUFFERED="1"
+stdout_logfile=/home/kianirad2020/telegram_bot_repo/alanchande-referral-bot/alanchande_referral_bot.out.log
+stderr_logfile=/home/kianirad2020/telegram_bot_repo/alanchande-referral-bot/alanchande_referral_bot.err.log
+stdout_logfile_maxbytes=20MB
+stderr_logfile_maxbytes=20MB
+stdout_logfile_backups=5
+stderr_logfile_backups=5
