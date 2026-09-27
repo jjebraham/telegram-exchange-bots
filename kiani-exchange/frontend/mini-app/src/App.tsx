@@ -251,7 +251,18 @@ function App() {
 
       const usdt_irr = data.rates.USDT_IRR;
       const usdt_try = data.rates.USDT_TRY;
-      setRates(deriveRates(usdt_irr, usdt_try));
+      const derived = deriveRates(usdt_irr, usdt_try);
+      const canonicalBuy = Number(data.rates.TRY_BUY_TOMAN);
+      const canonicalSell = Number(data.rates.TRY_SELL_TOMAN);
+      setRates({
+        ...derived,
+        buy_lira: Number.isFinite(canonicalBuy) && canonicalBuy > 0
+          ? canonicalBuy
+          : derived.buy_lira,
+        sell_lira: Number.isFinite(canonicalSell) && canonicalSell > 0
+          ? canonicalSell
+          : derived.sell_lira,
+      });
     } catch (error) {
       console.error('Rate fetch error:', error);
     } finally {
@@ -1847,21 +1858,55 @@ function AdminPanelPage() {
   const [messageText, setMessageText] = useState('');
   const [targetUserId, setTargetUserId] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
+  const [tryBuyPct, setTryBuyPct] = useState('');
+  const [trySellPct, setTrySellPct] = useState('');
+  const [pricingSaving, setPricingSaving] = useState(false);
 
   const loadAll = async () => {
     const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    const [u, t, l, r, f] = await Promise.all([
+    const [u, t, l, r, f, p] = await Promise.all([
       fetch(`${API_URL}/admin/users?${qs}`),
       fetch(`${API_URL}/admin/transactions?${qs}`),
       fetch(`${API_URL}/admin/logs?${qs}`),
       fetch(`${API_URL}/admin/reports?${qs}`),
       fetch(`${API_URL}/admin/faqs?${qs}`),
+      fetch(`${API_URL}/admin/pricing/try?${qs}`),
     ]);
     setUsers((await u.json()).users || []);
     setTransactions((await t.json()).transactions || []);
     setLogs((await l.json()).logs || []);
     setReport((await r.json()).report || null);
     setFaqs((await f.json()).faqs || []);
+    if (p.ok) {
+      const pricingData = await p.json();
+      setTryBuyPct(String(pricingData.pricing?.buy_lira?.adjustment_pct ?? ''));
+      setTrySellPct(String(pricingData.pricing?.sell_lira?.adjustment_pct ?? ''));
+    }
+  };
+
+  const saveTryPricing = async () => {
+    setPricingSaving(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/pricing/try`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          password,
+          buy_adjustment_pct: tryBuyPct,
+          sell_adjustment_pct: trySellPct,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notifyMessage(data.detail || 'خطا در ذخیره درصد نرخ لیر');
+        return;
+      }
+      notifyMessage('درصدهای نرخ لیر ذخیره شد');
+      await loadAll();
+    } finally {
+      setPricingSaving(false);
+    }
   };
 
   const login = async () => {
@@ -1883,6 +1928,24 @@ function AdminPanelPage() {
     <div className="p-4 space-y-4">
       <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Admin Panel</h2><button onClick={loadAll} className="bg-blue-100 px-3 py-1 rounded">Refresh</button></div>
       <div className="bg-white p-4 rounded-xl shadow text-sm">{report && <div>Orders: {report.total_orders} | Done: {report.done_orders} | Canceled: {report.canceled_orders}</div>}</div>
+      <div className="bg-white p-4 rounded-xl shadow">
+        <h3 className="font-bold mb-3">تنظیم درصد نرخ لیر</h3>
+        <p className="text-xs text-gray-500 mb-3">این دو مقدار همان تنظیمات مشترک کانال @ExchangeKiani و ربات @Kianiexchangebot هستند.</p>
+        <div className="grid md:grid-cols-2 gap-3">
+          <label className="text-sm">
+            <span className="block mb-1">خرید لیر از ما — Toman → TRY (%)</span>
+            <input className="w-full border p-2 rounded" inputMode="decimal" value={tryBuyPct} onChange={(e)=>setTryBuyPct(e.target.value)} />
+          </label>
+          <label className="text-sm">
+            <span className="block mb-1">فروش لیر به ما — TRY → Toman (%)</span>
+            <input className="w-full border p-2 rounded" inputMode="decimal" value={trySellPct} onChange={(e)=>setTrySellPct(e.target.value)} />
+          </label>
+        </div>
+        <div className="text-xs text-gray-500 mt-2">محدوده مجاز: ‎-50% تا +50%. مقدار مثبت نرخ را بالا و مقدار منفی نرخ را پایین می‌برد.</div>
+        <button onClick={saveTryPricing} disabled={pricingSaving} className="mt-3 bg-indigo-600 text-white px-4 py-2 rounded disabled:opacity-50">
+          {pricingSaving ? 'در حال ذخیره...' : 'ذخیره درصد نرخ لیر'}
+        </button>
+      </div>
       <div className="bg-white p-4 rounded-xl shadow">
         <h3 className="font-bold mb-2">کنترل سفارش</h3>
         <div className="flex gap-2 flex-wrap"><input className="border p-2 rounded flex-1" placeholder="Reference Number" value={statusRef} onChange={(e) => setStatusRef(e.target.value)} /><input className="border p-2 rounded" value={statusValue} onChange={(e) => setStatusValue(e.target.value)} /><input className="border p-2 rounded flex-1" placeholder="Receipt photo URL" value={receiptPhotoUrl} onChange={(e)=>setReceiptPhotoUrl(e.target.value)} /><input className="border p-2 rounded flex-1" placeholder="Receipt description" value={receiptDescription} onChange={(e)=>setReceiptDescription(e.target.value)} /><input className="border p-2 rounded flex-1" placeholder="Payment link" value={paymentLink} onChange={(e)=>setPaymentLink(e.target.value)} /><button onClick={async () => { await fetch(`${API_URL}/admin/transactions/${statusRef}/update-status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, status: statusValue, receipt_photo_url: receiptPhotoUrl || null, receipt_description: receiptDescription || null, payment_link: paymentLink || null }) }); loadAll(); }} className="bg-green-600 text-white px-3 rounded">Update</button></div>
