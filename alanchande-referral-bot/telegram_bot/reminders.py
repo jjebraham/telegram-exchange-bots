@@ -478,7 +478,9 @@ async def nudge_pass(application: Application) -> dict:
                 uid,
                 _early_share_nudge_text(campaign, source),
                 parse_mode=ParseMode.HTML,
-                reply_markup=link_keyboard(settings, deep_link, campaign),
+                reply_markup=link_keyboard(
+                    settings, deep_link, campaign, db.campaign_counts(campaign, uid)
+                ),
             )
             early_sent += 1
             db.track_funnel_event(campaign.id, uid, "nudge_early_share_sent", source)
@@ -502,7 +504,9 @@ async def nudge_pass(application: Application) -> dict:
                 uid,
                 _zero_referral_nudge_text(campaign, source),
                 parse_mode=ParseMode.HTML,
-                reply_markup=link_keyboard(settings, deep_link, campaign),
+                reply_markup=link_keyboard(
+                    settings, deep_link, campaign, db.campaign_counts(campaign, uid)
+                ),
             )
             zero_sent += 1
             db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", source)

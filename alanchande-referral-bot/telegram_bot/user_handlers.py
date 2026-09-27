@@ -14,7 +14,8 @@ from referral_core import Campaign, ReferralDB
 from .config import Settings, extract_status_change, hours_label, is_configured_channel, telegram_membership
 from .context import services
 from .ui import (
-    back_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
+    back_keyboard, leaderboard_keyboard, link_keyboard, main_keyboard, menu_text, no_campaign_text,
+    next_ticket_progress, referrer_share_button_text,
     render_home, render_prizes, render_referrals, render_rules, render_stats, render_top,
     render_transparency,
 )
@@ -73,27 +74,47 @@ async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Cam
         return
     _, db = services(context)
     counts = db.campaign_counts(campaign, referrer_id)
-    remainder = counts["active"] % campaign.invites_per_point
-    need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+    share_label = "📤 دعوت نفر بعدی"
     log.info(
         "Referral %s: joined=%s referrer=%s campaign=%s",
         result, user.id, referrer_id, campaign.slug,
     )
     if result == "created":
-        text = (
-            "🎉 <b>یک نفر جدید با لینک تو عضو شد!</b>\n\n"
-            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>\n"
-            f"🔥 تا امتیاز موقت بعدی: <b>{need}</b> دعوت فعال\n\n"
-            f"🎟 اگر این دوست <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته بماند، "
-            "سهمش برای قرعه‌کشی تأیید می‌شود."
-        )
+        if counts.get("confirmed_points", 0) > 0:
+            progress, action = next_ticket_progress(campaign, counts)
+            text = (
+                "🎉 <b>یک دعوت جدید ثبت شد!</b>\n\n"
+                f"🎟 بلیت تأییدشده: <b>{counts['confirmed_points']}</b>\n"
+                f"{progress}\n{action}"
+            )
+            share_label = referrer_share_button_text(campaign, counts, share_label)
+        else:
+            remainder = counts["active"] % campaign.invites_per_point
+            need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+            text = (
+                "🎉 <b>یک نفر جدید با لینک تو عضو شد!</b>\n\n"
+                f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>\n"
+                f"🔥 تا امتیاز موقت بعدی: <b>{need}</b> دعوت فعال\n\n"
+                f"🎟 اگر این دوست <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته بماند، "
+                "سهمش برای قرعه‌کشی تأیید می‌شود."
+            )
         db.track_funnel_event(campaign.id, user.id, "join_confirmed", "referral")
     else:
-        text = (
-            "🔄 <b>یکی از دعوت‌شده‌هات دوباره عضو شد.</b>\n\n"
-            "⏳ زمان تأیید او از صفر شروع شد.\n"
-            f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>"
-        )
+        if counts.get("confirmed_points", 0) > 0:
+            progress, action = next_ticket_progress(campaign, counts)
+            text = (
+                "🔄 <b>یکی از دعوت‌شده‌هات دوباره عضو شد.</b>\n\n"
+                "⏳ زمان تأیید او از صفر شروع شد.\n"
+                f"🎟 بلیت تأییدشده: <b>{counts['confirmed_points']}</b>\n"
+                f"{progress}\n{action}"
+            )
+            share_label = referrer_share_button_text(campaign, counts, share_label)
+        else:
+            text = (
+                "🔄 <b>یکی از دعوت‌شده‌هات دوباره عضو شد.</b>\n\n"
+                "⏳ زمان تأیید او از صفر شروع شد.\n"
+                f"⭐ امتیاز موقتت الان: <b>{counts['current_points']}</b>"
+            )
         db.track_funnel_event(campaign.id, user.id, "rejoin", "")
     try:
         await context.bot.send_message(
@@ -101,7 +122,7 @@ async def notify_referral_join(context: ContextTypes.DEFAULT_TYPE, campaign: Cam
             text,
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📤 دعوت نفر بعدی", callback_data="menu:link"),
+                InlineKeyboardButton(share_label, callback_data="menu:link"),
                 InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
             ]]),
         )
@@ -175,7 +196,9 @@ async def handle_referral_start(update: Update, context: ContextTypes.DEFAULT_TY
                 "تو از قبل عضو کانال بودی؛ بنابراین برای معرف جدید حساب نمی‌شی. "
                 "اما خودت می‌تونی همین الان در مسابقه شرکت کنی 👇\n\n"
                 f"🔗 لینک اختصاصی تو:\n{link}",
-                reply_markup=link_keyboard(settings, link, campaign),
+                reply_markup=link_keyboard(
+                    settings, link, campaign, db.campaign_counts(campaign, user.id)
+                ),
                 disable_web_page_preview=True,
             )
         except Exception:
@@ -250,7 +273,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             render_home(campaign, db, user.id, user.first_name),
             parse_mode=ParseMode.HTML,
-            reply_markup=main_keyboard(settings),
+            reply_markup=main_keyboard(settings, campaign, db.campaign_counts(campaign, user.id)),
             disable_web_page_preview=True,
         )
         return
@@ -288,7 +311,7 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         render_home(campaign, db, user.id, user.first_name),
         parse_mode=ParseMode.HTML,
-        reply_markup=main_keyboard(settings),
+        reply_markup=main_keyboard(settings, campaign, db.campaign_counts(campaign, user.id)),
         disable_web_page_preview=True,
     )
 
@@ -332,13 +355,17 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data or ""
     markup = back_keyboard()
     if data == "menu:main":
-        text, markup = render_home(campaign, db, user.id, user.first_name), main_keyboard(settings)
+        counts = db.campaign_counts(campaign, user.id)
+        text, markup = render_home(campaign, db, user.id, user.first_name), main_keyboard(
+            settings, campaign, counts
+        )
     elif data == "menu:stats":
         text = render_stats(campaign, db, user.id)
     elif data == "menu:referrals":
         text = render_referrals(campaign, db, user.id)
     elif data == "menu:top":
         text = render_top(campaign, db, user.id)
+        markup = leaderboard_keyboard(campaign, db.campaign_counts(campaign, user.id))
     elif data == "menu:rules":
         text = render_rules(campaign)
     elif data == "menu:prizes":
@@ -356,17 +383,17 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 link = await get_or_create_link(context, campaign, user)
                 counts = db.campaign_counts(campaign, user.id)
-                remainder = counts["active"] % campaign.invites_per_point
-                need = campaign.invites_per_point - remainder if remainder else campaign.invites_per_point
+                progress, next_action = next_ticket_progress(campaign, counts)
                 text = (
                     f"<b>🔗 لینک اختصاصی تو</b>\n\n{link}\n\n"
                     f"👥 دعوت فعال: <b>{counts['active']}</b>\n"
                     f"⭐ امتیاز موقت: <b>{counts['current_points']}</b>\n"
-                    f"🎯 تا امتیاز موقت بعدی: <b>{need}</b> دعوت فعال\n\n"
+                    f"🎟 بلیت تأییدشده: <b>{counts['confirmed_points']}</b>\n"
+                    f"{progress}\n{next_action}\n\n"
                     "📤 همین الان برای چند نفر بفرست. دوستت باید اول این لینک را باز کند؛ "
                     "بعد ربات مرحله‌به‌مرحله عضویت را راهنمایی می‌کند."
                 )
-                markup = link_keyboard(settings, link, campaign)
+                markup = link_keyboard(settings, link, campaign, counts)
             except Exception:
                 log.exception("Could not create referral deep link")
                 text = "ساخت لینک با خطا روبه‌رو شد. لطفاً دوباره تلاش کن."
@@ -379,6 +406,17 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
+
+
+def first_ticket_notification_message(campaign: Campaign, counts: dict) -> str:
+    progress, action = next_ticket_progress(campaign, counts)
+    return (
+        "🎉 <b>اولین بلیت تأییدشده‌ات ثبت شد!</b>\n\n"
+        f"🎟 الان <b>{counts['confirmed_points']}</b> بلیت تأییدشده داری. "
+        "بلیت‌های بیشتر سهمت را در قرعه‌کشی وزن‌دار افزایش می‌دهند؛ "
+        "این قرعه‌کشی درصد ثابت یا برد تضمینی ندارد.\n\n"
+        f"{progress}\n{action}"
+    )
 
 
 async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -443,22 +481,59 @@ async def qualification_pass(application: Application) -> None:
     campaign = db.live_campaign()
     if not campaign:
         return
+    notified_counts: dict[int, int] = {}
     for row in db.unnotified_qualified(campaign, limit=100):
         name = escape(row["joined_first_name"] or "دوستت")
+        referrer_id = int(row["referrer_id"])
         try:
-            counts = db.campaign_counts(campaign, row["referrer_id"])
+            counts = db.campaign_counts(campaign, referrer_id)
+            if referrer_id not in notified_counts:
+                notified_counts[referrer_id] = db.qualified_notification_count(
+                    campaign, referrer_id
+                )
+            first_ticket_nudge = (
+                notified_counts[referrer_id] + 1 == campaign.invites_per_point
+                and counts["confirmed_points"] > 0
+                and not db.has_funnel_event(
+                    campaign.id, referrer_id, "first_ticket_nudge_sent", ""
+                )
+            )
+            text = (
+                first_ticket_notification_message(campaign, counts)
+                if first_ticket_nudge else
+                (
+                    f"🎟 دعوت <b>{name}</b> تأیید شد!\n\n"
+                    f"✅ دعوت‌های تأییدشده: <b>{counts['qualified']}</b>\n"
+                    f"🎟 بلیت‌های تأییدشده قرعه‌کشی: <b>{counts['confirmed_points']}</b>\n"
+                    f"⭐ امتیاز موقت فعلی: <b>{counts['current_points']}</b>"
+                )
+            )
+            send_kwargs = {"parse_mode": ParseMode.HTML}
+            if first_ticket_nudge:
+                send_kwargs["reply_markup"] = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        referrer_share_button_text(
+                            campaign, counts, "📤 دعوت از دوستان"
+                        ),
+                        callback_data="menu:link",
+                    )
+                ]])
             await application.bot.send_message(
-                row["referrer_id"],
-                f"🎟 دعوت <b>{name}</b> تأیید شد!\n\n"
-                f"✅ دعوت‌های تأییدشده: <b>{counts['qualified']}</b>\n"
-                f"🎟 بلیت‌های تأییدشده قرعه‌کشی: <b>{counts['confirmed_points']}</b>\n"
-                f"⭐ امتیاز موقت فعلی: <b>{counts['current_points']}</b>",
-                parse_mode=ParseMode.HTML,
+                referrer_id,
+                text,
+                **send_kwargs,
             )
             db.mark_qualification_notified(row["id"])
             db.track_funnel_event(campaign.id, row["joined_user_id"], "qualified", "")
+            notified_counts[referrer_id] += 1
+            if first_ticket_nudge:
+                db.track_funnel_event(
+                    campaign.id, referrer_id, "first_ticket_nudge_sent", ""
+                )
         except (Forbidden, BadRequest):
             db.mark_qualification_notified(row["id"])
+            if referrer_id in notified_counts:
+                notified_counts[referrer_id] += 1
         except TelegramError:
             log.exception("Qualification notification failed for referral %s", row["id"])
 

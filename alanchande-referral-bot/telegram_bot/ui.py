@@ -11,11 +11,109 @@ from .config import Settings, hours_label, remaining_label
 
 ISTANBUL = timezone(timedelta(hours=3))
 IRAN = timezone(timedelta(hours=3, minutes=30))
+_PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
 
-def main_keyboard(settings: Settings) -> InlineKeyboardMarkup:
+def _fa_number(value: int) -> str:
+    return str(value).translate(_PERSIAN_DIGITS)
+
+
+def next_point_invites_needed(campaign: Campaign, counts: dict) -> int:
+    threshold = max(1, campaign.invites_per_point)
+    if int(counts.get("confirmed_points", 0)) > 0:
+        committed = int(counts.get("qualified", 0)) + int(
+            counts.get("qualifiable_pending", 0)
+        )
+    else:
+        committed = int(counts.get("active", 0))
+    remainder = committed % threshold
+    return threshold - remainder if remainder else threshold
+
+
+def referrer_share_button_text(
+    campaign: Campaign,
+    counts: dict | None,
+    default: str = "📤 ارسال لینک برای دوستان",
+) -> str:
+    if not counts or int(counts.get("confirmed_points", 0)) <= 0:
+        return default
+    if campaign.max_points and int(counts.get("current_points", 0)) >= campaign.max_points:
+        return default
+    if utcnow() >= campaign.final_qualification_cutoff:
+        return default
+    return f"📤 دعوت {_fa_number(next_point_invites_needed(campaign, counts))} دوست دیگر"
+
+
+def next_ticket_progress(campaign: Campaign, counts: dict) -> tuple[str, str]:
+    """Explain how active referrals can create the next weighted ticket."""
+    confirmed = int(counts.get("confirmed_points", 0))
+    if campaign.max_points and int(counts.get("current_points", 0)) >= campaign.max_points:
+        return (
+            "✅ سقف امتیاز موقت مسابقه را گرفته‌ای.",
+            "دعوت‌های فعالت را حفظ کن تا امتیازهای واجد شرایط به بلیت تأییدشده تبدیل شوند.",
+        )
+    if utcnow() >= campaign.final_qualification_cutoff:
+        return (
+            f"🎟 بلیت تأییدشده فعلی: <b>{_fa_number(confirmed)}</b>",
+            "مهلت ورود دعوت جدید برای تأیید تمام شده؛ دعوت‌هایی را که به‌موقع پیوسته‌اند حفظ کن. "
+            "فقط بلیت‌های تأییدشده در قرعه‌کشی وزن‌دار حساب می‌شوند.",
+        )
+
+    threshold = max(1, campaign.invites_per_point)
+    if confirmed == 0:
+        committed = int(counts.get("active", 0))
+        progress_title = "امتیاز موقت بعدی"
+    else:
+        committed = int(counts.get("qualified", 0)) + int(
+            counts.get("qualifiable_pending", 0)
+        )
+        progress_title = "بلیت بعدی"
+    remainder = committed % threshold
+    needed = threshold - remainder if remainder else threshold
+    filled = int(round((remainder / threshold) * 10))
+    bar = "█" * filled + "░" * (10 - filled)
+    progress = (
+        f"🎯 تا {progress_title}: <b>{bar}</b> "
+        f"{_fa_number(remainder)}/{_fa_number(threshold)} دعوت فعال"
+    )
+
+    qualifiable_pending = int(counts.get("qualifiable_pending", 0))
+    action = f"🔥 با <b>{_fa_number(needed)} دعوت فعال دیگر</b> یک امتیاز موقت دیگر می‌گیری. "
+    if confirmed and qualifiable_pending:
+        pending_tickets = (
+            int(counts.get("qualified", 0)) % threshold + qualifiable_pending
+        ) // threshold
+        if pending_tickets:
+            progress += (
+                f"\n⏳ دعوت‌های در انتظار ماندگاری، در صورت تکمیل دوره، "
+                f"برای <b>{_fa_number(pending_tickets)} بلیت دیگر</b> کافی‌اند."
+            )
+            action = (
+                f"🔥 پس از دعوت‌های در انتظار، با <b>{_fa_number(needed)} دعوت فعال دیگر</b> "
+                "برای بلیت بعدی امتیاز موقت می‌گیری. "
+            )
+        else:
+            action = (
+                f"⏳ <b>{_fa_number(qualifiable_pending)} دعوت فعال</b> در دوره ماندگاری‌اند؛ "
+                f"با <b>{_fa_number(needed)} دعوت فعال دیگر</b> مسیر بلیت بعدی کامل می‌شود. "
+            )
+    action += (
+        f"اگر دوستانت {hours_label(campaign.min_stay_hours)} پیوسته عضو بمانند، "
+        "امتیاز موقت به بلیت تأییدشده تبدیل می‌شود."
+    )
+    if confirmed:
+        action += " بلیت‌های بیشتر سهمت را در قرعه‌کشی وزن‌دار بیشتر می‌کنند؛ برد تضمین نمی‌شود."
+    return progress, action
+
+
+def main_keyboard(settings: Settings, campaign: Campaign | None = None,
+                  counts: dict | None = None) -> InlineKeyboardMarkup:
+    invite_label = (
+        referrer_share_button_text(campaign, counts, "🔗 لینک دعوت من")
+        if campaign else "🔗 لینک دعوت من"
+    )
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 دعوت دوستان", callback_data="menu:link")],
+        [InlineKeyboardButton(invite_label, callback_data="menu:link")],
         [InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats"),
          InlineKeyboardButton("👥 دعوت‌های من", callback_data="menu:referrals")],
         [InlineKeyboardButton("🏆 جدول مسابقه", callback_data="menu:top"),
@@ -30,7 +128,8 @@ def back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")]])
 
 
-def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None) -> InlineKeyboardMarkup:
+def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = None,
+                  counts: dict | None = None) -> InlineKeyboardMarkup:
     if campaign:
         share_text = (
             f"🎁 بیا در مسابقه {campaign.name} «الان چنده؟» شرکت کن!\n"
@@ -49,9 +148,23 @@ def link_keyboard(settings: Settings, link: str, campaign: Campaign | None = Non
     })
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 ارسال لینک برای دوستان", url=share_url)],
+        [InlineKeyboardButton(
+            referrer_share_button_text(campaign, counts)
+            if campaign else "📤 ارسال لینک برای دوستان",
+            url=share_url,
+        )],
         [InlineKeyboardButton("📊 وضعیت و امتیاز من", callback_data="menu:stats")],
         [InlineKeyboardButton("⬅️ منوی مسابقه", callback_data="menu:main")],
+    ])
+
+
+def leaderboard_keyboard(campaign: Campaign, counts: dict | None = None) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            referrer_share_button_text(campaign, counts, "📤 دعوت از یک دوست"),
+            callback_data="menu:link",
+        )],
+        [InlineKeyboardButton("⬅️ بازگشت", callback_data="menu:main")],
     ])
 
 
@@ -117,7 +230,9 @@ def render_home(campaign: Campaign, db: ReferralDB, user_id: int, first_name: st
     pending_opens = db.pending_referral_count(campaign.id, user_id)
     closest = db.closest_pending_seconds(campaign, user_id)
 
-    if campaign.max_points and counts["current_points"] >= campaign.max_points:
+    if counts.get("confirmed_points", 0) > 0:
+        progress, next_action = next_ticket_progress(campaign, counts)
+    elif campaign.max_points and counts["current_points"] >= campaign.max_points:
         progress = "✅ سقف امتیاز موقت این مسابقه را گرفته‌ای."
         next_action = "دعوت‌های فعالت را تا زمان تأیید حفظ کن."
     else:
@@ -158,7 +273,11 @@ def render_home(campaign: Campaign, db: ReferralDB, user_id: int, first_name: st
         f"{open_line}{closest_line}\n"
         f"{progress}\n"
         f"{next_action}\n\n"
-        "👇 <b>کار بعدی:</b> لینک اختصاصی‌ات را برای دوستانت بفرست."
+        + (
+            "🎟 قرعه‌کشی وزن‌دار است؛ بلیت‌های تأییدشده بیشتر سهم بیشتری دارند، اما برد تضمینی نیست.\n\n"
+            if counts.get("confirmed_points", 0) > 0 else ""
+        )
+        + "👇 <b>کار بعدی:</b> لینک اختصاصی‌ات را برای دوستانت بفرست."
         f"{_late_referral_warning(campaign)}"
     )
 
@@ -169,7 +288,9 @@ def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
     rank, ranked_total = db.leaderboard_position(campaign, user_id)
     closest = db.closest_pending_seconds(campaign, user_id)
 
-    if campaign.max_points and counts["current_points"] >= campaign.max_points:
+    if counts.get("confirmed_points", 0) > 0:
+        progress_text, next_text = next_ticket_progress(campaign, counts)
+    elif campaign.max_points and counts["current_points"] >= campaign.max_points:
         next_text = "✅ به سقف امتیاز موقت این مسابقه رسیده‌ای."
         progress_text = "🎯 پیشرفت امتیاز بعدی: سقف مسابقه تکمیل شده است."
     else:
@@ -184,9 +305,9 @@ def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
         )
 
     rank_text = (
-        f"📍 رتبه فعلی تو: <b>#{rank}</b> از <b>{ranked_total}</b> نفر"
+        f"📍 رتبه بین کاربران امتیازدار: <b>#{rank}</b> از <b>{ranked_total}</b>"
         if rank is not None else
-        f"📍 هنوز وارد جدول امتیازی نشده‌ای؛ جدول فعلاً <b>{ranked_total}</b> نفر دارد."
+        f"📍 هنوز وارد جدول امتیازی نشده‌ای؛ جدول فعلاً <b>{ranked_total}</b> کاربر امتیازدار دارد."
     )
     pending_open_text = (
         f"👀 <b>{pending_opens}</b> نفر لینک تو را باز کرده‌اند ولی هنوز عضویت را کامل نکرده‌اند."
@@ -213,7 +334,9 @@ def render_stats(campaign: Campaign, db: ReferralDB, user_id: int) -> str:
         f"✅ دعوت تأییدشده: <b>{counts['qualified']}</b>\n"
         f"⏳ در انتظار تأیید: <b>{counts['pending']}</b>\n"
         f"❌ خارج‌شده: <b>{counts['left']}</b>\n\n"
-        f"{progress_text}\n{next_text}\n{rank_text}\n{pending_open_text}{extra}\n\n"
+        f"{progress_text}\n{next_text}\n{rank_text}\n"
+        f"👥 شرکت‌کنندگان دارای لینک اختصاصی: <b>{db.participant_count(campaign.id)}</b>\n"
+        f"{pending_open_text}{extra}\n\n"
         f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}\n\n"
         f"{retention_note}"
         f"{_late_referral_warning(campaign)}"
@@ -263,7 +386,8 @@ def render_top(campaign: Campaign, db: ReferralDB, user_id: int | None = None) -
     if not rows:
         return (
             f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n\n"
-            "هنوز امتیازی در جدول ثبت نشده؛ اولین نفر باش! 🚀"
+            "هنوز امتیازی در جدول ثبت نشده؛ اولین نفر باش! 🚀\n\n"
+            f"👥 شرکت‌کنندگان دارای لینک اختصاصی: <b>{db.participant_count(campaign.id)}</b> نفر"
         )
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"<b>🏆 جدول مسابقه — {escape(campaign.name)}</b>\n"]
@@ -278,10 +402,13 @@ def render_top(campaign: Campaign, db: ReferralDB, user_id: int | None = None) -
     if user_id is not None:
         rank, total = db.leaderboard_position(campaign, user_id)
         if rank is not None:
-            lines.append(f"\n📍 رتبه تو: <b>#{rank}</b> از <b>{total}</b>")
+            lines.append(f"\n📍 رتبه بین کاربران امتیازدار: <b>#{rank}</b> از <b>{total}</b>")
+    participant_count = db.participant_count(campaign.id)
     lines.append(
-        "\nℹ️ این جدول فقط پیشرفت فعلی را نشان می‌دهد و ترتیب آن تعیین‌کننده برنده نیست. "
-        "برندگان با قرعه‌کشی وزن‌دار و فقط بر اساس 🎟 بلیت‌های تأییدشده انتخاب می‌شوند."
+        f"\n👥 شرکت‌کنندگان دارای لینک اختصاصی: <b>{participant_count}</b> نفر. "
+        "این فهرست فقط ۱۰ کاربر امتیازدار اول را نشان می‌دهد؛ رتبه به معنی احتمال برد نیست.\n\n"
+        "🎟 قرعه‌کشی وزن‌دار فقط با بلیت‌های تأییدشده انجام می‌شود؛ بلیت‌های بیشتر سهم بیشتری دارند، "
+        "اما درصد ثابت یا برد تضمینی وجود ندارد."
     )
     return "\n\n".join(lines)
 

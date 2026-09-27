@@ -294,7 +294,9 @@ async def on_promo_enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             success_text,
             parse_mode=ParseMode.HTML,
-            reply_markup=link_keyboard(settings, link, campaign),
+            reply_markup=link_keyboard(
+                settings, link, campaign, db.campaign_counts(campaign, user.id)
+            ),
             disable_web_page_preview=True,
         )
     except BadRequest as exc:

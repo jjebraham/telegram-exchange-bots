@@ -303,16 +303,19 @@ class ReferralMixin:
     def campaign_counts(self, campaign: Campaign, referrer_id: int,
                         now: datetime | None = None) -> dict[str, int]:
         cutoff = iso_utc(campaign.cutoff(now))
+        final_cutoff = iso_utc(campaign.final_qualification_cutoff)
         with self.connect() as conn:
             row = conn.execute(
                 """SELECT
                    SUM(CASE WHEN active=1 AND stay_since<=? THEN 1 ELSE 0 END) AS qualified,
                    SUM(CASE WHEN active=1 AND stay_since>? THEN 1 ELSE 0 END) AS pending,
+                   SUM(CASE WHEN active=1 AND stay_since>? AND stay_since<=? THEN 1 ELSE 0 END)
+                       AS qualifiable_pending,
                    SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS active_count,
                    SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS left_count,
                    COUNT(*) AS total
                    FROM referrals WHERE campaign_id=? AND referrer_id=?""",
-                (cutoff, cutoff, campaign.id, referrer_id),
+                (cutoff, cutoff, cutoff, final_cutoff, campaign.id, referrer_id),
             ).fetchone()
         qualified = int(row["qualified"] or 0)
         active = int(row["active_count"] or 0)
@@ -325,6 +328,7 @@ class ReferralMixin:
         return {
             "qualified": qualified,
             "pending": int(row["pending"] or 0),
+            "qualifiable_pending": int(row["qualifiable_pending"] or 0),
             "active": active,
             "left": int(row["left_count"] or 0),
             "total": int(row["total"] or 0),

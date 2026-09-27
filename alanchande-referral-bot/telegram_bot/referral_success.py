@@ -52,7 +52,9 @@ async def send_participant_welcome(context: ContextTypes.DEFAULT_TYPE, campaign,
                 f"⏳ <b>آخرین زمان ورود دعوت جدید برای تأیید:</b> {final_join_cutoff_text(campaign)}"
             ),
             parse_mode=ParseMode.HTML,
-            reply_markup=link_keyboard(settings, link, campaign),
+            reply_markup=link_keyboard(
+                settings, link, campaign, db.campaign_counts(campaign, user.id)
+            ),
             disable_web_page_preview=True,
         )
     except (Forbidden, BadRequest) as exc:
