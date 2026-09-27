@@ -4,8 +4,8 @@ The market base deliberately reuses the exact channel source stack:
 - median customer-buy USDT/Toman quote from the verified hybrid exchange set
 - BTCTurk USDT/TRY last price
 
-Only the market snapshot is cached briefly. The two admin percentages are read from
-pricing_settings.db on every request so panel changes take effect immediately.
+Only the market snapshot is cached briefly. Customer-facing percentages are read
+from pricing_settings.db on every request so panel changes take effect immediately.
 """
 
 from __future__ import annotations
@@ -28,8 +28,10 @@ if str(CHANNEL_SPLIT_DIR) not in sys.path:
 
 from hybrid_usdt_compare import collect_hybrid_usdt_snapshot  # noqa: E402
 from kiani_shared_pricing import (  # noqa: E402
+    calculate_hawala_try_rate,
     calculate_kiani_try_rates,
     fetch_btcturk_usdt_try,
+    load_hawala_try_adjustment,
     load_try_adjustments,
 )
 
@@ -103,6 +105,35 @@ def get_canonical_try_rates(*, force_refresh: bool = False) -> dict[str, Any]:
         "sell_lira": rates["sell_lira"],
         "buy_adjustment_pct": adjustments["user_tl_buy_adjustment_pct"],
         "sell_adjustment_pct": adjustments["user_tl_sell_adjustment_pct"],
+        "market_usdt_toman": market["market_usdt_toman"],
+        "market_usdt_try": market["market_usdt_try"],
+        "source_count": int(market["source_count"]),
+        "market_age_seconds": max(
+            0.0,
+            time.monotonic() - float(market["fetched_monotonic"]),
+        ),
+    }
+
+
+def get_canonical_hawala_try_rate(*, force_refresh: bool = False) -> dict[str, Any]:
+    """Return the Hawala TRY/Toman payout using the canonical market base.
+
+    This intentionally keeps the Hawala business adjustment independent from the
+    interactive/channel sell adjustment. When both percentages are equal, all
+    surfaces produce the exact same TRY/Toman quote.
+    """
+
+    market = _fresh_market_snapshot(force_refresh=force_refresh)
+    adjustment_pct = load_hawala_try_adjustment()
+    rate = calculate_hawala_try_rate(
+        market["market_usdt_toman"],
+        market["market_usdt_try"],
+        adjustment_pct,
+    )
+
+    return {
+        "hawala_try": rate,
+        "adjustment_pct": adjustment_pct,
         "market_usdt_toman": market["market_usdt_toman"],
         "market_usdt_try": market["market_usdt_try"],
         "source_count": int(market["source_count"]),
