@@ -11,7 +11,9 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 from kiani_shared_pricing import (  # noqa: E402
     DEFAULTS,
     calculate_kiani_rates,
+    calculate_kiani_try_rates,
     load_shared_adjustments,
+    load_try_adjustments,
 )
 
 
@@ -64,6 +66,45 @@ class KianiSharedPricingTests(unittest.TestCase):
         self.assertEqual(rates["sell_usdt"], Decimal("2.277E+5"))
         self.assertEqual(rates["lira_to_usdt"], Decimal("49.47"))
         self.assertEqual(rates["usdt_to_lira"], Decimal("47.53"))
+
+
+    def test_try_only_loader_and_calculation_match_full_engine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "pricing.sqlite3"
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "CREATE TABLE pricing_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.executemany(
+                "INSERT INTO pricing_settings (key, value) VALUES (?, ?)",
+                [
+                    ("user_tl_buy_adjustment_pct", "1"),
+                    ("user_tl_sell_adjustment_pct", "-2"),
+                ],
+            )
+            connection.commit()
+            connection.close()
+
+            adjustments = load_try_adjustments(db)
+
+        try_only = calculate_kiani_try_rates(
+            Decimal("237580"),
+            Decimal("49.40"),
+            adjustments,
+        )
+        full_adjustments = dict(DEFAULTS)
+        full_adjustments.update(adjustments)
+        full = calculate_kiani_rates(
+            Decimal("237580"),
+            Decimal("49.40"),
+            full_adjustments,
+        )
+
+        self.assertEqual(try_only["buy_lira"], full["buy_lira"])
+        self.assertEqual(try_only["sell_lira"], full["sell_lira"])
+        self.assertEqual(try_only["buy_lira"] % Decimal("10"), Decimal("0"))
+        self.assertEqual(try_only["sell_lira"] % Decimal("10"), Decimal("0"))
+
 
 
 if __name__ == "__main__":
