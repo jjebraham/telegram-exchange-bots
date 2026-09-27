@@ -53,6 +53,10 @@ async def get_current_rates():
         "rates": {
             "USDT_IRR": usdt_irr,
             "USDT_TRY": usdt_try,
+            # Backward-compatible fields consumed by the currently deployed
+            # miniapp bundle. Keep these identical to the canonical TRY pair.
+            "buy_lira": canonical_try["buy_lira"],
+            "sell_lira": canonical_try["sell_lira"],
             "TRY_BUY_TOMAN": canonical_try["buy_lira"],
             "TRY_SELL_TOMAN": canonical_try["sell_lira"],
             "TRY_BUY_ADJUSTMENT_PCT": canonical_try["buy_adjustment_pct"],
