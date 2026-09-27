@@ -1,9 +1,11 @@
 import aiohttp
+import asyncio
 import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
+from ..canonical_try_rates import get_canonical_try_rates
 from ..database import get_db
 from ..auth import get_current_user_id
 from ..price_cache import price_cache
@@ -108,9 +110,23 @@ async def create_transaction(
     req: TransactionRequest,
     user_id: int = Depends(get_current_user_id),
 ):
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    rates = derive_rates(usdt_irr, usdt_try)
+    if req.exchange_type in {"buy_lira", "sell_lira"}:
+        try:
+            canonical_try = await asyncio.to_thread(get_canonical_try_rates)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="canonical_try_rate_unavailable",
+            ) from exc
+        rates = {
+            "buy_lira": float(canonical_try["buy_lira"]),
+            "sell_lira": float(canonical_try["sell_lira"]),
+        }
+    else:
+        usdt_irr = await price_cache.get_usdt_irr()
+        usdt_try = await price_cache.get_usdt_try()
+        rates = derive_rates(usdt_irr, usdt_try)
+
     calculated = calculate_order(req.exchange_type, req.send_amount, rates)
 
     # Prevent negative-net USDT sends
