@@ -18,6 +18,8 @@ from telegram_bot.promo_handlers import (
 from telegram_bot.reminders import (
     _early_share_nudge_text,
     _engagement_v2_candidates,
+    _one_more_nudge_candidates,
+    _one_more_nudge_text,
     _participant_first_touch_source,
     _qualification_soon_candidates,
     _zero_referral_nudge_text,
@@ -152,6 +154,76 @@ class GrowthActivationTests(unittest.TestCase):
             )
             self.assertEqual([row["user_id"] for row in rows], [10])
 
+    def test_one_more_nudge_targets_stalled_one_of_two_once(self):
+        now = datetime(2026, 9, 29, 15, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = ReferralDB(os.path.join(tmp, "one-more.sqlite"))
+            db.init()
+            campaign = db.create_campaign(
+                "one-more",
+                "One more",
+                now - timedelta(days=2),
+                now + timedelta(days=20),
+                "prizes",
+                invites_per_point=2,
+                min_stay_hours=168,
+                max_points=20,
+                num_winners=5,
+            )
+            db.activate_campaign(campaign.slug, now)
+            campaign = db.get_campaign(campaign.slug)
+
+            db.upsert_user(10, "referrer", "Referrer", now=now - timedelta(days=1))
+            db.save_invite_link(
+                campaign.id,
+                10,
+                f"ref_{campaign.id}_10",
+                now - timedelta(hours=8),
+            )
+            db.track_funnel_event(
+                campaign.id,
+                10,
+                "entered_contest",
+                "mainchannel_b",
+                now - timedelta(hours=8),
+            )
+            db.record_join(
+                campaign,
+                101,
+                10,
+                "u101",
+                "U101",
+                now - timedelta(hours=7),
+            )
+
+            rows = _one_more_nudge_candidates(
+                db,
+                campaign,
+                now - timedelta(hours=6),
+            )
+            self.assertEqual([row["user_id"] for row in rows], [10])
+            self.assertEqual(rows[0]["marker"], "active:1")
+            self.assertIn(
+                "فقط ۱ نفر دیگه",
+                _one_more_nudge_text(campaign, rows[0]["counts"]),
+            )
+
+            db.track_funnel_event(
+                campaign.id,
+                10,
+                "nudge_one_more_sent",
+                "active:1",
+                now,
+            )
+            self.assertEqual(
+                _one_more_nudge_candidates(
+                    db,
+                    campaign,
+                    now - timedelta(hours=6),
+                ),
+                [],
+            )
+
     def test_qualification_soon_nudge_is_once_per_referral(self):
         now = datetime(2026, 9, 18, 18, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -260,7 +332,7 @@ class GrowthActivationTests(unittest.TestCase):
         self.assertIn("۲۱ میلیون تومان", text)
         self.assertNotIn("آخرین زمان ورود دعوت جدید", text)
 
-    def test_early_share_nudge_defaults_to_five_minutes(self):
+    def test_referral_nudge_defaults_match_activation_strategy(self):
         env = {
             "BOT_TOKEN": "123:test",
             "CHANNEL_ID": "-1001234567890",
@@ -268,7 +340,9 @@ class GrowthActivationTests(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=True):
             settings = Settings.from_env()
-        self.assertEqual(settings.early_share_nudge_minutes, 5)
+        self.assertEqual(settings.early_share_nudge_minutes, 45)
+        self.assertEqual(settings.zero_referral_nudge_hours, 12)
+        self.assertEqual(settings.one_more_nudge_hours, 6)
         self.assertEqual(settings.nudge_check_seconds, 300)
 
 
