@@ -14,7 +14,7 @@ from telegram.ext import Application
 from referral_core import ReferralDB, points_from_invites
 from referral_core.models import parse_datetime, utcnow
 from .config import Settings, hours_label, remaining_label, telegram_membership
-from .ui import link_keyboard
+from .ui import invitation_share_url, link_keyboard
 from .user_handlers import post_init as user_post_init, post_stop as user_post_stop
 
 log = logging.getLogger("alanchande_referral_bot")
@@ -325,6 +325,100 @@ def _zero_referral_nudge_text(campaign, source: str) -> str:
     )
 
 
+def _one_more_nudge_candidates(
+    db: ReferralDB,
+    campaign,
+    cutoff,
+    limit: int = 100,
+) -> list[dict]:
+    """Users stalled exactly one active invite short of the next point.
+
+    The reminder is keyed by active-referral count, so a user can receive it
+    again only after making real progress (for example at 1/2, then 3/4).
+    Pending candidates suppress the reminder because that user already has an
+    invite in flight.
+    """
+    threshold = max(1, int(campaign.invites_per_point))
+    if threshold <= 1:
+        return []
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT l.user_id,l.invite_link,
+                      COUNT(r.joined_user_id) AS active_count,
+                      MAX(r.stay_since) AS latest_active_since
+               FROM invite_links l
+               JOIN referrals r
+                 ON r.campaign_id=l.campaign_id
+                AND r.referrer_id=l.user_id
+                AND r.active=1
+               WHERE l.campaign_id=?
+                 AND EXISTS (
+                   SELECT 1 FROM funnel_events e
+                   WHERE e.campaign_id=l.campaign_id
+                     AND e.user_id=l.user_id
+                     AND e.event_type='entered_contest'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pending_referrals p
+                   WHERE p.campaign_id=l.campaign_id
+                     AND p.referrer_id=l.user_id
+                 )
+               GROUP BY l.user_id,l.invite_link
+               HAVING COUNT(r.joined_user_id)>0
+                  AND MAX(r.stay_since)<=?
+               ORDER BY MAX(r.stay_since) ASC
+               LIMIT ?""",
+            (campaign.id, cutoff.isoformat(), max(1, limit * 3)),
+        ).fetchall()
+
+    result = []
+    for row in rows:
+        item = dict(row)
+        uid = int(item["user_id"])
+        counts = db.campaign_counts(campaign, uid)
+        active_count = int(counts.get("active", item["active_count"] or 0))
+
+        if campaign.max_points and int(counts.get("current_points", 0)) >= campaign.max_points:
+            continue
+        if active_count % threshold != threshold - 1:
+            continue
+
+        marker = f"active:{active_count}"
+        if db.has_funnel_event(campaign.id, uid, "nudge_one_more_sent", marker):
+            continue
+
+        item["active_count"] = active_count
+        item["counts"] = counts
+        item["marker"] = marker
+        result.append(item)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _one_more_nudge_text(campaign, counts: dict) -> str:
+    first_point = int(counts.get("current_points", 0)) == 0
+    goal = "اولین امتیاز موقت" if first_point else "امتیاز موقت بعدی"
+    return (
+        "🔥 <b>فقط ۱ نفر دیگه مونده.</b>\n\n"
+        f"تا <b>{goal}</b> فقط <b>۱ دعوت فعال</b> فاصله داری.\n"
+        f"اگر دعوت‌ها <b>{hours_label(campaign.min_stay_hours)}</b> پیوسته عضو بمانند، "
+        "سهمشان برای بلیت قرعه‌کشی تأیید می‌شود.\n\n"
+        "👇 لینک آماده‌ست؛ همین الان برای یک نفر دیگه بفرست."
+    )
+
+
+def _one_more_keyboard(link: str, campaign) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "📤 فقط ۱ نفر دیگه",
+            url=invitation_share_url(link, campaign),
+        )],
+        [InlineKeyboardButton("📊 وضعیت من", callback_data="menu:stats")],
+    ])
+
+
 def _engagement_v2_candidates(
     db: ReferralDB,
     campaign_id: int,
@@ -457,6 +551,7 @@ async def nudge_pass(application: Application) -> dict:
             "campaign": None,
             "early_share": 0,
             "zero_referral": 0,
+            "one_more": 0,
             "qualification_soon": 0,
             "engagement_v2": 0,
             "promo_abandon": 0,
@@ -515,6 +610,44 @@ async def nudge_pass(application: Application) -> dict:
             db.track_funnel_event(campaign.id, uid, "nudge_zero_referral_sent", "unreachable")
         except TelegramError:
             log.exception("Zero-referral nudge failed user=%s", uid)
+
+    one_more_sent = 0
+    if utcnow() < campaign.final_qualification_cutoff:
+        one_more_rows = _one_more_nudge_candidates(
+            db,
+            campaign,
+            utcnow() - timedelta(hours=settings.one_more_nudge_hours),
+            limit=100,
+        )
+        for row in one_more_rows:
+            uid = int(row["user_id"])
+            if not _notification_allowed(application, campaign.id, uid):
+                continue
+            deep_link = _deep_link(username, row.get("invite_link", ""))
+            try:
+                await application.bot.send_message(
+                    uid,
+                    _one_more_nudge_text(campaign, row["counts"]),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=_one_more_keyboard(deep_link, campaign),
+                    disable_web_page_preview=True,
+                )
+                one_more_sent += 1
+                db.track_funnel_event(
+                    campaign.id,
+                    uid,
+                    "nudge_one_more_sent",
+                    row["marker"],
+                )
+            except (Forbidden, BadRequest):
+                db.track_funnel_event(
+                    campaign.id,
+                    uid,
+                    "nudge_one_more_sent",
+                    f"unreachable:{row['marker']}",
+                )
+            except TelegramError:
+                log.exception("One-more nudge failed user=%s", uid)
 
     engagement_v2_sent = 0
     # One-time reactivation experiment for the paeez1405 participants who
@@ -652,6 +785,7 @@ async def nudge_pass(application: Application) -> dict:
         "campaign": campaign.slug,
         "early_share": early_sent,
         "zero_referral": zero_sent,
+        "one_more": one_more_sent,
         "qualification_soon": qualification_soon_sent,
         "engagement_v2": engagement_v2_sent,
         "promo_abandon": promo_sent,
