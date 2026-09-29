@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily compact X alanchande-daily-digest
+
+[Timer]
+OnCalendar=*-*-* 12:25:00 Europe/Istanbul
+Persistent=false
+Unit=kiani-x-channel@alanchande-daily-digest.service
+
+[Install]
+WantedBy=timers.target

@@ -67,6 +67,12 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 db.track_funnel_event(campaign.id, user.id, "rejoin", "throttled")
             from .referral_success import send_participant_welcome
             await send_participant_welcome(context, campaign, user)
+            return
+
+        # This is the handler registered by app.py. Complete only users with
+        # recorded promo-entry intent, after both referral paths take priority.
+        from .promo_handlers import auto_complete_promo_join
+        await auto_complete_promo_join(context, campaign, user)
 
     elif was_member and not is_member_now:
         campaign = db.live_campaign()

@@ -50,6 +50,27 @@ class FunnelTests(unittest.TestCase):
         sources = {row["source"]: row["count"] for row in stats["sources"]}
         self.assertEqual(sources, {"bigchannel": 1, "organic": 1})
 
+    def test_funnel_event_lookup_can_guard_one_time_ticket_nudge(self):
+        self.assertFalse(self.db.has_funnel_event(
+            self.campaign.id, 20, "first_ticket_nudge_sent", ""
+        ))
+        self.db.track_funnel_event(
+            self.campaign.id, 20, "first_ticket_nudge_sent", "", self.now
+        )
+        self.assertTrue(self.db.has_funnel_event(
+            self.campaign.id, 20, "first_ticket_nudge_sent", ""
+        ))
+
+    def test_qualified_notification_count_tracks_the_ticket_threshold(self):
+        joined_at = self.now - timedelta(days=8)
+        self.db.record_join(self.campaign, 101, 20, "one", "One", joined_at)
+        self.db.record_join(self.campaign, 102, 20, "two", "Two", joined_at)
+
+        self.assertEqual(self.db.qualified_notification_count(self.campaign, 20, self.now), 0)
+        rows = self.db.unnotified_qualified(self.campaign, now=self.now)
+        self.db.mark_qualification_notified(rows[0]["id"], self.now)
+        self.assertEqual(self.db.qualified_notification_count(self.campaign, 20, self.now), 1)
+
     def test_funnel_combines_events_and_database_state(self):
         self.db.track_funnel_event(self.campaign.id, 20, "bot_start", "bigchannel", self.now)
         self.db.track_funnel_event(self.campaign.id, 30, "referral_open", "referral", self.now)

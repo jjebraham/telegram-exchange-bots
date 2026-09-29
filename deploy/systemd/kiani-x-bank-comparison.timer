@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily compact X bank-comparison
+
+[Timer]
+OnCalendar=*-*-* 09:25:00 Europe/Istanbul
+Persistent=false
+Unit=kiani-x-channel@bank-comparison.service
+
+[Install]
+WantedBy=timers.target

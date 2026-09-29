@@ -1,0 +1,14 @@
+[Unit]
+Description=Verified daily Kiani X post (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kianirad2020
+WorkingDirectory=/home/kianirad2020/telegram_bot_repo
+EnvironmentFile=/home/kianirad2020/.config/kiani-x.env
+Environment=PYTHONIOENCODING=utf-8
+Environment=X_CHANNEL_STATE_FILE=/home/kianirad2020/.local/state/kiani-x/deliveries.sqlite3
+ExecStart=/usr/bin/flock -w 480 /home/kianirad2020/.local/state/kiani-x/publish.lock /usr/bin/python3 /home/kianirad2020/telegram_bot_repo/x_channel_daily.py --post %i
+TimeoutStartSec=960

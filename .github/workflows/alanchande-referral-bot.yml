@@ -1,0 +1,44 @@
+name: AlanChande referral bot
+
+on:
+  pull_request:
+    paths:
+      - "alanchande-referral-bot/**"
+      - ".github/workflows/alanchande-referral-bot.yml"
+  push:
+    branches:
+      - main
+      - "feature/alanchande-referral-activation-v2"
+    paths:
+      - "alanchande-referral-bot/**"
+      - ".github/workflows/alanchande-referral-bot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install bot dependencies
+        working-directory: alanchande-referral-bot
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile bot and tests
+        working-directory: alanchande-referral-bot
+        run: python -m compileall -q referral_core telegram_bot tests
+
+      - name: Run bot tests
+        working-directory: alanchande-referral-bot
+        run: python -m unittest discover -s tests -v

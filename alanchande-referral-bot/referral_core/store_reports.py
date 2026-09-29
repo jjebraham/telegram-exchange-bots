@@ -132,6 +132,18 @@ class ReportsMixin:
                 (campaign_id, user_id, event, src, ts),
             )
 
+    def has_funnel_event(self, campaign_id: int, user_id: int, event_type: str,
+                         source: str = "") -> bool:
+        event = event_type.strip().lower()[:64]
+        src = source.strip().lower()[:64]
+        with self.connect() as conn:
+            row = conn.execute(
+                """SELECT 1 FROM funnel_events
+                   WHERE campaign_id=? AND user_id=? AND event_type=? AND source=? LIMIT 1""",
+                (campaign_id, user_id, event, src),
+            ).fetchone()
+        return row is not None
+
     def funnel_stats(self, campaign: Campaign, now: datetime | None = None) -> dict:
         cutoff = iso_utc(campaign.cutoff(now))
         with self.connect() as conn:
@@ -232,6 +244,18 @@ class ReportsMixin:
                 (campaign.id, cutoff, max(1, limit)),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def qualified_notification_count(self, campaign: Campaign, referrer_id: int,
+                                     now: datetime | None = None) -> int:
+        cutoff = iso_utc(campaign.cutoff(now))
+        with self.connect() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) AS n FROM referrals
+                   WHERE campaign_id=? AND referrer_id=? AND active=1 AND stay_since<=?
+                   AND qualified_notified_at IS NOT NULL""",
+                (campaign.id, referrer_id, cutoff),
+            ).fetchone()
+        return int(row["n"] or 0)
 
     def mark_qualification_notified(self, referral_id: int,
                                     now: datetime | None = None) -> None:

@@ -4,7 +4,7 @@
 The production mini-app remains the source of truth. This script reads the same
 public `/api/rates/current` payload that powers the mini-app and supports:
 
-- regular rate posts (with or without links),
+- link-free regular rate posts,
 - time-of-day variants so scheduled posts are not identical,
 - significant-rate-change alerts compared with the last published rates.
 """
@@ -28,11 +28,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
+from x_post_policy import finish, validate_text
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
 X_CREATE_POST_URL = "https://api.x.com/2/tweets"
-WHATSAPP_URL = "https://wa.me/905411603664"
-MINIAPP_URL = "https://miniapp.kiani.exchange"
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 
 REQUIRED_RATE_KEYS = (
@@ -149,8 +148,8 @@ def _format_rate_for_key(key: str, value: Decimal) -> str:
 
 def build_post_text(
     rates: dict[str, Decimal],
-    include_link: bool = True,
-    include_whatsapp: bool = True,
+    include_link: bool = False,
+    include_whatsapp: bool = False,
     variant: str = "standard",
 ) -> str:
     title = POST_TITLES.get(variant, POST_TITLES["standard"])
@@ -165,12 +164,8 @@ def build_post_text(
         f"💲 تتر به لیر: {_format_cross_rate(rates['usdt_to_lira'])}",
     ]
 
-    if include_whatsapp:
-        lines.extend(["", "معامله روی خط واتسپ و تلگرام", "", WHATSAPP_URL])
-    if include_link:
-        lines.extend(["", MINIAPP_URL])
-
-    return "\n".join(lines)
+    # Legacy arguments remain accepted, but every fixed post is now link-free.
+    return finish("\n".join(lines))
 
 
 def calculate_significant_changes(
@@ -220,7 +215,7 @@ def build_alert_text(
             f"🕒 بروزرسانی: {timestamp:%H:%M}",
         ]
     )
-    return "\n".join(lines)
+    return finish("\n".join(lines))
 
 
 def load_rate_state(path: str) -> dict[str, Decimal] | None:
@@ -302,6 +297,7 @@ def _oauth1_authorization_header(
 
 
 def publish_to_x(text: str, timeout: int = 20) -> dict[str, Any]:
+    text = validate_text(text)
     required_env = {
         "X_API_KEY": os.getenv("X_API_KEY", "").strip(),
         "X_API_SECRET": os.getenv("X_API_SECRET", "").strip(),
@@ -365,7 +361,7 @@ def main() -> int:
     parser.add_argument(
         "--no-link",
         action="store_true",
-        help="Omit miniapp.kiani.exchange but keep the WhatsApp link",
+        help="Compatibility option; all posts are always link-free",
     )
     parser.add_argument(
         "--no-links",
@@ -414,12 +410,8 @@ def main() -> int:
         print(f"Published Kiani Exchange rate alert to X (post id: {post_id})")
         return 0
 
-    include_whatsapp = not args.no_links
-    include_miniapp = not (args.no_link or args.no_links)
     text = build_post_text(
         rates,
-        include_link=include_miniapp,
-        include_whatsapp=include_whatsapp,
         variant=args.variant,
     )
 

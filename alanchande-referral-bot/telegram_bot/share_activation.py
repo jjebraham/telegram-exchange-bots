@@ -10,6 +10,7 @@ from referral_core import parse_datetime
 from . import reminders
 from .context import is_admin, services
 from .growth import cmd_sources as base_cmd_sources
+from .reporting import reply_report
 
 
 def record_referral_open_received(
@@ -263,14 +264,18 @@ def sharing_source_performance(db, campaign) -> dict:
     for source, bucket in buckets.items():
         holders = len(bucket["link_holders"])
         with_open = len(bucket["holders_with_open"])
+        with_candidate = len(bucket["holders_with_candidate"])
         rows.append({
             "source": source,
             "link_holders": holders,
             "holders_with_open": with_open,
-            "holders_with_candidate": len(bucket["holders_with_candidate"]),
+            "holders_with_candidate": with_candidate,
             "holders_with_join": len(bucket["holders_with_join"]),
             "unique_openers": len(bucket["unique_openers"]),
             "holder_to_open_pct": round(with_open * 100.0 / holders, 1) if holders else None,
+            "holder_to_candidate_pct": (
+                round(with_candidate * 100.0 / holders, 1) if holders else None
+            ),
             "median_first_open_minutes": (
                 round(float(median(bucket["first_open_minutes"])), 1)
                 if bucket["first_open_minutes"] else None
@@ -318,17 +323,25 @@ async def cmd_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     ]
     if not report["rows"]:
         lines.append("No sharing data yet.")
-    for row in report["rows"][:20]:
+    for row in report["rows"]:
         lines.extend([
             f"• {row['source']}",
             f"  holders={row['link_holders']} with_open={row['holders_with_open']} "
             f"with_candidate={row['holders_with_candidate']} with_join={row['holders_with_join']}",
             f"  unique_openers={row['unique_openers']} | holder→open={_pct(row['holder_to_open_pct'])} "
+            f"| holder→candidate={_pct(row['holder_to_candidate_pct'])} "
             f"| median link→first open={_minutes(row['median_first_open_minutes'])}",
         ])
+    total_holders = sum(row["link_holders"] for row in report["rows"])
+    total_activated = sum(row["holders_with_candidate"] for row in report["rows"])
+    overall_activation = (
+        round(total_activated * 100.0 / total_holders, 1)
+        if total_holders else None
+    )
     lines.extend([
         "",
+        f"Referral activation (holder→first candidate): {total_activated}/{total_holders} = {_pct(overall_activation)}",
         "Exact open attribution is recorded from this deployment forward; older opens are inferred when a pending/joined candidate can be matched.",
         "Telegram's native share-sheet completion is still not visible to the bot; downstream link opens are the reliable outcome metric.",
     ])
-    await update.message.reply_text("\n".join(lines))
+    await reply_report(update.message, "\n".join(lines))

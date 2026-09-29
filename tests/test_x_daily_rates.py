@@ -34,10 +34,10 @@ class DailyXRatesTests(unittest.TestCase):
         self.assertIn("💲 لیر به تتر: 49.63", text)
         self.assertIn("💲 تتر به لیر: 47.69", text)
 
-    def test_linked_post_contains_whatsapp_and_miniapp(self):
-        text = build_post_text(self.rates)
-        self.assertIn("https://wa.me/905411603664", text)
-        self.assertIn("https://miniapp.kiani.exchange", text)
+    def test_legacy_link_arguments_are_now_link_free(self):
+        text = build_post_text(self.rates, include_link=True, include_whatsapp=True)
+        self.assertIn("حواله روی خط واتسپ", text)
+        self.assertNotIn("https://", text)
         self.assertNotIn("+905411603664", text)
 
     def test_link_free_post_contains_no_urls(self):
