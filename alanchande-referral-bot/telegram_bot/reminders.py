@@ -640,11 +640,19 @@ async def nudge_pass(application: Application) -> dict:
                     row["marker"],
                 )
             except (Forbidden, BadRequest):
+                # Mark this progress state as attempted so an unreachable user
+                # is not retried every five minutes.
                 db.track_funnel_event(
                     campaign.id,
                     uid,
                     "nudge_one_more_sent",
-                    f"unreachable:{row['marker']}",
+                    row["marker"],
+                )
+                db.track_funnel_event(
+                    campaign.id,
+                    uid,
+                    "nudge_one_more_unreachable",
+                    row["marker"],
                 )
             except TelegramError:
                 log.exception("One-more nudge failed user=%s", uid)
