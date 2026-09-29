@@ -154,6 +154,7 @@ class ShareActivationTests(unittest.TestCase):
         self.assertEqual(referral["holders_with_open"], 1)
         self.assertEqual(referral["holders_with_join"], 1)
         self.assertEqual(referral["unique_openers"], 1)
+        self.assertEqual(referral["holder_to_candidate_pct"], 100.0)
         self.assertEqual(referral["median_first_open_minutes"], 30.0)
 
         main = rows["mainchannel_b"]
@@ -161,6 +162,7 @@ class ShareActivationTests(unittest.TestCase):
         self.assertEqual(main["holders_with_open"], 1)
         self.assertEqual(main["holders_with_candidate"], 1)
         self.assertEqual(main["holders_with_join"], 0)
+        self.assertEqual(main["holder_to_candidate_pct"], 100.0)
         self.assertEqual(main["median_first_open_minutes"], 20.0)
 
 
