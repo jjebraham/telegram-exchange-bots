@@ -448,6 +448,63 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(check.decision, VERIFIED)
         self.assertEqual(set(check.source_values), {"direct:والکس", "tgju"})
 
+    def test_usdt_family_neutral_reference_avoids_aggregator_row_bias(self):
+        rows = [
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "والکس",
+                    "buy_toman": Decimal("250100"),
+                    "sell_toman": Decimal("249900"),
+                    "source": "direct",
+                },
+            )(),
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "رمزینکس",
+                    "buy_toman": Decimal("256600"),
+                    "sell_toman": Decimal("256400"),
+                    "source": "direct",
+                },
+            )(),
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "اکسیر",
+                    "buy_toman": Decimal("257100"),
+                    "sell_toman": Decimal("256900"),
+                    "source": "direct",
+                },
+            )(),
+            *[
+                type(
+                    "Q",
+                    (),
+                    {
+                        "exchange": name,
+                        "buy_toman": Decimal("250100") + Decimal(index),
+                        "sell_toman": Decimal("249900") + Decimal(index),
+                        "source": "tgju",
+                    },
+                )()
+                for index, name in enumerate(
+                    ["نوبیتکس", "بیت پین", "آبان تتر", "تبدیل"]
+                )
+            ],
+        ]
+
+        check = evaluate_observation(usdt_observations(rows)[0])
+
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(
+            set(check.source_values),
+            {"direct:والکس", "direct:رمزینکس", "direct:اکسیر", "tgju"},
+        )
+
     def test_usdt_bad_displayed_exchange_row_blocks_post(self):
         rows = [
             type(
