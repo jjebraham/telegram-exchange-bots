@@ -1286,7 +1286,11 @@ def main() -> int:
                     market_key=f"iran-fx:{code}/TOMAN",
                     source_values=source_values,
                     min_sources=2,
-                    max_source_deviation_pct=Decimal("2.00"),
+                    max_source_deviation_pct=(
+                        Decimal("2.50")
+                        if len(source_values) >= 3
+                        else Decimal("2.00")
+                    ),
                     suspicious_move_pct=Decimal("6.00"),
                     strong_quorum=3,
                     unavailable_sources=tuple(unavailable),
