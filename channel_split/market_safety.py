@@ -330,7 +330,7 @@ def evaluate_observation(
             if cluster_size * 2 <= len(source_names):
                 break
 
-            candidates: list[dict[str, Decimal]] = []
+            candidates: list[tuple[dict[str, Decimal], Decimal]] = []
             for names in combinations(source_names, cluster_size):
                 candidate = {name: normalized[name] for name in names}
                 candidate_reference = _median(candidate.values())
@@ -340,13 +340,27 @@ def evaluate_observation(
                     * Decimal("100")
                 )
                 if candidate_spread_pct <= observation.max_source_deviation_pct:
-                    candidates.append(candidate)
+                    candidates.append((candidate, candidate_spread_pct))
 
             if len(candidates) == 1:
-                majority_cluster = candidates[0]
+                majority_cluster = candidates[0][0]
                 break
             if len(candidates) > 1:
-                # More than one equally large valid cluster is ambiguous.
+                # Several same-size majorities can overlap when one middle
+                # source is close enough to both sides. Do not choose merely
+                # because one pair is microscopically tighter. Only accept a
+                # uniquely tight cluster whose spread is within half of the
+                # configured tolerance while every competing cluster is
+                # looser than that cutoff. Otherwise the split is genuinely
+                # ambiguous and remains fail-closed.
+                tight_cutoff = observation.max_source_deviation_pct / Decimal("2")
+                tight_candidates = [
+                    candidate
+                    for candidate, spread in candidates
+                    if spread <= tight_cutoff
+                ]
+                if len(tight_candidates) == 1:
+                    majority_cluster = tight_candidates[0]
                 break
 
         if majority_cluster is not None:
