@@ -300,6 +300,11 @@ class PublisherSafetyModeTests(unittest.TestCase):
                 ),
                 patch.object(
                     publish_channels,
+                    "fetch_dolarchand_iran_fx",
+                    return_value=({}, {"TRY": "unavailable"}),
+                ),
+                patch.object(
+                    publish_channels,
                     "build_iran_fx_post",
                     return_value="IRAN-FX",
                 ) as build_iran_fx_post,
