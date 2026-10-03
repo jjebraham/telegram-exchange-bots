@@ -115,6 +115,23 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(check.reference_value, Decimal("4731"))
         self.assertIn("rejected outlier source(s): tgju=4826.5", check.reason)
 
+    def test_overlapping_loose_majorities_remain_blocked(self):
+        check = evaluate_observation(
+            SafetyObservation(
+                "iran-fx:test/TOMAN",
+                {
+                    "source-a": Decimal("100.0"),
+                    "source-b": Decimal("101.1"),
+                    "source-c": Decimal("102.2"),
+                },
+                min_sources=2,
+                max_source_deviation_pct=Decimal("2.00"),
+                strong_quorum=3,
+            )
+        )
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("consensus spread is too wide", check.reason)
+
     def test_two_source_disagreement_still_blocks(self):
         check = evaluate_observation(
             SafetyObservation(
