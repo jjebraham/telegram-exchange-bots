@@ -1116,17 +1116,19 @@ def usdt_observations(quotes: Iterable[Any]) -> list[SafetyObservation]:
         # reference, so a genuinely bad row remains fail-closed.
         family_values = usdt_source_family_values(rows)
         market_median = _median(family_values.values())
+        displayed_row_tolerance_pct = Decimal("3.00")
         for quote, midpoint in row_midpoints:
             deviation = (
                 abs(midpoint - market_median)
                 / market_median
                 * Decimal("100")
             )
-            if deviation > Decimal("2.00"):
+            if deviation > displayed_row_tolerance_pct:
                 errors.append(
                     f"{quote.exchange}: displayed row is "
                     f"{deviation.quantize(Decimal('0.01'))}% from "
-                    "independent-family median"
+                    "independent-family median "
+                    f"(>{displayed_row_tolerance_pct}%)"
                 )
 
     return [
