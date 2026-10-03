@@ -448,6 +448,122 @@ class MarketSafetyTests(unittest.TestCase):
         self.assertEqual(check.decision, VERIFIED)
         self.assertEqual(set(check.source_values), {"direct:والکس", "tgju"})
 
+    def test_usdt_family_neutral_reference_matches_production_split(self):
+        rows = [
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "والکس",
+                    "buy_toman": Decimal("261003"),
+                    "sell_toman": Decimal("261001"),
+                    "source": "direct",
+                },
+            )(),
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "رمزینکس",
+                    "buy_toman": Decimal("262750"),
+                    "sell_toman": Decimal("262749"),
+                    "source": "direct",
+                },
+            )(),
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "اکسیر",
+                    "buy_toman": Decimal("263249"),
+                    "sell_toman": Decimal("263247"),
+                    "source": "direct",
+                },
+            )(),
+            *[
+                type(
+                    "Q",
+                    (),
+                    {
+                        "exchange": name,
+                        "buy_toman": value + Decimal("1"),
+                        "sell_toman": value - Decimal("1"),
+                        "source": "tgju",
+                    },
+                )()
+                for name, value in (
+                    ("نوبیتکس", Decimal("255140")),
+                    ("بیت پین", Decimal("256149")),
+                    ("آبان تتر", Decimal("255425")),
+                    ("تبدیل", Decimal("254294")),
+                )
+            ],
+        ]
+
+        check = evaluate_observation(usdt_observations(rows)[0])
+
+        self.assertEqual(check.decision, VERIFIED)
+        self.assertEqual(
+            set(check.source_values),
+            {"direct:والکس", "direct:رمزینکس", "direct:اکسیر"},
+        )
+        self.assertIn("rejected outlier source(s): tgju=", check.reason)
+
+    def test_usdt_displayed_row_over_three_percent_still_blocks(self):
+        rows = [
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "والکس",
+                    "buy_toman": Decimal("261003"),
+                    "sell_toman": Decimal("261001"),
+                    "source": "direct",
+                },
+            )(),
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "رمزینکس",
+                    "buy_toman": Decimal("262750"),
+                    "sell_toman": Decimal("262749"),
+                    "source": "direct",
+                },
+            )(),
+            type(
+                "Q",
+                (),
+                {
+                    "exchange": "اکسیر",
+                    "buy_toman": Decimal("263249"),
+                    "sell_toman": Decimal("263247"),
+                    "source": "direct",
+                },
+            )(),
+            *[
+                type(
+                    "Q",
+                    (),
+                    {
+                        "exchange": name,
+                        "buy_toman": Decimal("250001") + Decimal(index),
+                        "sell_toman": Decimal("249999") + Decimal(index),
+                        "source": "tgju",
+                    },
+                )()
+                for index, name in enumerate(
+                    ["نوبیتکس", "بیت پین", "آبان تتر", "تبدیل"]
+                )
+            ],
+        ]
+
+        check = evaluate_observation(usdt_observations(rows)[0])
+
+        self.assertEqual(check.decision, BLOCKED)
+        self.assertIn("independent-family median", check.reason)
+        self.assertIn(">3.00%", check.reason)
+
     def test_usdt_bad_displayed_exchange_row_blocks_post(self):
         rows = [
             type(
@@ -486,7 +602,7 @@ class MarketSafetyTests(unittest.TestCase):
         ]
         check = evaluate_observation(usdt_observations(rows)[0])
         self.assertEqual(check.decision, BLOCKED)
-        self.assertIn("cross-exchange median", check.reason)
+        self.assertIn("independent-family median", check.reason)
 
     def test_usdt_abnormally_wide_customer_spread_blocks_post(self):
         rows = [
