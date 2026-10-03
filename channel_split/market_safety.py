@@ -1106,9 +1106,16 @@ def usdt_observations(quotes: Iterable[Any]) -> list[SafetyObservation]:
         errors.append(f"only {two_sided} two-sided exchange rows; need at least 4")
 
     if len(row_midpoints) >= 3:
-        market_median = _median(
-            midpoint for _, midpoint in row_midpoints
-        )
+        # Build the structural reference from independent source families,
+        # not from raw displayed rows. Several displayed exchanges may come
+        # from the same aggregator family (for example TGJU), and counting
+        # each row equally can overweight that one provider and incorrectly
+        # mark multiple independent direct exchanges as outliers.
+        #
+        # Every displayed row is still checked against the family-neutral
+        # reference, so a genuinely bad row remains fail-closed.
+        family_values = usdt_source_family_values(rows)
+        market_median = _median(family_values.values())
         for quote, midpoint in row_midpoints:
             deviation = (
                 abs(midpoint - market_median)
@@ -1119,7 +1126,7 @@ def usdt_observations(quotes: Iterable[Any]) -> list[SafetyObservation]:
                 errors.append(
                     f"{quote.exchange}: displayed row is "
                     f"{deviation.quantize(Decimal('0.01'))}% from "
-                    "cross-exchange median"
+                    "independent-family median"
                 )
 
     return [
