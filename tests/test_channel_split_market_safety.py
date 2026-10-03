@@ -602,7 +602,7 @@ class MarketSafetyTests(unittest.TestCase):
         ]
         check = evaluate_observation(usdt_observations(rows)[0])
         self.assertEqual(check.decision, BLOCKED)
-        self.assertIn("cross-exchange median", check.reason)
+        self.assertIn("independent-family median", check.reason)
 
     def test_usdt_abnormally_wide_customer_spread_blocks_post(self):
         rows = [
