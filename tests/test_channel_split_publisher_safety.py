@@ -215,6 +215,64 @@ class PublisherSafetyModeTests(unittest.TestCase):
             self.assertIn("VERIFIED", status)
             self.assertIn("published=1", status)
 
+    def test_iran_fx_three_source_quorum_allows_production_usd_spread(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(publish_channels, "fetch_iran_open_market_fx",
+                             return_value={"USD": Decimal("258465")}),
+                patch.object(publish_channels, "fetch_pashizi_iran_fx",
+                             return_value={"USD": Decimal("261200")}),
+                patch.object(publish_channels, "fetch_dolarchand_iran_fx",
+                             return_value=({"USD": Decimal("264200")}, {})),
+                patch.object(publish_channels, "build_iran_fx_post",
+                             return_value="IRAN-FX"),
+                patch.object(publish_channels, "telegram_send",
+                             return_value={"ok": True}) as telegram_send,
+                patch.object(publish_channels, "record_published_values",
+                             return_value="2026-10-02T17:30:21+00:00"),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_called_once()
+            status = recent_safety_status(db)
+            self.assertIn("iran-fx:USD/TOMAN", status)
+            self.assertIn("VERIFIED", status)
+            self.assertIn("agree within 2.50%", status)
+
+    def test_iran_fx_two_source_quorum_keeps_two_percent_limit(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(publish_channels, "fetch_iran_open_market_fx",
+                             return_value={"USD": Decimal("258000")}),
+                patch.object(publish_channels, "fetch_pashizi_iran_fx",
+                             return_value={"USD": Decimal("264000")}),
+                patch.object(publish_channels, "fetch_dolarchand_iran_fx",
+                             return_value=({}, {"USD": "unavailable"})),
+                patch.object(publish_channels, "build_iran_fx_post",
+                             return_value="IRAN-FX"),
+                patch.object(publish_channels, "telegram_send") as telegram_send,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_not_called()
+            status = recent_safety_status(db)
+            self.assertIn("iran-fx:USD/TOMAN", status)
+            self.assertIn("BLOCKED", status)
+
     def test_iran_fx_three_source_consensus_rejects_tgju_try_outlier(self):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
