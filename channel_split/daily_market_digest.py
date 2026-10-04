@@ -29,6 +29,7 @@ from iran_gold import fetch_iran_gold_market, parse_tgju_profile_current
 from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from kiani_posts import JALALI_MONTHS, PERSIAN_WEEKDAYS, gregorian_to_jalali
 from market_safety import (
+    VERIFIED,
     PostSafetyAssessment,
     SafetyObservation,
     assess_post,
@@ -93,6 +94,18 @@ CRYPTO_DISPLAY = (
     ("XRP", "💠", "ریپل"),
 )
 
+DAILY_DIGEST_EXPECTED_KEYS = frozenset(
+    key
+    for key, *_rest in (*FX_DISPLAY, *GOLD_DISPLAY, *CRYPTO_DISPLAY)
+)
+# These anchors define whether each major section is trustworthy enough to
+# publish. Peripheral rows may be shown as unavailable without suppressing the
+# entire 29-line digest.
+DAILY_DIGEST_CORE_KEYS = frozenset(
+    {"USD", "USDT", "COIN_EMAMI", "GOLD18", "BTC", "ETH"}
+)
+DAILY_DIGEST_MAX_UNAVAILABLE_NONCORE = 4
+
 _DIGITS = str.maketrans(
     "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
     "01234567890123456789",
@@ -105,6 +118,66 @@ class DailyDigestResult:
     assessment: PostSafetyAssessment
     published_values: dict[str, Decimal]
     source_health: dict[str, str | None]
+
+
+def _digest_key(market_key: str) -> str | None:
+    prefix = "daily-digest:"
+    if not market_key.startswith(prefix):
+        return None
+    return market_key[len(prefix):]
+
+
+def _apply_partial_digest_policy(
+    assessment: PostSafetyAssessment,
+) -> tuple[PostSafetyAssessment, frozenset[str]]:
+    check_by_key = {
+        key: check
+        for check in assessment.checks
+        if (key := _digest_key(check.market_key))
+    }
+
+    # Never relax malformed/incomplete assessments.
+    if frozenset(check_by_key) != DAILY_DIGEST_EXPECTED_KEYS:
+        return assessment, frozenset()
+
+    unavailable = frozenset(
+        key
+        for key, check in check_by_key.items()
+        if check.decision != VERIFIED
+    )
+    if not unavailable:
+        return assessment, frozenset()
+
+    if unavailable & DAILY_DIGEST_CORE_KEYS:
+        return assessment, unavailable
+
+    if len(unavailable) > DAILY_DIGEST_MAX_UNAVAILABLE_NONCORE:
+        return assessment, unavailable
+
+    verified_count = sum(
+        check.decision == VERIFIED
+        for check in check_by_key.values()
+    )
+    if verified_count != len(DAILY_DIGEST_EXPECTED_KEYS) - len(unavailable):
+        return assessment, unavailable
+
+    details = "; ".join(
+        f"{key}: {check_by_key[key].reason}"
+        for key in sorted(unavailable)
+    )
+    return (
+        PostSafetyAssessment(
+            post_type=assessment.post_type,
+            decision=VERIFIED,
+            reason=(
+                f"{verified_count}/{len(DAILY_DIGEST_EXPECTED_KEYS)} "
+                "safety checks verified; omitted unavailable non-core rows: "
+                f"{', '.join(sorted(unavailable))}; {details}"
+            ),
+            checks=assessment.checks,
+        ),
+        unavailable,
+    )
 
 
 class _VisibleText(HTMLParser):
@@ -411,7 +484,10 @@ def collect_digest(
                 min_sources=2,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("6.00"),
-                strong_quorum=3,
+                # TGJU + Dolarchand are the only independent families for
+                # these digest FX rows. Requiring a third source makes a
+                # large-move recovery impossible after any blocked day.
+                strong_quorum=2,
             )
         )
 
@@ -432,7 +508,8 @@ def collect_digest(
             min_sources=2,
             max_source_deviation_pct=Decimal("2.00"),
             suspicious_move_pct=Decimal("6.00"),
-            strong_quorum=3,
+            # IQD100 has exactly TGJU + Dolarchand.
+            strong_quorum=2,
         )
     )
 
@@ -444,7 +521,8 @@ def collect_digest(
                 min_sources=2,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
-                strong_quorum=3,
+                # Iran gold digest rows have exactly TGJU + Dolarchand.
+                strong_quorum=2,
             )
         )
 
@@ -477,10 +555,11 @@ def collect_digest(
         )
 
     assessment = assess_post(history_db, "daily-market-digest", observations)
+    assessment, unavailable_keys = _apply_partial_digest_policy(assessment)
 
     current: dict[str, Decimal] = {}
     for check in assessment.checks:
-        if check.reference_value is None:
+        if check.decision != VERIFIED or check.reference_value is None:
             continue
         key = check.market_key.removeprefix("daily-digest:")
         current[key] = check.reference_value
@@ -494,7 +573,12 @@ def collect_digest(
         now=now,
     )
     changes = percentage_changes(current, previous)
-    text = build_digest_post(current, changes, now=now)
+    text = build_digest_post(
+        current,
+        changes,
+        now=now,
+        unavailable_keys=unavailable_keys,
+    )
     return DailyDigestResult(
         text=text,
         assessment=assessment,
@@ -554,13 +638,19 @@ def build_digest_post(
     changes_24h: Mapping[str, Decimal] | None = None,
     *,
     now: datetime | None = None,
+    unavailable_keys: set[str] | frozenset[str] | tuple[str, ...] = (),
 ) -> str:
-    required = {
-        *(key for key, *_ in FX_DISPLAY),
-        *(key for key, *_ in GOLD_DISPLAY),
-        *(key for key, *_ in CRYPTO_DISPLAY),
-    }
-    missing = sorted(required - set(values))
+    unavailable = set(unavailable_keys)
+    unknown_unavailable = sorted(unavailable - DAILY_DIGEST_EXPECTED_KEYS)
+    if unknown_unavailable:
+        raise ValueError(
+            "Daily digest has unknown unavailable keys: "
+            + ", ".join(unknown_unavailable)
+        )
+
+    missing = sorted(
+        DAILY_DIGEST_EXPECTED_KEYS - set(values) - unavailable
+    )
     if missing:
         raise ValueError("Daily digest is missing: " + ", ".join(missing))
 
@@ -573,6 +663,11 @@ def build_digest_post(
         "💱 <b>نرخ ارز:</b> (تومان)",
     ]
     for key, flag, label in FX_DISPLAY:
+        if key in unavailable:
+            lines.append(
+                f"{flag} <b>{label}</b> <code>—</code> ➖ —"
+            )
+            continue
         lines.append(
             f"{flag} <b>{label}</b> <code>{_fmt_toman(key, values[key])}</code> "
             f"{_fmt_change(changes.get(key))}"
@@ -580,7 +675,11 @@ def build_digest_post(
 
     lines.extend(["", "🪙 <b>قیمت طلا و سکه:</b> (تومان)"])
     for key, flag, label in GOLD_DISPLAY:
-        if key == "XAUUSD":
+        if key in unavailable:
+            lines.append(
+                f"{flag} <b>{label}</b> <code>—</code> ➖ —"
+            )
+        elif key == "XAUUSD":
             xau = values[key].quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             lines.append(
                 f"{flag} <b>{label}</b> <code>{xau:,}$</code> "
@@ -594,10 +693,35 @@ def build_digest_post(
 
     lines.extend(["", "🧬 <b>رمزارزها:</b> (دلار)"])
     for key, flag, label in CRYPTO_DISPLAY:
+        if key in unavailable:
+            lines.append(
+                f"{flag} <b>{label}</b> ({key}) <code>—</code> ➖ —"
+            )
+            continue
         lines.append(
             f"{flag} <b>{label}</b> ({key}) "
             f"<code>{_fmt_crypto(key, values[key])}$</code> "
             f"{_fmt_change(changes.get(key))}"
+        )
+
+    if unavailable:
+        label_by_key = {
+            key: label
+            for key, _flag, label in (
+                *FX_DISPLAY,
+                *GOLD_DISPLAY,
+                *CRYPTO_DISPLAY,
+            )
+        }
+        unavailable_labels = "، ".join(
+            label_by_key[key] for key in sorted(unavailable)
+        )
+        lines.extend(
+            [
+                "",
+                "⚠️ برخی نرخ‌ها به‌دلیل اختلاف یا کمبود منابع "
+                f"موقتاً نمایش داده نمی‌شوند: {unavailable_labels}",
+            ]
         )
 
     lines.extend(["", "🔗 @alanchande_com"])

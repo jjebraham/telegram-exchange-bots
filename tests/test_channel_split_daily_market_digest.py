@@ -1,6 +1,7 @@
 """Offline tests for the verified AlanChande daily market digest."""
 from __future__ import annotations
 
+import inspect
 import sys
 import unittest
 from datetime import datetime
@@ -13,12 +14,21 @@ sys.path.insert(0, str(ROOT / "channel_split"))
 
 from daily_market_digest import (  # noqa: E402
     CRYPTO_DISPLAY,
+    DAILY_DIGEST_EXPECTED_KEYS,
     FX_DISPLAY,
     GOLD_DISPLAY,
+    _apply_partial_digest_policy,
     build_digest_post,
+    collect_digest,
     parse_dolarchand_iqd100_toman,
     parse_dolarchand_toman_rate,
     parse_dolarchand_xau_usd,
+)
+from market_safety import (  # noqa: E402
+    BLOCKED,
+    VERIFIED,
+    PostSafetyAssessment,
+    SafetyCheck,
 )
 
 
@@ -79,6 +89,85 @@ class DailyMarketDigestTests(unittest.TestCase):
         self.assertIn("🔻 %0.79", post)
         self.assertIn("@alanchande_com", post)
         self.assertLessEqual(len(post), 4096)
+
+    def _assessment_with_failures(
+        self,
+        *failed_keys: str,
+    ) -> PostSafetyAssessment:
+        failed = set(failed_keys)
+        checks = []
+        for key in sorted(DAILY_DIGEST_EXPECTED_KEYS):
+            checks.append(
+                SafetyCheck(
+                    market_key=f"daily-digest:{key}",
+                    decision=BLOCKED if key in failed else VERIFIED,
+                    reason="test failure" if key in failed else "verified",
+                    source_values={
+                        "source-a": Decimal("100"),
+                        "source-b": Decimal("100"),
+                    },
+                    reference_value=Decimal("100"),
+                    last_accepted_value=Decimal("90"),
+                    move_pct=Decimal("11.11"),
+                )
+            )
+        return PostSafetyAssessment(
+            post_type="daily-market-digest",
+            decision=BLOCKED if failed else VERIFIED,
+            reason="test assessment",
+            checks=tuple(checks),
+        )
+
+    def test_two_source_rows_do_not_require_impossible_third_source(self):
+        source = inspect.getsource(collect_digest)
+        self.assertEqual(source.count("strong_quorum=2"), 3)
+        self.assertEqual(source.count("strong_quorum=3"), 3)
+
+    def test_noncore_unavailable_rows_render_dash(self):
+        values = self._values()
+        for key in ("AFN", "IQD100", "XAUUSD"):
+            del values[key]
+
+        post = build_digest_post(
+            values,
+            unavailable_keys={"AFN", "IQD100", "XAUUSD"},
+        )
+
+        self.assertIn("🇦🇫 <b>افغانی</b> <code>—</code> ➖ —", post)
+        self.assertIn("🇮🇶 <b>صد دینار عراق</b> <code>—</code> ➖ —", post)
+        self.assertIn("💰 <b>انس طلا</b> <code>—</code> ➖ —", post)
+        self.assertIn("موقتاً نمایش داده نمی‌شوند", post)
+
+    def test_partial_policy_allows_two_noncore_failures(self):
+        assessment = self._assessment_with_failures("AFN", "IQD100")
+
+        adjusted, unavailable = _apply_partial_digest_policy(assessment)
+
+        self.assertEqual(adjusted.decision, VERIFIED)
+        self.assertEqual(unavailable, frozenset({"AFN", "IQD100"}))
+        self.assertIn("27/29 safety checks verified", adjusted.reason)
+
+    def test_partial_policy_keeps_core_failure_fail_closed(self):
+        assessment = self._assessment_with_failures("USD")
+
+        adjusted, unavailable = _apply_partial_digest_policy(assessment)
+
+        self.assertEqual(adjusted.decision, BLOCKED)
+        self.assertEqual(unavailable, frozenset({"USD"}))
+
+    def test_partial_policy_blocks_too_many_noncore_failures(self):
+        assessment = self._assessment_with_failures(
+            "AFN",
+            "IQD100",
+            "XAUUSD",
+            "GRAM",
+            "NOT",
+        )
+
+        adjusted, unavailable = _apply_partial_digest_policy(assessment)
+
+        self.assertEqual(adjusted.decision, BLOCKED)
+        self.assertEqual(len(unavailable), 5)
 
     def test_missing_price_is_rejected(self):
         values = self._values()
