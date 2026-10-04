@@ -22,3 +22,5 @@ jobs:
       - name: Targeted tests
         run: |
           python -m unittest -v             tests.test_channel_split_iran_fx             tests.test_channel_split_publisher_safety             tests.test_channel_split_market_safety
+
+# rerun after assertion fix
