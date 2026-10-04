@@ -184,8 +184,23 @@ def build_iran_fx_post(
     rates_toman: dict[str, Decimal],
     change_24h: Mapping[str, Decimal] | None = None,
     change_1m: Mapping[str, Decimal] | None = None,
+    *,
+    unavailable_codes: set[str] | frozenset[str] | tuple[str, ...] = (),
 ) -> str:
-    missing = [code for code, *_rest in CURRENCY_ROWS if code not in rates_toman]
+    unavailable = set(unavailable_codes)
+    known_codes = {code for code, *_rest in CURRENCY_ROWS}
+    unknown_unavailable = sorted(unavailable - known_codes)
+    if unknown_unavailable:
+        raise ValueError(
+            "Iran FX post has unknown unavailable codes: "
+            + ", ".join(unknown_unavailable)
+        )
+
+    missing = [
+        code
+        for code, *_rest in CURRENCY_ROWS
+        if code not in rates_toman and code not in unavailable
+    ]
     if missing:
         raise ValueError("Iran FX post is missing: " + ", ".join(missing))
 
@@ -197,6 +212,16 @@ def build_iran_fx_post(
         ltr + f"{'CURRENCY':<8} {'TOMAN':>10} {'Δ24H':>8} {'Δ1M':>8}"
     ]
     for code, flag, _name, _labels in CURRENCY_ROWS:
+        if code in unavailable:
+            table.append(
+                ltr
+                + f"{flag} {code:<3} "
+                f"{'—':>10} "
+                f"{'—':>8} "
+                f"{'—':>8}"
+            )
+            continue
+
         table.append(
             ltr
             + f"{flag} {code:<3} "
@@ -206,14 +231,26 @@ def build_iran_fx_post(
         )
 
     now = datetime.now(TEHRAN_TZ).strftime("%H:%M")
+    footer = [
+        "",
+        "💵 واحد: تومان 🇮🇷",
+        f"🕒 <code>{now}</code> تهران",
+    ]
+    if unavailable:
+        footer.append(
+            "⚠️ نرخ "
+            + ", ".join(sorted(unavailable))
+            + " به‌دلیل اختلاف منابع موقتاً نمایش داده نمی‌شود."
+        )
+    footer.append(
+        "نرخ‌ها مربوط به بازار آزاد و صرفاً جهت اطلاع‌رسانی هستند."
+    )
+
     return "\n".join(
         [
             "💱 <b>نرخ ارز آزاد ایران</b>",
             "",
             "<pre>" + "\n".join(table) + "</pre>",
-            "",
-            "💵 واحد: تومان 🇮🇷",
-            f"🕒 <code>{now}</code> تهران",
-            "نرخ‌ها مربوط به بازار آزاد و صرفاً جهت اطلاع‌رسانی هستند.",
+            *footer,
         ]
     )
