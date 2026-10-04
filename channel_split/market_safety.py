@@ -1023,6 +1023,11 @@ def iran_gold_observations(
                 source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
+                # Iran gold has exactly two independent source families in
+                # production (TGJU and Dolarchand). Requiring a third source
+                # for a large move makes recovery impossible after one blocked
+                # day even when both live sources agree tightly.
+                strong_quorum=2,
                 unavailable_sources=unavailable_sources,
             )
         )
@@ -1037,6 +1042,11 @@ def iran_gold_observations(
                 source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
+                # Iran gold has exactly two independent source families in
+                # production (TGJU and Dolarchand). Requiring a third source
+                # for a large move makes recovery impossible after one blocked
+                # day even when both live sources agree tightly.
+                strong_quorum=2,
                 unavailable_sources=unavailable_sources,
             )
         )
@@ -1051,6 +1061,11 @@ def iran_gold_observations(
                 source_values=source_values,
                 max_source_deviation_pct=Decimal("2.00"),
                 suspicious_move_pct=Decimal("7.00"),
+                # Iran gold has exactly two independent source families in
+                # production (TGJU and Dolarchand). Requiring a third source
+                # for a large move makes recovery impossible after one blocked
+                # day even when both live sources agree tightly.
+                strong_quorum=2,
                 unavailable_sources=unavailable_sources,
             )
         )
