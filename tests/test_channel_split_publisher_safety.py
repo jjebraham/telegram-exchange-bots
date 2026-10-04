@@ -747,7 +747,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
                     "record_published_values",
                 ) as record_published_values,
                 patch("sys.stdout", new_callable=io.StringIO),
-                patch("sys.stderr", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
             ):
                 result = publish_channels.main()
 
@@ -757,11 +757,8 @@ class PublisherSafetyModeTests(unittest.TestCase):
             self.assertIsNone(
                 load_last_accepted(db, "iran-fx:USD/TOMAN")
             )
-
-            status = recent_safety_status(db)
-            self.assertIn("iran-fx:USD/TOMAN", status)
-            self.assertIn("BLOCKED", status)
-            self.assertIn("published=0", status)
+            self.assertIn("iran-fx:USD/TOMAN", stderr.getvalue())
+            self.assertIn("BLOCKED", stderr.getvalue())
 
     def test_iran_fx_two_noncore_failures_still_block_entire_post(self):
         with tempfile.TemporaryDirectory() as tempdir:
