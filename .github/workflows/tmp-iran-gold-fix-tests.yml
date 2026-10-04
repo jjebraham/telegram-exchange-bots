@@ -1,0 +1,24 @@
+name: Temporary Iran gold fix tests
+
+on:
+  push:
+    branches:
+      - fix/iran-gold-two-source-quorum-20261004
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax
+        run: python -m py_compile channel_split/market_safety.py channel_split/publish_channels.py
+      - name: Targeted tests
+        run: |
+          python -m unittest -v             tests.test_channel_split_market_safety             tests.test_channel_split_publisher_safety             tests.test_channel_split_timer_schedule
