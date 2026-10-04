@@ -39,6 +39,17 @@ class PublisherSafetyModeTests(unittest.TestCase):
             sell=Decimal("48.71"),
         )
 
+    def _full_iran_fx_sources(self):
+        tgju = {
+            code: Decimal(100000 + index * 1000)
+            for index, (code, *_rest) in enumerate(
+                publish_channels.CURRENCY_ROWS
+            )
+        }
+        pashizi = dict(tgju)
+        dolarchand = dict(tgju)
+        return tgju, pashizi, dolarchand
+
     def test_enforce_blocked_post_never_calls_telegram(self):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
@@ -613,6 +624,194 @@ class PublisherSafetyModeTests(unittest.TestCase):
             status = recent_safety_status(db)
             self.assertIn("VERIFIED", status)
             self.assertIn("published=1", status)
+
+
+    def test_iran_fx_isolated_afn_failure_publishes_with_unavailable_row(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+
+            # Three independent AFN sources span ~2.96%. Two overlapping
+            # source pairs fit inside 2.5%, but neither pair is uniquely tight
+            # enough to win, so AFN itself remains BLOCKED.
+            tgju["AFN"] = Decimal("4000")
+            pashizi["AFN"] = Decimal("4060")
+            dolarchand["AFN"] = Decimal("4120")
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_iran_open_market_fx",
+                    return_value=tgju,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_pashizi_iran_fx",
+                    return_value=pashizi,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_dolarchand_iran_fx",
+                    return_value=(dolarchand, {}),
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_adonis_try_sell_toman",
+                    return_value=tgju["TRY"],
+                ),
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                    return_value={"ok": True},
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_published_values",
+                    return_value="2026-10-04T17:30:00+00:00",
+                ) as record_published_values,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_called_once()
+            post = telegram_send.call_args.args[2]
+            afn_line = next(
+                line for line in post.splitlines() if "🇦🇫 AFN" in line
+            )
+            self.assertIn("—", afn_line)
+            self.assertNotIn("4,000", afn_line)
+            self.assertIn(
+                "نرخ AFN به‌دلیل اختلاف منابع موقتاً نمایش داده نمی‌شود.",
+                post,
+            )
+
+            history_values = record_published_values.call_args.args[2]
+            self.assertNotIn("AFN", history_values)
+            self.assertIn("USD", history_values)
+
+            self.assertIsNone(
+                load_last_accepted(db, "iran-fx:AFN/TOMAN")
+            )
+            self.assertIsNotNone(
+                load_last_accepted(db, "iran-fx:USD/TOMAN")
+            )
+
+            status = recent_safety_status(db)
+            self.assertIn("iran-fx:AFN/TOMAN", status)
+            self.assertIn("BLOCKED", status)
+            self.assertIn("published=1", status)
+
+    def test_iran_fx_core_usd_failure_still_blocks_entire_post(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+            tgju["USD"] = Decimal("100000")
+            pashizi["USD"] = Decimal("101500")
+            dolarchand["USD"] = Decimal("103000")
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_iran_open_market_fx",
+                    return_value=tgju,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_pashizi_iran_fx",
+                    return_value=pashizi,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_dolarchand_iran_fx",
+                    return_value=(dolarchand, {}),
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_adonis_try_sell_toman",
+                    return_value=tgju["TRY"],
+                ),
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_published_values",
+                ) as record_published_values,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_not_called()
+            record_published_values.assert_not_called()
+            self.assertIsNone(
+                load_last_accepted(db, "iran-fx:USD/TOMAN")
+            )
+
+            status = recent_safety_status(db)
+            self.assertIn("iran-fx:USD/TOMAN", status)
+            self.assertIn("BLOCKED", status)
+            self.assertIn("published=0", status)
+
+    def test_iran_fx_two_noncore_failures_still_block_entire_post(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+            for code in ("AFN", "QAR"):
+                tgju[code] = Decimal("4000")
+                pashizi[code] = Decimal("4060")
+                dolarchand[code] = Decimal("4120")
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(
+                    publish_channels,
+                    "fetch_iran_open_market_fx",
+                    return_value=tgju,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_pashizi_iran_fx",
+                    return_value=pashizi,
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_dolarchand_iran_fx",
+                    return_value=(dolarchand, {}),
+                ),
+                patch.object(
+                    publish_channels,
+                    "fetch_adonis_try_sell_toman",
+                    return_value=tgju["TRY"],
+                ),
+                patch.object(
+                    publish_channels,
+                    "telegram_send",
+                ) as telegram_send,
+                patch.object(
+                    publish_channels,
+                    "record_published_values",
+                ) as record_published_values,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_not_called()
+            record_published_values.assert_not_called()
 
 
 if __name__ == "__main__":
