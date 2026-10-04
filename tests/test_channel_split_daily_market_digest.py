@@ -1,6 +1,7 @@
 """Offline tests for the verified AlanChande daily market digest."""
 from __future__ import annotations
 
+import inspect
 import sys
 import unittest
 from datetime import datetime
@@ -18,6 +19,7 @@ from daily_market_digest import (  # noqa: E402
     GOLD_DISPLAY,
     _apply_partial_digest_policy,
     build_digest_post,
+    collect_digest,
     parse_dolarchand_iqd100_toman,
     parse_dolarchand_toman_rate,
     parse_dolarchand_xau_usd,
@@ -115,6 +117,11 @@ class DailyMarketDigestTests(unittest.TestCase):
             reason="test assessment",
             checks=tuple(checks),
         )
+
+    def test_two_source_rows_do_not_require_impossible_third_source(self):
+        source = inspect.getsource(collect_digest)
+        self.assertEqual(source.count("strong_quorum=2"), 3)
+        self.assertEqual(source.count("strong_quorum=3"), 3)
 
     def test_noncore_unavailable_rows_render_dash(self):
         values = self._values()
