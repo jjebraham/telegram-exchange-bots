@@ -319,6 +319,49 @@ class MarketSafetyTests(unittest.TestCase):
                 {"tgju", "dolarchand"},
             )
 
+    def test_iran_gold_large_move_can_verify_with_two_agreeing_sources(self):
+        market = type(
+            "IranGoldMarket",
+            (),
+            {
+                "coin_prices_rial": {
+                    "سکه امامی": Decimal("2700000000"),
+                    "سکه بهار آزادی": Decimal("2580000000"),
+                    "نیم سکه": Decimal("1400000000"),
+                    "ربع سکه": Decimal("770000000"),
+                    "سکه گرمی": Decimal("380000000"),
+                },
+                "gold18_rial": Decimal("261000000"),
+                "mesghal_rial": Decimal("1130000000"),
+            },
+        )()
+        external = {
+            "سکه امامی": Decimal("270100000"),
+            "سکه بهار آزادی": Decimal("258100000"),
+            "نیم سکه": Decimal("140100000"),
+            "ربع سکه": Decimal("77050000"),
+            "سکه گرمی": Decimal("38000000"),
+            "طلای ۱۸ عیار": Decimal("26110000"),
+            "مثقال طلا": Decimal("113050000"),
+        }
+
+        observations = iran_gold_observations(
+            market,
+            {"dolarchand": external},
+        )
+
+        for observation in observations:
+            check = evaluate_observation(
+                observation,
+                last_accepted_value=(
+                    sum(observation.source_values.values())
+                    / Decimal(len(observation.source_values))
+                    * Decimal("0.90")
+                ),
+            )
+            self.assertEqual(check.decision, VERIFIED)
+            self.assertEqual(observation.strong_quorum, 2)
+
     def test_turkey_gold_can_verify_with_independent_altinkaynak_source(self):
         quote = type(
             "GoldQuote",
