@@ -39,7 +39,7 @@ from gold_history import load_turkey_gold_near_24h, record_turkey_gold_quotes
 from iran_gold import build_iran_gold_post, fetch_iran_gold_market
 from iran_gold_external_verifier import fetch_dolarchand_iran_gold
 from iran_gold_history import load_iran_gold_near_24h, record_iran_gold_market
-from iran_fx import build_iran_fx_post, fetch_iran_open_market_fx
+from iran_fx import CURRENCY_ROWS, build_iran_fx_post, fetch_iran_open_market_fx
 from iran_fx_adonis import fetch_adonis_try_sell_toman
 from iran_fx_dolarchand import fetch_dolarchand_iran_fx
 from iran_fx_pashizi import fetch_pashizi_iran_fx
@@ -119,6 +119,76 @@ from telegram_forwarding import (
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+
+# Iran-FX is a broad 25-currency bulletin. A single peripheral cross should
+# not suppress healthy major rates for hours, but the major pairs remain
+# strictly fail-closed. We only tolerate one isolated non-core omission when
+# every other expected currency has a VERIFIED safety check.
+IRAN_FX_CORE_CODES = frozenset({"USD", "EUR", "GBP", "AED", "TRY"})
+IRAN_FX_EXPECTED_CODES = frozenset(code for code, *_rest in CURRENCY_ROWS)
+IRAN_FX_MAX_OMITTED_NONCORE = 1
+
+
+def _iran_fx_code_from_market_key(market_key: str) -> str | None:
+    prefix = "iran-fx:"
+    if not market_key.startswith(prefix) or "/" not in market_key:
+        return None
+    return market_key[len(prefix):].split("/", 1)[0]
+
+
+def _apply_iran_fx_isolated_omission_policy(
+    assessment: PostSafetyAssessment,
+) -> tuple[PostSafetyAssessment, frozenset[str]]:
+    check_by_code = {
+        code: check
+        for check in assessment.checks
+        if (code := _iran_fx_code_from_market_key(check.market_key))
+    }
+
+    # Never relax a malformed/incomplete assessment. Partial publishing is
+    # allowed only for the known full 25-currency board.
+    if frozenset(check_by_code) != IRAN_FX_EXPECTED_CODES:
+        return assessment, frozenset()
+
+    failed_codes = frozenset(
+        code
+        for code, check in check_by_code.items()
+        if check.decision != VERIFIED
+    )
+    if not failed_codes:
+        return assessment, frozenset()
+
+    if failed_codes & IRAN_FX_CORE_CODES:
+        return assessment, failed_codes
+
+    if len(failed_codes) > IRAN_FX_MAX_OMITTED_NONCORE:
+        return assessment, failed_codes
+
+    verified_count = sum(
+        check.decision == VERIFIED
+        for check in check_by_code.values()
+    )
+    if verified_count != len(IRAN_FX_EXPECTED_CODES) - len(failed_codes):
+        return assessment, failed_codes
+
+    omitted = ", ".join(sorted(failed_codes))
+    omitted_reasons = "; ".join(
+        f"{code}: {check_by_code[code].reason}"
+        for code in sorted(failed_codes)
+    )
+    return (
+        PostSafetyAssessment(
+            post_type=assessment.post_type,
+            decision=VERIFIED,
+            reason=(
+                f"{verified_count}/{len(IRAN_FX_EXPECTED_CODES)} safety checks "
+                f"verified; omitted isolated non-core currency: {omitted}; "
+                f"{omitted_reasons}"
+            ),
+            checks=assessment.checks,
+        ),
+        failed_codes,
+    )
 
 
 def _load_local_env() -> None:
@@ -1302,17 +1372,20 @@ def main() -> int:
             "iran-fx",
             observations,
         )
+        assessment, unavailable_codes = (
+            _apply_iran_fx_isolated_omission_policy(assessment)
+        )
 
-        # Publish the verified consensus reference rather than blindly using
-        # the TGJU display value. This matters when two independent sources
-        # agree and one provider is rejected as an outlier.
+        # Publish only independently VERIFIED consensus references. A failed
+        # non-core row may be explicitly shown as unavailable, but its raw
+        # source value must never leak into the public board or history.
         check_by_code = {
             check.market_key.split(":", 1)[1].split("/", 1)[0]: check
             for check in assessment.checks
             if check.market_key.startswith("iran-fx:")
         }
         publish_rates: dict[str, Decimal] = {}
-        for code, raw_value in rates.items():
+        for code in rates:
             check = check_by_code.get(code)
             if (
                 check is not None
@@ -1320,8 +1393,6 @@ def main() -> int:
                 and check.reference_value is not None
             ):
                 publish_rates[code] = check.reference_value
-            else:
-                publish_rates[code] = raw_value
 
         iran_fx_publish_cache = publish_rates
 
@@ -1343,6 +1414,7 @@ def main() -> int:
             publish_rates,
             percentage_changes(publish_rates, previous_24h),
             percentage_changes(publish_rates, previous_1m),
+            unavailable_codes=unavailable_codes,
         )
         return text, assessment
 

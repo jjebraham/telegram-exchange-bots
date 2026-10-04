@@ -81,5 +81,34 @@ class IranFxTests(unittest.TestCase):
         self.assertNotIn("= دلار آمریکا", post)
 
 
+    def test_build_post_can_mark_explicit_currency_unavailable(self):
+        rates = parse_tgju_currency_page(self._fixture_html())
+        rates.pop("AFN")
+
+        post = build_iran_fx_post(
+            rates,
+            {"USD": Decimal("0.25")},
+            {},
+            unavailable_codes={"AFN"},
+        )
+
+        afn_line = next(
+            line for line in post.splitlines() if "🇦🇫 AFN" in line
+        )
+        self.assertIn("—", afn_line)
+        self.assertNotIn("3,542", afn_line)
+        self.assertIn(
+            "نرخ AFN به‌دلیل اختلاف منابع موقتاً نمایش داده نمی‌شود.",
+            post,
+        )
+
+    def test_build_post_still_fails_for_unexplained_missing_currency(self):
+        rates = parse_tgju_currency_page(self._fixture_html())
+        rates.pop("AFN")
+
+        with self.assertRaisesRegex(ValueError, "AFN"):
+            build_iran_fx_post(rates)
+
+
 if __name__ == "__main__":
     unittest.main()
