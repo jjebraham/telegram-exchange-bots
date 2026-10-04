@@ -10,13 +10,13 @@ IRAN_GOLD_TIMER = (
 
 
 class ProductionTimerTests(unittest.TestCase):
-    def test_iran_gold_only_runs_once_daily_at_0930_tehran(self):
+    def test_iran_gold_only_runs_once_daily_at_0935_tehran(self):
         text = IRAN_GOLD_TIMER.read_text(encoding="utf-8")
         schedule = [
             line for line in text.splitlines()
             if line.startswith("OnCalendar=")
         ]
-        self.assertEqual(schedule, ["OnCalendar=*-*-* 09:30:00 Asia/Tehran"])
+        self.assertEqual(schedule, ["OnCalendar=*-*-* 09:35:00 Asia/Tehran"])
         self.assertIn("Persistent=false", text)
         self.assertIn(
             "Unit=channel-split-production@alanchande-iran-gold.service",
