@@ -222,6 +222,10 @@ class AdminSendMessageRequest(BaseModel):
 
 
 def _admin_role(username: str, password: str) -> str | None:
+    # Unconfigured optional accounts must never authenticate empty credentials.
+    if not username or not password:
+        return None
+
     admin_user = os.getenv("ADMIN_PANEL_USERNAME", "admin")
     admin_pass = os.getenv("ADMIN_PANEL_PASSWORD", "admin123")
     support_user = os.getenv("SUPPORT_PANEL_USERNAME", "support")
