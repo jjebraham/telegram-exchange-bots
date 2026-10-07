@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -14,6 +14,11 @@ DEFAULT_PRICING_DB_PATH = "/home/kianirad2020/send_changes/pricing_settings.db"
 DEFAULT_TRY_RATES_URL = "http://127.0.0.1:8000/api/rates/try"
 MIN_ADJUSTMENT_PCT = Decimal("-50")
 MAX_ADJUSTMENT_PCT = Decimal("50")
+CANONICAL_TRY_SOURCE = "channel-hybrid-usdt+btcturk"
+CANONICAL_TRY_ADJUSTMENTS = {
+    "buy_lira": ("user_tl_buy_adjustment_pct", "buy_adjustment_pct"),
+    "sell_lira": ("user_tl_sell_adjustment_pct", "sell_adjustment_pct"),
+}
 
 
 def pricing_db_path(override: str | None = None) -> str:
@@ -68,6 +73,44 @@ def get_adjustment_percentage(
     return _parse_percentage(row[0], default)
 
 
+def _read_required_adjustment_percentage(
+    key: str,
+    db_path: str | None = None,
+) -> Decimal:
+    """Read the exact admin-panel percentage; never substitute a default."""
+    resolved_path = pricing_db_path(db_path)
+    if not Path(resolved_path).is_file():
+        raise RuntimeError("Shared TRY pricing database is unavailable")
+
+    try:
+        connection = sqlite3.connect(resolved_path, timeout=3)
+        try:
+            connection.execute("PRAGMA busy_timeout = 3000")
+            row = connection.execute(
+                "SELECT value FROM pricing_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError) as exc:
+        raise RuntimeError("Could not read shared TRY pricing settings") from exc
+
+    if not row:
+        raise RuntimeError(f"Shared TRY pricing database is missing {key}")
+
+    try:
+        percentage = Decimal(str(row[0]))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise RuntimeError(f"Shared TRY pricing setting {key} is invalid") from exc
+    if (
+        not percentage.is_finite()
+        or percentage < MIN_ADJUSTMENT_PCT
+        or percentage > MAX_ADJUSTMENT_PCT
+    ):
+        raise RuntimeError(f"Shared TRY pricing setting {key} is out of range")
+    return percentage
+
+
 def get_adjustment_factor(
     key: str,
     default_percentage: Decimal | str,
@@ -85,8 +128,9 @@ def get_canonical_try_rate(
     rate_key: str,
     url: str | None = None,
     timeout: int = 15,
+    db_path: str | None = None,
 ) -> int:
-    """Fetch one canonical TRY/Toman customer rate from the local Kiani API."""
+    """Fetch and verify a canonical TRY/Toman customer rate from the local Kiani API."""
 
     if rate_key not in {"buy_lira", "sell_lira"}:
         raise ValueError(f"Unsupported canonical TRY rate: {rate_key}")
@@ -112,14 +156,48 @@ def get_canonical_try_rate(
         raise RuntimeError(f"Canonical TRY API unavailable: {exc}") from exc
 
     rates = payload.get("rates") if isinstance(payload, dict) else None
-    if not isinstance(rates, dict) or rate_key not in rates:
+    if not isinstance(rates, dict):
         raise RuntimeError("Canonical TRY API response is missing rate data")
 
+    db_key, adjustment_key = CANONICAL_TRY_ADJUSTMENTS[rate_key]
     try:
         value = Decimal(str(rates[rate_key]))
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise RuntimeError("Canonical TRY API returned a non-numeric rate") from exc
+        reported_adjustment = Decimal(str(rates[adjustment_key]))
+        market_usdt_toman = Decimal(str(rates["market_usdt_toman"]))
+        market_usdt_try = Decimal(str(rates["market_usdt_try"]))
+    except (KeyError, InvalidOperation, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Canonical TRY API response is missing pricing metadata or numeric rates"
+        ) from exc
 
-    if not value.is_finite() or value <= 0:
-        raise RuntimeError("Canonical TRY API returned an invalid rate")
+    if rates.get("source") != CANONICAL_TRY_SOURCE:
+        raise RuntimeError("Canonical TRY API is not using the shared market source")
+    if (
+        not value.is_finite()
+        or value <= 0
+        or not reported_adjustment.is_finite()
+        or reported_adjustment < MIN_ADJUSTMENT_PCT
+        or reported_adjustment > MAX_ADJUSTMENT_PCT
+        or not market_usdt_toman.is_finite()
+        or market_usdt_toman <= 0
+        or not market_usdt_try.is_finite()
+        or market_usdt_try <= 0
+    ):
+        raise RuntimeError("Canonical TRY API returned invalid pricing metadata")
+
+    configured_adjustment = _read_required_adjustment_percentage(db_key, db_path)
+    if reported_adjustment != configured_adjustment:
+        raise RuntimeError(
+            "Canonical TRY API adjustment does not match the admin-panel setting"
+        )
+
+    expected_rate = (
+        (market_usdt_toman / market_usdt_try)
+        * (Decimal("1") + reported_adjustment / Decimal("100"))
+        / Decimal("10")
+    ).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * Decimal("10")
+    if value != expected_rate:
+        raise RuntimeError(
+            "Canonical TRY API rate does not match its market and adjustment metadata"
+        )
     return int(value)
