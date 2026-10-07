@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { calculateFee, calculateReceiveAmount, deriveRates } from './exchangeMath';
 import type { ExchangeType, Rates } from './exchangeMath';
 
@@ -1832,6 +1832,9 @@ function AdminPanelPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loggedIn, setLoggedIn] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const loginPending = useRef(false);
   const [users, setUsers] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
@@ -1848,40 +1851,91 @@ function AdminPanelPage() {
   const [targetUserId, setTargetUserId] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
 
-  const loadAll = async () => {
-    const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    const [u, t, l, r, f] = await Promise.all([
-      fetch(`${API_URL}/admin/users?${qs}`),
-      fetch(`${API_URL}/admin/transactions?${qs}`),
-      fetch(`${API_URL}/admin/logs?${qs}`),
-      fetch(`${API_URL}/admin/reports?${qs}`),
-      fetch(`${API_URL}/admin/faqs?${qs}`),
-    ]);
-    setUsers((await u.json()).users || []);
-    setTransactions((await t.json()).transactions || []);
-    setLogs((await l.json()).logs || []);
-    setReport((await r.json()).report || null);
-    setFaqs((await f.json()).faqs || []);
-  };
-
-  const login = async () => {
-    const res = await fetch(`${API_URL}/admin/login`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (res.ok) {
-      setLoggedIn(true);
-      loadAll();
-    } else {
-      notifyMessage('نام کاربری یا رمز عبور ادمین اشتباه است');
+  const loadAll = async (credentials = { username, password }) => {
+    const qs = `username=${encodeURIComponent(credentials.username)}&password=${encodeURIComponent(credentials.password)}`;
+    try {
+      const [u, t, l, r, f] = await Promise.all([
+        fetch(`${API_URL}/admin/users?${qs}`),
+        fetch(`${API_URL}/admin/transactions?${qs}`),
+        fetch(`${API_URL}/admin/logs?${qs}`),
+        fetch(`${API_URL}/admin/reports?${qs}`),
+        fetch(`${API_URL}/admin/faqs?${qs}`),
+      ]);
+      if ([u, t, l, r, f].some((response) => !response.ok)) {
+        throw new Error('admin_data_unavailable');
+      }
+      setUsers((await u.json()).users || []);
+      setTransactions((await t.json()).transactions || []);
+      setLogs((await l.json()).logs || []);
+      setReport((await r.json()).report || null);
+      setFaqs((await f.json()).faqs || []);
+      setAdminError('');
+    } catch {
+      setAdminError('ورود انجام شد، اما دریافت اطلاعات پنل ناموفق بود. دوباره بروزرسانی کنید.');
     }
   };
 
-  if (!loggedIn) return <div className="p-6 max-w-md mx-auto"><div className="bg-white p-6 rounded-xl shadow"><h2 className="text-xl font-bold mb-4">ورود ادمین</h2><input className="w-full border p-2 mb-2 rounded" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} /><input type="password" className="w-full border p-2 mb-3 rounded" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} /><button onClick={login} className="w-full bg-blue-600 text-white py-2 rounded">Login</button></div></div>;
+  const login = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (loginPending.current) return;
+    // Browser password managers can fill inputs without updating React state.
+    const formData = new FormData(event.currentTarget);
+    const credentials = {
+      username: String(formData.get('username') || '').trim(),
+      password: String(formData.get('password') || ''),
+    };
+    setAdminError('');
+    if (!credentials.username || !credentials.password) {
+      setAdminError('نام کاربری و رمز عبور را وارد کنید.');
+      return;
+    }
+    loginPending.current = true;
+    setLoggingIn(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(`${API_URL}/admin/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        setAdminError(res.status === 401 || res.status === 403
+          ? 'نام کاربری یا رمز عبور ادمین اشتباه است.'
+          : 'سرویس ورود در دسترس نیست. لطفاً دوباره تلاش کنید.');
+        return;
+      }
+      setUsername(credentials.username);
+      setPassword(credentials.password);
+      setLoggedIn(true);
+      void loadAll(credentials);
+    } catch {
+      setAdminError(controller.signal.aborted
+        ? 'پاسخ سرور طول کشید. لطفاً دوباره تلاش کنید.'
+        : 'خطا در ارتباط با سرور. لطفاً دوباره تلاش کنید.');
+    } finally {
+      window.clearTimeout(timeout);
+      loginPending.current = false;
+      setLoggingIn(false);
+    }
+  };
+
+  if (!loggedIn) return (
+    <div className="p-6 max-w-md mx-auto">
+      <form onSubmit={login} className="bg-white p-6 rounded-xl shadow" aria-busy={loggingIn}>
+        <h2 className="text-xl font-bold mb-4">ورود ادمین</h2>
+        <input name="username" aria-label="Username" autoComplete="username" className="w-full border p-2 mb-2 rounded" placeholder="Username" defaultValue={username} />
+        <input name="password" aria-label="Password" autoComplete="current-password" type="password" className="w-full border p-2 mb-3 rounded" placeholder="Password" defaultValue={password} />
+        {adminError && <p role="alert" className="mb-3 text-sm text-red-600">{adminError}</p>}
+        <button type="submit" disabled={loggingIn} className="w-full bg-blue-600 text-white py-2 rounded disabled:opacity-50">{loggingIn ? 'در حال ورود...' : 'Login'}</button>
+      </form>
+    </div>
+  );
 
   return (
     <div className="p-4 space-y-4">
-      <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Admin Panel</h2><button onClick={loadAll} className="bg-blue-100 px-3 py-1 rounded">Refresh</button></div>
+      <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Admin Panel</h2><button onClick={() => void loadAll()} className="bg-blue-100 px-3 py-1 rounded">Refresh</button></div>
+      {adminError && <p role="alert" className="text-sm text-red-600">{adminError}</p>}
       <div className="bg-white p-4 rounded-xl shadow text-sm">{report && <div>Orders: {report.total_orders} | Done: {report.done_orders} | Canceled: {report.canceled_orders}</div>}</div>
       <div className="bg-white p-4 rounded-xl shadow">
         <h3 className="font-bold mb-2">کنترل سفارش</h3>
