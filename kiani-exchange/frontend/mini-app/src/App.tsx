@@ -223,7 +223,7 @@ function App() {
       fetchUserProfile(token);
     }
     fetchRates();
-    const interval = setInterval(fetchRates, 600000); // refresh every 10 min
+    const interval = setInterval(fetchRates, 60000); // refresh canonical rates every minute
     return () => clearInterval(interval);
   }, []);
 
@@ -246,14 +246,23 @@ function App() {
   const fetchRates = async () => {
     if (!rates.buy_lira) setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/rates/current`);
-      const data = await response.json();
+      const [response, tryResponse] = await Promise.all([
+        fetch(`${API_URL}/rates/current`, { cache: 'no-store' }),
+        fetch(`${API_URL}/rates/try`, { cache: 'no-store' }),
+      ]);
+      if (!response.ok || !tryResponse.ok) {
+        throw new Error('Rate API unavailable');
+      }
+      const [data, tryData] = await Promise.all([
+        response.json(),
+        tryResponse.json(),
+      ]);
 
       const usdt_irr = data.rates.USDT_IRR;
       const usdt_try = data.rates.USDT_TRY;
       const derived = deriveRates(usdt_irr, usdt_try);
-      const canonicalBuy = Number(data.rates.TRY_BUY_TOMAN);
-      const canonicalSell = Number(data.rates.TRY_SELL_TOMAN);
+      const canonicalBuy = Number(tryData.rates.buy_lira);
+      const canonicalSell = Number(tryData.rates.sell_lira);
       if (
         !Number.isFinite(canonicalBuy) || canonicalBuy <= 0 ||
         !Number.isFinite(canonicalSell) || canonicalSell <= 0
