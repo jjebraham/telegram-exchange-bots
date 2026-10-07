@@ -60,9 +60,11 @@ const RateBox = ({
         <span className="text-blue-600 font-bold text-lg">
           {loading
             ? '...'
-            : isConversionRate
-              ? `${rate.toLocaleString('fa-IR')} لیر`
-              : `${rate.toLocaleString('fa-IR')} تومان`}
+            : !Number.isFinite(Number(rate)) || Number(rate) <= 0
+              ? 'در دسترس نیست'
+              : isConversionRate
+                ? `${Number(rate).toLocaleString('fa-IR')} لیر`
+                : `${Number(rate).toLocaleString('fa-IR')} تومان`}
         </span>
       </div>
     </div>
@@ -261,13 +263,19 @@ function App() {
       const usdt_irr = data.rates.USDT_IRR;
       const usdt_try = data.rates.USDT_TRY;
       const derived = deriveRates(usdt_irr, usdt_try);
-      const canonicalBuy = Number(tryData.rates.buy_lira);
-      const canonicalSell = Number(tryData.rates.sell_lira);
+      const canonicalSource = tryData.rates?.source;
+      const buyAdjustment = Number(tryData.rates?.buy_adjustment_pct);
+      const sellAdjustment = Number(tryData.rates?.sell_adjustment_pct);
+      const canonicalBuy = Number(tryData.rates?.buy_lira);
+      const canonicalSell = Number(tryData.rates?.sell_lira);
       if (
+        canonicalSource !== 'channel-hybrid-usdt+btcturk' ||
+        !Number.isFinite(buyAdjustment) || Math.abs(buyAdjustment) > 50 ||
+        !Number.isFinite(sellAdjustment) || Math.abs(sellAdjustment) > 50 ||
         !Number.isFinite(canonicalBuy) || canonicalBuy <= 0 ||
         !Number.isFinite(canonicalSell) || canonicalSell <= 0
       ) {
-        throw new Error('Canonical TRY rates are unavailable');
+        throw new Error('Canonical TRY rates are unavailable or invalid');
       }
       setRates({
         ...derived,
@@ -276,6 +284,10 @@ function App() {
       });
     } catch (error) {
       console.error('Rate fetch error:', error);
+      setRates((current) => ({ ...current, buy_lira: 0, sell_lira: 0 }));
+      setSelectedExchange((current) =>
+        current === 'buy_lira' || current === 'sell_lira' ? null : current
+      );
     } finally {
       setLoading(false);
     }
@@ -284,6 +296,13 @@ function App() {
   const handleExchangeClick = (exchangeType: ExchangeType) => {
     if (!user || user.kyc_status !== 'Approved') {
       setActiveTab('login');
+      return;
+    }
+    if (
+      (exchangeType === 'buy_lira' && rates.buy_lira <= 0) ||
+      (exchangeType === 'sell_lira' && rates.sell_lira <= 0)
+    ) {
+      notifyMessage('نرخ لیر موقتاً در دسترس نیست. لطفاً کمی بعد دوباره تلاش کنید.');
       return;
     }
     setSelectedExchange(exchangeType);
