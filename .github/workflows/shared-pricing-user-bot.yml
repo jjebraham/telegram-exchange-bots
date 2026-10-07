@@ -7,6 +7,10 @@ on:
       - "main_user_pricing_client.py"
       - "main_user_runtime.py"
       - "tests/test_main_user_shared_pricing.py"
+      - "channel_split/kiani_shared_pricing.py"
+      - "channel_split/publish_channels.py"
+      - "tests/test_channel_split_kiani_shared_pricing.py"
+      - "kiani-exchange/frontend/mini-app/**"
       - ".github/workflows/shared-pricing-user-bot.yml"
   push:
     branches:
@@ -17,6 +21,10 @@ on:
       - "main_user_pricing_client.py"
       - "main_user_runtime.py"
       - "tests/test_main_user_shared_pricing.py"
+      - "channel_split/kiani_shared_pricing.py"
+      - "channel_split/publish_channels.py"
+      - "tests/test_channel_split_kiani_shared_pricing.py"
+      - "kiani-exchange/frontend/mini-app/**"
       - ".github/workflows/shared-pricing-user-bot.yml"
 
 permissions:
@@ -37,5 +45,29 @@ jobs:
       - name: Syntax check
         run: python -m py_compile main_user_pricing_client.py main_user_runtime.py
 
-      - name: Verify and test pricing transformation
+      - name: Verify and test user bot pricing
         run: python -m unittest tests.test_main_user_shared_pricing -v
+
+      - name: Test shared channel pricing
+        run: python -m unittest tests.test_channel_split_kiani_shared_pricing -v
+
+  mini-app-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: kiani-exchange/frontend/mini-app/package-lock.json
+
+      - name: Install mini-app dependencies
+        working-directory: kiani-exchange/frontend/mini-app
+        run: npm ci
+
+      - name: Build mini app
+        working-directory: kiani-exchange/frontend/mini-app
+        run: npm run build
