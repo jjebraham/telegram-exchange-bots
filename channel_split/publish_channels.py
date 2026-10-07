@@ -46,6 +46,7 @@ from iran_fx_pashizi import fetch_pashizi_iran_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
 from kiani_shared_pricing import (
     calculate_kiani_rates,
+    calculate_kiani_try_rates,
     fetch_btcturk_usdt_try,
     load_shared_adjustments,
 )
@@ -204,6 +205,8 @@ def fetch_kiani_rates(
 def fetch_canonical_try_rates(
     url: str | None = None,
     timeout: int = 15,
+    *,
+    expected_adjustments: Mapping[str, Decimal] | None = None,
 ) -> dict[str, Decimal]:
     endpoint = (
         url
@@ -230,11 +233,54 @@ def fetch_canonical_try_rates(
     raw = payload.get("rates") if isinstance(payload, dict) else None
     if not isinstance(raw, dict):
         raise RuntimeError("Canonical TRY API response has no rates object")
+    if raw.get("source") != "channel-hybrid-usdt+btcturk":
+        raise RuntimeError("TRY API is not using the canonical Kiani market source")
 
-    return {
+    try:
+        buy_adjustment = Decimal(str(raw["buy_adjustment_pct"]))
+        sell_adjustment = Decimal(str(raw["sell_adjustment_pct"]))
+    except (KeyError, InvalidOperation, TypeError, ValueError) as exc:
+        raise RuntimeError("Canonical TRY API response is missing adjustment metadata") from exc
+    if any(
+        not value.is_finite()
+        or value < Decimal("-50")
+        or value > Decimal("50")
+        for value in (buy_adjustment, sell_adjustment)
+    ):
+        raise RuntimeError("Canonical TRY API returned invalid adjustment metadata")
+
+    if expected_adjustments is not None:
+        if (
+            buy_adjustment != expected_adjustments["user_tl_buy_adjustment_pct"]
+            or sell_adjustment != expected_adjustments["user_tl_sell_adjustment_pct"]
+        ):
+            raise RuntimeError(
+                "Canonical TRY API adjustments do not match the shared pricing database"
+            )
+
+    market_usdt_toman = _positive_decimal(
+        raw.get("market_usdt_toman"), "market_usdt_toman"
+    )
+    market_usdt_try = _positive_decimal(
+        raw.get("market_usdt_try"), "market_usdt_try"
+    )
+    actual_rates = {
         key: _positive_decimal(raw.get(key), key)
         for key in ("buy_lira", "sell_lira")
     }
+    expected_rates = calculate_kiani_try_rates(
+        market_usdt_toman,
+        market_usdt_try,
+        {
+            "user_tl_buy_adjustment_pct": buy_adjustment,
+            "user_tl_sell_adjustment_pct": sell_adjustment,
+        },
+    )
+    if actual_rates != expected_rates:
+        raise RuntimeError(
+            "Canonical TRY API rates do not match their market and adjustment metadata"
+        )
+    return actual_rates
 
 
 def _fmt_int(value: Decimal) -> str:
@@ -535,7 +581,9 @@ def main() -> int:
             )
 
             try:
-                canonical_try = fetch_canonical_try_rates()
+                canonical_try = fetch_canonical_try_rates(
+                    expected_adjustments=adjustments,
+                )
                 rates_cache["buy_lira"] = canonical_try["buy_lira"]
                 rates_cache["sell_lira"] = canonical_try["sell_lira"]
                 note_source_health("kiani:canonical-try-api", True)
