@@ -60,10 +60,22 @@ SELL_CANONICAL_BLOCK = """    try:
 """
 
 PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
-    "buy_lira_user": ((BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),),
-    "main_menu_buy_lira_rate": ((BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),),
-    "sell_lira_user": ((SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),),
-    "main_menu_sell_lira_rate": ((SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),),
+    "buy_lira_user": (
+        (BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),
+        (BUY_CANONICAL_BLOCK, BUY_CANONICAL_BLOCK),
+    ),
+    "main_menu_buy_lira_rate": (
+        (BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),
+        (BUY_CANONICAL_BLOCK, BUY_CANONICAL_BLOCK),
+    ),
+    "sell_lira_user": (
+        (SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),
+        (SELL_CANONICAL_BLOCK, SELL_CANONICAL_BLOCK),
+    ),
+    "main_menu_sell_lira_rate": (
+        (SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),
+        (SELL_CANONICAL_BLOCK, SELL_CANONICAL_BLOCK),
+    ),
 }
 
 HELPER_SOURCE = '''\nfrom main_user_pricing_client import get_canonical_try_rate as _get_canonical_try_rate_sync
@@ -112,24 +124,29 @@ def transform_source(source: str) -> tuple[str, tuple[str, ...]]:
         end = node.end_lineno
         block = "".join(lines[start:end])
 
-        for expected, replacement in PATCH_SPECS[function_name]:
-            occurrence_count = block.count(expected)
-            if occurrence_count != 1:
-                raise RuntimePatchError(
-                    f"{function_name}: expected exactly one reviewed legacy pricing block; "
-                    f"{expected!r}, found {occurrence_count}"
-                )
-            block = block.replace(expected, replacement, 1)
+        matches = [
+            (expected, replacement, block.count(expected))
+            for expected, replacement in PATCH_SPECS[function_name]
+            if block.count(expected)
+        ]
+        if len(matches) != 1 or matches[0][2] != 1:
+            raise RuntimePatchError(
+                f"{function_name}: expected exactly one reviewed legacy or canonical "
+                f"pricing block; found {sum(match[2] for match in matches)}"
+            )
+        expected, replacement, _occurrence_count = matches[0]
+        block = block.replace(expected, replacement, 1)
 
         lines[start:end] = [block]
         patched_names.append(function_name)
 
     patched = "".join(lines)
-    if patched.startswith("#!"):
-        newline = patched.find("\n")
-        patched = patched[: newline + 1] + HELPER_SOURCE + patched[newline + 1 :]
-    else:
-        patched = HELPER_SOURCE + patched
+    if "async def _canonical_try_rate(" not in patched:
+        if patched.startswith("#!"):
+            newline = patched.find("\n")
+            patched = patched[: newline + 1] + HELPER_SOURCE + patched[newline + 1 :]
+        else:
+            patched = HELPER_SOURCE + patched
 
     # Compile here as part of the transformation contract.
     compile(patched, "<main_user_bot_patched>", "exec")
