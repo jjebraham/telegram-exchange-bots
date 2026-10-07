@@ -24,6 +24,7 @@ CANONICAL_TRY_ADJUSTMENTS = {
 def pricing_db_path(override: str | None = None) -> str:
     return (
         override
+        or os.getenv("KIANI_PRICING_DB_PATH")
         or os.getenv("PRICING_DB_PATH")
         or DEFAULT_PRICING_DB_PATH
     )
