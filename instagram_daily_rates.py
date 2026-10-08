@@ -282,7 +282,10 @@ def _load_fonts(path: str, mode: str) -> dict[str, ImageFont.FreeTypeFont]:
             "cta": 36,
         }
     )
-    return {name: ImageFont.truetype(path, size) for name, size in sizes.items()}
+    return {
+        name: ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)
+        for name, size in sizes.items()
+    }
 
 
 def _draw_shadow_card(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int]) -> None:
