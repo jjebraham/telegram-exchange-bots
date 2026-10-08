@@ -14,7 +14,7 @@ DEFAULT_PRICING_DB_PATH = "/home/kianirad2020/send_changes/pricing_settings.db"
 DEFAULT_TRY_RATES_URL = "http://127.0.0.1:8000/api/rates/try"
 MIN_ADJUSTMENT_PCT = Decimal("-50")
 MAX_ADJUSTMENT_PCT = Decimal("50")
-CANONICAL_TRY_SOURCE = "channel-hybrid-usdt+btcturk"
+CANONICAL_TRY_SOURCE = "kiani-price-cache"
 CANONICAL_TRY_ADJUSTMENTS = {
     "buy_lira": ("user_tl_buy_adjustment_pct", "buy_adjustment_pct"),
     "sell_lira": ("user_tl_sell_adjustment_pct", "sell_adjustment_pct"),

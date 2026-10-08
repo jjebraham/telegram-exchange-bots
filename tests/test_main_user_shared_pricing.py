@@ -31,7 +31,7 @@ CANONICAL_RATES = {
         "sell_adjustment_pct": "-2",
         "market_usdt_toman": "262922.5",
         "market_usdt_try": "49.182",
-        "source": "channel-hybrid-usdt+btcturk",
+        "source": "kiani-price-cache",
     }
 }
 

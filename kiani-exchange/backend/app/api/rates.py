@@ -1,9 +1,12 @@
 import asyncio
-from decimal import Decimal, ROUND_HALF_UP
+import math
+import time
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from fastapi import APIRouter, HTTPException
 
 from ..canonical_try_rates import (
+    CANONICAL_TRY_SOURCE,
     get_canonical_hawala_try_rate,
     get_canonical_try_rates,
 )
@@ -20,12 +23,7 @@ def _round_10(value: Decimal) -> int:
 
 
 def _legacy_non_try_rates(usdt_irr: object, usdt_try: object) -> dict[str, float | int]:
-    """Preserve the restored miniapp's non-TRY display math exactly.
-
-    Only buy_lira/sell_lira are replaced by the canonical channel calculation.
-    These compatibility fields prevent the restored bundle from turning the
-    unrelated USDT/cross rates into NaN when it detects server-side TRY rates.
-    """
+    """Preserve the miniapp's existing non-TRY rate calculation."""
 
     toman = Decimal(str(usdt_irr)) / Decimal("10")
     market_try = Decimal(str(usdt_try))
@@ -46,35 +44,59 @@ def _legacy_non_try_rates(usdt_irr: object, usdt_try: object) -> dict[str, float
     }
 
 
-async def _canonical_hawala_try_payload():
+async def _market_snapshot() -> dict[str, object]:
+    """Read both market inputs through the price cache used by /rates/current."""
+
     try:
-        result = await asyncio.to_thread(get_canonical_hawala_try_rate)
+        usdt_irr, usdt_try = await asyncio.gather(
+            price_cache.get_usdt_irr(),
+            price_cache.get_usdt_try(),
+        )
+        irr_value = Decimal(str(usdt_irr))
+        try_value = Decimal(str(usdt_try))
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Unable to fetch canonical Hawala TRY rate: {type(exc).__name__}",
+            detail="Unable to fetch rates at this time",
         ) from exc
 
+    if (
+        not irr_value.is_finite()
+        or irr_value <= 0
+        or not try_value.is_finite()
+        or try_value <= 0
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Rate source returned invalid market values",
+        )
+
+    now = time.time()
+    timestamps: list[float] = []
+    for name in ("usdt_irr_time", "usdt_try_time"):
+        try:
+            timestamp = float(getattr(price_cache, name, 0))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(timestamp) and timestamp > 0:
+            timestamps.append(timestamp)
+    age = max(0.0, now - min(timestamps)) if timestamps else 0.0
+
     return {
-        "hawala_try": int(result["hawala_try"]),
-        "adjustment_pct": str(result["adjustment_pct"]),
-        "market_usdt_toman": str(result["market_usdt_toman"]),
-        "market_usdt_try": str(result["market_usdt_try"]),
-        "source_count": result["source_count"],
-        "market_age_seconds": round(float(result["market_age_seconds"]), 3),
-        "source": "channel-hybrid-usdt+btcturk",
+        "usdt_irr": usdt_irr,
+        "usdt_try": usdt_try,
+        "market_usdt_toman": irr_value / Decimal("10"),
+        "market_usdt_try": try_value,
+        "market_age_seconds": age,
     }
 
 
-async def _canonical_try_payload():
-    try:
-        result = await asyncio.to_thread(get_canonical_try_rates)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Unable to fetch canonical TRY rates: {type(exc).__name__}",
-        ) from exc
-
+def _try_payload(snapshot: dict[str, object]) -> dict[str, object]:
+    result = get_canonical_try_rates(
+        snapshot["market_usdt_toman"],
+        snapshot["market_usdt_try"],
+        market_age_seconds=snapshot["market_age_seconds"],
+    )
     return {
         "buy_lira": int(result["buy_lira"]),
         "sell_lira": int(result["sell_lira"]),
@@ -84,54 +106,100 @@ async def _canonical_try_payload():
         "market_usdt_try": str(result["market_usdt_try"]),
         "source_count": result["source_count"],
         "market_age_seconds": round(float(result["market_age_seconds"]), 3),
-        "source": "channel-hybrid-usdt+btcturk",
+        "source": CANONICAL_TRY_SOURCE,
     }
+
+
+def _hawala_payload(snapshot: dict[str, object]) -> dict[str, object]:
+    result = get_canonical_hawala_try_rate(
+        snapshot["market_usdt_toman"],
+        snapshot["market_usdt_try"],
+        market_age_seconds=snapshot["market_age_seconds"],
+    )
+    return {
+        "hawala_try": int(result["hawala_try"]),
+        "adjustment_pct": str(result["adjustment_pct"]),
+        "market_usdt_toman": str(result["market_usdt_toman"]),
+        "market_usdt_try": str(result["market_usdt_try"]),
+        "source_count": result["source_count"],
+        "market_age_seconds": round(float(result["market_age_seconds"]), 3),
+        "source": CANONICAL_TRY_SOURCE,
+    }
+
+
+async def _canonical_try_payload(
+    snapshot: dict[str, object] | None = None,
+) -> dict[str, object]:
+    snapshot = snapshot or await _market_snapshot()
+    try:
+        return await asyncio.to_thread(_try_payload, snapshot)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to calculate canonical TRY rates: {type(exc).__name__}",
+        ) from exc
+
+
+async def _canonical_hawala_try_payload(
+    snapshot: dict[str, object] | None = None,
+) -> dict[str, object]:
+    snapshot = snapshot or await _market_snapshot()
+    try:
+        return await asyncio.to_thread(_hawala_payload, snapshot)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to calculate canonical Hawala TRY rate: {type(exc).__name__}",
+        ) from exc
 
 
 @router.get("/rates/try")
 async def get_try_rates():
-    """Canonical Toman↔TRY pair used by all Kiani surfaces."""
+    """Canonical Toman↔TRY pair from the live Kiani price cache."""
 
     return {"rates": await _canonical_try_payload()}
 
 
 @router.get("/rates/hawala-try")
 async def get_hawala_try_rate():
-    """Canonical Hawala TRY/Toman payout using the shared Hawala adjustment."""
+    """Canonical Hawala TRY/Toman payout from the same market cache."""
 
     return {"rates": await _canonical_hawala_try_payload()}
 
 
 @router.get("/rates/current")
 async def get_current_rates():
-    try:
-        usdt_irr = await price_cache.get_usdt_irr()
-        usdt_try = await price_cache.get_usdt_try()
-    except Exception:
-        raise HTTPException(
-            status_code=503,
-            detail="Unable to fetch rates at this time",
-        )
-
-    canonical_try = await _canonical_try_payload()
-    canonical_hawala_try = await _canonical_hawala_try_payload()
-    compatibility = _legacy_non_try_rates(usdt_irr, usdt_try)
-    return {
-        "rates": {
-            "USDT_IRR": usdt_irr,
-            "USDT_TRY": usdt_try,
-            # Backward-compatible fields consumed by the currently deployed
-            # miniapp bundle. Keep these identical to the canonical TRY pair.
-            "buy_lira": canonical_try["buy_lira"],
-            "sell_lira": canonical_try["sell_lira"],
-            **compatibility,
-            "TRY_BUY_TOMAN": canonical_try["buy_lira"],
-            "TRY_SELL_TOMAN": canonical_try["sell_lira"],
-            "TRY_BUY_ADJUSTMENT_PCT": canonical_try["buy_adjustment_pct"],
-            "TRY_SELL_ADJUSTMENT_PCT": canonical_try["sell_adjustment_pct"],
-            "TRY_RATE_SOURCE": canonical_try["source"],
-            "HAWALA_TRY_TOMAN": canonical_hawala_try["hawala_try"],
-            "HAWALA_TRY_ADJUSTMENT_PCT": canonical_hawala_try["adjustment_pct"],
-            "HAWALA_TRY_RATE_SOURCE": canonical_hawala_try["source"],
-        }
+    snapshot = await _market_snapshot()
+    canonical_try = await _canonical_try_payload(snapshot)
+    compatibility = _legacy_non_try_rates(
+        snapshot["usdt_irr"],
+        snapshot["usdt_try"],
+    )
+    rates = {
+        "USDT_IRR": snapshot["usdt_irr"],
+        "USDT_TRY": snapshot["usdt_try"],
+        # These fields are shared by the existing miniapp bundle.
+        "buy_lira": canonical_try["buy_lira"],
+        "sell_lira": canonical_try["sell_lira"],
+        **compatibility,
+        "TRY_BUY_TOMAN": canonical_try["buy_lira"],
+        "TRY_SELL_TOMAN": canonical_try["sell_lira"],
+        "TRY_BUY_ADJUSTMENT_PCT": canonical_try["buy_adjustment_pct"],
+        "TRY_SELL_ADJUSTMENT_PCT": canonical_try["sell_adjustment_pct"],
+        "TRY_RATE_SOURCE": canonical_try["source"],
     }
+
+    # Hawala is a separate product; its missing adjustment must not take down
+    # the customer rate response used by the miniapp and Telegram buttons.
+    try:
+        hawala = await _canonical_hawala_try_payload(snapshot)
+    except HTTPException:
+        pass
+    else:
+        rates.update({
+            "HAWALA_TRY_TOMAN": hawala["hawala_try"],
+            "HAWALA_TRY_ADJUSTMENT_PCT": hawala["adjustment_pct"],
+            "HAWALA_TRY_RATE_SOURCE": hawala["source"],
+        })
+
+    return {"rates": rates}

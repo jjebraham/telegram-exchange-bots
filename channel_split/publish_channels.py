@@ -233,7 +233,7 @@ def fetch_canonical_try_rates(
     raw = payload.get("rates") if isinstance(payload, dict) else None
     if not isinstance(raw, dict):
         raise RuntimeError("Canonical TRY API response has no rates object")
-    if raw.get("source") != "channel-hybrid-usdt+btcturk":
+    if raw.get("source") != "kiani-price-cache":
         raise RuntimeError("TRY API is not using the canonical Kiani market source")
 
     try:

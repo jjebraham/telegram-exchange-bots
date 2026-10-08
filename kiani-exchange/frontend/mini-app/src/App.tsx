@@ -269,7 +269,7 @@ function App() {
       const canonicalBuy = Number(tryData.rates?.buy_lira);
       const canonicalSell = Number(tryData.rates?.sell_lira);
       if (
-        canonicalSource !== 'channel-hybrid-usdt+btcturk' ||
+        canonicalSource !== 'kiani-price-cache' ||
         !Number.isFinite(buyAdjustment) || Math.abs(buyAdjustment) > 50 ||
         !Number.isFinite(sellAdjustment) || Math.abs(sellAdjustment) > 50 ||
         !Number.isFinite(canonicalBuy) || canonicalBuy <= 0 ||
