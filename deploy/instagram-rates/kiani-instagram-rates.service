@@ -1,0 +1,19 @@
+[Unit]
+Description=Render and publish the Kiani Exchange daily Instagram rate card
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=kianirad2020
+Group=kianirad2020
+SupplementaryGroups=www-data
+WorkingDirectory=/home/kianirad2020/telegram_bot_repo
+EnvironmentFile=/etc/kiani-instagram-rates.env
+Environment=PYTHONUNBUFFERED=1
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ExecStart=/home/kianirad2020/telegram_bot_repo/.venv-instagram-rates/bin/python /home/kianirad2020/telegram_bot_repo/instagram_daily_rates.py --publish
+
