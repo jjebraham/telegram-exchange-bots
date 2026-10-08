@@ -5,7 +5,7 @@ MVP source: TGJU's USDT comparison table. TGJU publishes values in Iranian
 rials; the Telegram post converts them to toman.
 
 Safety filters:
-- keep rows from the modal (most common) source date;
+- when dated rows exist, keep only the freshest source date;
 - keep rows no more than 90 minutes behind the freshest row on that date;
 - reject sell-price outliers more than 12% away from the median;
 - ignore zero/missing sell prices.
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re
 import statistics
-from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -211,14 +210,19 @@ def filter_usdt_quotes(
         return []
 
     dated = [q for q in quotes if q.source_date]
-    modal_date: str | None = None
     if dated:
-        modal_date = Counter(q.source_date for q in dated).most_common(1)[0][0]
-
-    same_date = [
-        q for q in quotes
-        if modal_date is None or q.source_date is None or q.source_date == modal_date
-    ]
+        # TGJU can temporarily mix a small number of fresh rows with a larger
+        # stale batch from previous days. Using the modal date can therefore
+        # make stale rows win simply because there are more of them. Persian
+        # dates are normalized as zero-padded YYYY/MM/DD strings, so lexical
+        # max selects the newest observed source date safely.
+        freshest_date = max(q.source_date for q in dated if q.source_date)
+        same_date = [
+            q for q in dated
+            if q.source_date == freshest_date
+        ]
+    else:
+        same_date = list(quotes)
 
     timed = [q for q in same_date if q.source_time]
     if timed:
