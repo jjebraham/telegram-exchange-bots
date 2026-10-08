@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from decimal import Decimal
 from pathlib import Path
@@ -129,40 +130,128 @@ class MainUserSharedPricingTests(unittest.TestCase):
                     "buy_lira", url="http://rates.test/try", db_path=db_path
                 )
 
-    def test_bot_live_cache_fallback_calculates_both_try_directions(self):
+    def test_persistent_pair_cache_deduplicates_concurrent_refreshes_and_expires(self):
+        db_path = self.canonical_db()
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache_path = str(Path(cache_dir) / "rates.sqlite3")
+
+            class FakePriceCache:
+                async def get_usdt_irr(self):
+                    return 2669020.0
+
+                async def get_usdt_try(self):
+                    return 49.229
+
+            cache = FakePriceCache()
+            with (
+                patch.dict(
+                    os.environ,
+                    {"KIANI_TRY_RATE_CACHE_DB": cache_path},
+                ),
+                patch(
+                    "main_user_pricing_client.urlopen",
+                    side_effect=lambda request, timeout: self.fetch_payload(),
+                ) as api,
+            ):
+                async def concurrent_requests():
+                    return await asyncio.gather(
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        ),
+                        get_canonical_try_rate_with_fallback(
+                            "sell_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        ),
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        ),
+                    )
+
+                self.assertEqual(asyncio.run(concurrent_requests()), [5450, 5240, 5450])
+                self.assertEqual(api.call_count, 1)
+
+                # The opposite direction and later requests reuse the saved pair.
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "sell_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        )
+                    ),
+                    5240,
+                )
+                self.assertEqual(api.call_count, 1)
+
+                with sqlite3.connect(cache_path) as connection:
+                    cached_at, expires_at = connection.execute(
+                        "SELECT cached_at, expires_at FROM kiani_try_rate_cache "
+                        "WHERE cache_key = 'customer'"
+                    ).fetchone()
+                    self.assertAlmostEqual(expires_at - cached_at, 300, places=5)
+
+                    # Simulate the five-minute expiry without waiting.
+                    connection.execute(
+                        "UPDATE kiani_try_rate_cache SET expires_at = ? "
+                        "WHERE cache_key = 'customer'",
+                        (time.time() - 1,),
+                    )
+
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        )
+                    ),
+                    5450,
+                )
+                self.assertEqual(api.call_count, 2)
+
+    def test_bot_live_cache_fallback_calculates_and_caches_both_directions(self):
         db_path = self.make_db({
             "user_tl_buy_adjustment_pct": "1",
             "user_tl_sell_adjustment_pct": "-2",
         })
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache_path = str(Path(cache_dir) / "rates.sqlite3")
 
-        class FakePriceCache:
-            async def get_usdt_irr(self):
-                return 2669020.0
+            class FakePriceCache:
+                async def get_usdt_irr(self):
+                    return 2669020.0
 
-            async def get_usdt_try(self):
-                return 49.229
+                async def get_usdt_try(self):
+                    return 49.229
 
-        cache = FakePriceCache()
-        with patch(
-            "main_user_pricing_client.get_canonical_try_rate",
-            side_effect=RuntimeError("API returned HTTP 503"),
-        ):
-            self.assertEqual(
-                asyncio.run(
-                    get_canonical_try_rate_with_fallback(
-                        "buy_lira", cache, db_path=db_path
-                    )
+            cache = FakePriceCache()
+            with (
+                patch.dict(
+                    os.environ,
+                    {"KIANI_TRY_RATE_CACHE_DB": cache_path},
                 ),
-                5480,
-            )
-            self.assertEqual(
-                asyncio.run(
-                    get_canonical_try_rate_with_fallback(
-                        "sell_lira", cache, db_path=db_path
-                    )
-                ),
-                5310,
-            )
+                patch(
+                    "main_user_pricing_client.get_canonical_try_rates",
+                    side_effect=RuntimeError("API returned HTTP 503"),
+                ) as api,
+            ):
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, db_path=db_path
+                        )
+                    ),
+                    5480,
+                )
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "sell_lira", cache, db_path=db_path
+                        )
+                    ),
+                    5310,
+                )
+                self.assertEqual(api.call_count, 1)
 
     def test_all_tracked_try_button_handlers_use_canonical_rates(self):
         source = TRACKED_BOT.read_text(encoding="utf-8")
