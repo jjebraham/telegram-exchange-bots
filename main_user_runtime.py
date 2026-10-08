@@ -78,14 +78,10 @@ PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-HELPER_SOURCE = '''\nfrom main_user_pricing_client import get_canonical_try_rate as _get_canonical_try_rate_sync
-
-async def _canonical_try_rate(rate_key):
-    return await asyncio.to_thread(_get_canonical_try_rate_sync, rate_key)
-
-'''
-
-
+HELPER_IMPORT = "from main_user_pricing_client import get_canonical_try_rate_with_fallback as _get_canonical_try_rate_with_fallback"
+HELPER_FUNCTION = """async def _canonical_try_rate(rate_key):
+    return await _get_canonical_try_rate_with_fallback(rate_key, price_cache)
+"""
 def _function_nodes(source: str) -> dict[str, ast.AsyncFunctionDef]:
     tree = ast.parse(source)
     return {
@@ -141,12 +137,32 @@ def transform_source(source: str) -> tuple[str, tuple[str, ...]]:
         patched_names.append(function_name)
 
     patched = "".join(lines)
-    if "async def _canonical_try_rate(" not in patched:
+    if HELPER_IMPORT not in patched:
+        old_import = "from main_user_pricing_client import get_canonical_try_rate as _get_canonical_try_rate_sync"
+        if old_import in patched:
+            patched = patched.replace(old_import, HELPER_IMPORT, 1)
+        elif patched.startswith("#!"):
+            newline = patched.find("\n")
+            patched = patched[: newline + 1] + HELPER_IMPORT + "\n" + patched[newline + 1 :]
+        else:
+            patched = HELPER_IMPORT + "\n" + patched
+
+    # Keep an existing injected helper current too; production may already be
+    # running a previously patched source file.
+    helper_nodes = _function_nodes(patched)
+    helper_node = helper_nodes.get("_canonical_try_rate")
+    if helper_node is None:
         if patched.startswith("#!"):
             newline = patched.find("\n")
-            patched = patched[: newline + 1] + HELPER_SOURCE + patched[newline + 1 :]
+            patched = patched[: newline + 1] + HELPER_FUNCTION + "\n" + patched[newline + 1 :]
         else:
-            patched = HELPER_SOURCE + patched
+            patched = HELPER_FUNCTION + "\n" + patched
+    else:
+        helper_lines = patched.splitlines(keepends=True)
+        helper_start = helper_node.lineno - 1
+        helper_end = helper_node.end_lineno
+        helper_lines[helper_start:helper_end] = [HELPER_FUNCTION]
+        patched = "".join(helper_lines)
 
     # Compile here as part of the transformation contract.
     compile(patched, "<main_user_bot_patched>", "exec")

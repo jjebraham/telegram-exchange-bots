@@ -22,14 +22,14 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
-from main_user_pricing_client import get_canonical_try_rate as _get_canonical_try_rate_sync
+from main_user_pricing_client import get_canonical_try_rate_with_fallback as _get_canonical_try_rate_with_fallback
 from aiogram.fsm.state import State, StatesGroup
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 async def _canonical_try_rate(rate_key):
-    return await asyncio.to_thread(_get_canonical_try_rate_sync, rate_key)
+    return await _get_canonical_try_rate_with_fallback(rate_key, price_cache)
 
 
 ###############################################################################

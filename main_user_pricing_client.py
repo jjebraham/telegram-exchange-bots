@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -19,6 +21,7 @@ CANONICAL_TRY_ADJUSTMENTS = {
     "buy_lira": ("user_tl_buy_adjustment_pct", "buy_adjustment_pct"),
     "sell_lira": ("user_tl_sell_adjustment_pct", "sell_adjustment_pct"),
 }
+logger = logging.getLogger(__name__)
 
 
 def pricing_db_path(override: str | None = None) -> str:
@@ -202,3 +205,84 @@ def get_canonical_try_rate(
             "Canonical TRY API rate does not match its market and adjustment metadata"
         )
     return int(value)
+
+
+def calculate_canonical_try_rate_from_market(
+    rate_key: str,
+    usdt_irr: object,
+    usdt_try: object,
+    db_path: str | None = None,
+) -> int:
+    """Calculate one TRY/Toman quote from the bot's raw live market cache."""
+
+    if rate_key not in CANONICAL_TRY_ADJUSTMENTS:
+        raise ValueError(f"Unsupported canonical TRY rate: {rate_key}")
+
+    try:
+        irr_value = Decimal(str(usdt_irr))
+        try_value = Decimal(str(usdt_try))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Live market cache returned non-numeric rates") from exc
+    if (
+        not irr_value.is_finite()
+        or irr_value <= 0
+        or not try_value.is_finite()
+        or try_value <= 0
+    ):
+        raise ValueError("Live market cache returned invalid rates")
+
+    db_key, _reported_key = CANONICAL_TRY_ADJUSTMENTS[rate_key]
+    adjustment_pct = _read_required_adjustment_percentage(db_key, db_path)
+    market_usdt_toman = irr_value / Decimal("10")
+    factor = Decimal("1") + adjustment_pct / Decimal("100")
+    rate = (
+        (market_usdt_toman / try_value)
+        * factor
+        / Decimal("10")
+    ).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * Decimal("10")
+    return int(rate)
+
+
+async def get_canonical_try_rate_with_fallback(
+    rate_key: str,
+    price_cache: object,
+    url: str | None = None,
+    timeout: int = 15,
+    db_path: str | None = None,
+) -> int:
+    """Prefer the canonical API; fall back to this bot's live market cache."""
+
+    try:
+        return await asyncio.to_thread(
+            get_canonical_try_rate,
+            rate_key,
+            url,
+            timeout,
+            db_path,
+        )
+    except Exception as api_error:
+        logger.warning(
+            "Canonical TRY API failed; using bot live-cache fallback (%s)",
+            type(api_error).__name__,
+        )
+
+    try:
+        usdt_irr, usdt_try = await asyncio.gather(
+            price_cache.get_usdt_irr(),
+            price_cache.get_usdt_try(),
+        )
+        return await asyncio.to_thread(
+            calculate_canonical_try_rate_from_market,
+            rate_key,
+            usdt_irr,
+            usdt_try,
+            db_path,
+        )
+    except Exception as fallback_error:
+        logger.warning(
+            "Bot live-cache TRY fallback failed (%s)",
+            type(fallback_error).__name__,
+        )
+        raise RuntimeError(
+            "Canonical TRY API and bot live-cache fallback both failed"
+        ) from fallback_error

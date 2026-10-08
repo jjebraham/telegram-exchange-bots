@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import io
 import json
 import os
@@ -9,7 +10,11 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
-from main_user_pricing_client import get_adjustment_factor, get_canonical_try_rate
+from main_user_pricing_client import (
+    get_adjustment_factor,
+    get_canonical_try_rate,
+    get_canonical_try_rate_with_fallback,
+)
 from main_user_runtime import (
     BUY_CANONICAL_BLOCK,
     BUY_LEGACY_BLOCK,
@@ -124,6 +129,41 @@ class MainUserSharedPricingTests(unittest.TestCase):
                     "buy_lira", url="http://rates.test/try", db_path=db_path
                 )
 
+    def test_bot_live_cache_fallback_calculates_both_try_directions(self):
+        db_path = self.make_db({
+            "user_tl_buy_adjustment_pct": "1",
+            "user_tl_sell_adjustment_pct": "-2",
+        })
+
+        class FakePriceCache:
+            async def get_usdt_irr(self):
+                return 2669020.0
+
+            async def get_usdt_try(self):
+                return 49.229
+
+        cache = FakePriceCache()
+        with patch(
+            "main_user_pricing_client.get_canonical_try_rate",
+            side_effect=RuntimeError("API returned HTTP 503"),
+        ):
+            self.assertEqual(
+                asyncio.run(
+                    get_canonical_try_rate_with_fallback(
+                        "buy_lira", cache, db_path=db_path
+                    )
+                ),
+                5480,
+            )
+            self.assertEqual(
+                asyncio.run(
+                    get_canonical_try_rate_with_fallback(
+                        "sell_lira", cache, db_path=db_path
+                    )
+                ),
+                5310,
+            )
+
     def test_all_tracked_try_button_handlers_use_canonical_rates(self):
         source = TRACKED_BOT.read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -163,6 +203,7 @@ class MainUserSharedPricingTests(unittest.TestCase):
         self.assertEqual(patched.count("async def _canonical_try_rate("), 1)
         self.assertIn("rate = round_to_nearest_10(eff_toman * 1.01)", patched)
         self.assertIn("rate = usdt_try * 1.02", patched)
+        self.assertIn("_get_canonical_try_rate_with_fallback(rate_key, price_cache)", patched)
         compile(patched, str(TRACKED_BOT), "exec")
 
     def test_source_drift_fails_closed(self):
