@@ -221,8 +221,10 @@ def _font_path() -> str:
         ).stdout.strip()
     except (FileNotFoundError, subprocess.SubprocessError):
         discovered = ""
+    bundled = Path(__file__).resolve().parent / "fonts" / "Vazirmatn-Regular.ttf"
     candidates = [
         configured,
+        str(bundled),
         discovered if "vazirmatn" in discovered.lower() else "",
         "/usr/share/fonts/truetype/vazirmatn/Vazirmatn[wght].ttf",
         "/usr/share/fonts/truetype/vazirmatn/Vazirmatn-FD[wght].ttf",
@@ -233,7 +235,7 @@ def _font_path() -> str:
         if candidate and Path(candidate).is_file():
             return candidate
     raise PublishError(
-        "Vazirmatn font was not found. Install fonts-vazirmatn or set VAZIRMATN_FONT_PATH."
+        "Vazirmatn font was not found. Restore fonts/Vazirmatn-Regular.ttf or set VAZIRMATN_FONT_PATH."
     )
 
 

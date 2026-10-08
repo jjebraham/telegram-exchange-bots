@@ -17,7 +17,7 @@ fi
 
 git -C "$REPO_DIR" pull --ff-only origin main
 sudo apt-get update
-sudo apt-get install -y python3-venv fonts-vazirmatn
+sudo apt-get install -y python3-venv
 
 python3 -m venv "$REPO_DIR/.venv-instagram-rates"
 "$REPO_DIR/.venv-instagram-rates/bin/python" -m pip install --upgrade pip

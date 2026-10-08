@@ -33,7 +33,7 @@ git pull --ff-only origin main
 bash deploy/instagram-rates/install_server.sh
 ```
 
-The installer pulls the latest `main`, creates a separate Python environment, installs the renderer and Vazirmatn font, and adds the systemd timer/service and Nginx location snippet. It preserves an existing `/etc/kiani-instagram-rates.env` file and leaves the timer disabled until the Meta and Nginx settings are ready.
+The installer pulls the latest `main`, creates a separate Python environment, installs the renderer, and adds the systemd timer/service and Nginx location snippet. The publisher uses the bundled Vazirmatn Regular font in `fonts/Vazirmatn-Regular.ttf`; its SIL Open Font License is in `fonts/OFL.txt`. It preserves an existing `/etc/kiani-instagram-rates.env` file and leaves the timer disabled until the Meta and Nginx settings are ready.
 
 Edit `/etc/kiani-instagram-rates.env` and fill in:
 
