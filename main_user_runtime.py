@@ -60,20 +60,28 @@ SELL_CANONICAL_BLOCK = """    try:
 """
 
 PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
-    "buy_lira_user": ((BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),),
-    "main_menu_buy_lira_rate": ((BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),),
-    "sell_lira_user": ((SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),),
-    "main_menu_sell_lira_rate": ((SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),),
+    "buy_lira_user": (
+        (BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),
+        (BUY_CANONICAL_BLOCK, BUY_CANONICAL_BLOCK),
+    ),
+    "main_menu_buy_lira_rate": (
+        (BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),
+        (BUY_CANONICAL_BLOCK, BUY_CANONICAL_BLOCK),
+    ),
+    "sell_lira_user": (
+        (SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),
+        (SELL_CANONICAL_BLOCK, SELL_CANONICAL_BLOCK),
+    ),
+    "main_menu_sell_lira_rate": (
+        (SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),
+        (SELL_CANONICAL_BLOCK, SELL_CANONICAL_BLOCK),
+    ),
 }
 
-HELPER_SOURCE = '''\nfrom main_user_pricing_client import get_canonical_try_rate as _get_canonical_try_rate_sync
-
-async def _canonical_try_rate(rate_key):
-    return await asyncio.to_thread(_get_canonical_try_rate_sync, rate_key)
-
-'''
-
-
+HELPER_IMPORT = "from main_user_pricing_client import get_canonical_try_rate_with_fallback as _get_canonical_try_rate_with_fallback"
+HELPER_FUNCTION = """async def _canonical_try_rate(rate_key):
+    return await _get_canonical_try_rate_with_fallback(rate_key, price_cache)
+"""
 def _function_nodes(source: str) -> dict[str, ast.AsyncFunctionDef]:
     tree = ast.parse(source)
     return {
@@ -112,24 +120,49 @@ def transform_source(source: str) -> tuple[str, tuple[str, ...]]:
         end = node.end_lineno
         block = "".join(lines[start:end])
 
-        for expected, replacement in PATCH_SPECS[function_name]:
-            occurrence_count = block.count(expected)
-            if occurrence_count != 1:
-                raise RuntimePatchError(
-                    f"{function_name}: expected exactly one reviewed legacy pricing block; "
-                    f"{expected!r}, found {occurrence_count}"
-                )
-            block = block.replace(expected, replacement, 1)
+        matches = [
+            (expected, replacement, block.count(expected))
+            for expected, replacement in PATCH_SPECS[function_name]
+            if block.count(expected)
+        ]
+        if len(matches) != 1 or matches[0][2] != 1:
+            raise RuntimePatchError(
+                f"{function_name}: expected exactly one reviewed legacy or canonical "
+                f"pricing block; found {sum(match[2] for match in matches)}"
+            )
+        expected, replacement, _occurrence_count = matches[0]
+        block = block.replace(expected, replacement, 1)
 
         lines[start:end] = [block]
         patched_names.append(function_name)
 
     patched = "".join(lines)
-    if patched.startswith("#!"):
-        newline = patched.find("\n")
-        patched = patched[: newline + 1] + HELPER_SOURCE + patched[newline + 1 :]
+    if HELPER_IMPORT not in patched:
+        old_import = "from main_user_pricing_client import get_canonical_try_rate as _get_canonical_try_rate_sync"
+        if old_import in patched:
+            patched = patched.replace(old_import, HELPER_IMPORT, 1)
+        elif patched.startswith("#!"):
+            newline = patched.find("\n")
+            patched = patched[: newline + 1] + HELPER_IMPORT + "\n" + patched[newline + 1 :]
+        else:
+            patched = HELPER_IMPORT + "\n" + patched
+
+    # Keep an existing injected helper current too; production may already be
+    # running a previously patched source file.
+    helper_nodes = _function_nodes(patched)
+    helper_node = helper_nodes.get("_canonical_try_rate")
+    if helper_node is None:
+        if patched.startswith("#!"):
+            newline = patched.find("\n")
+            patched = patched[: newline + 1] + HELPER_FUNCTION + "\n" + patched[newline + 1 :]
+        else:
+            patched = HELPER_FUNCTION + "\n" + patched
     else:
-        patched = HELPER_SOURCE + patched
+        helper_lines = patched.splitlines(keepends=True)
+        helper_start = helper_node.lineno - 1
+        helper_end = helper_node.end_lineno
+        helper_lines[helper_start:helper_end] = [HELPER_FUNCTION]
+        patched = "".join(helper_lines)
 
     # Compile here as part of the transformation contract.
     compile(patched, "<main_user_bot_patched>", "exec")

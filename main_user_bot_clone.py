@@ -22,10 +22,15 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
+from main_user_pricing_client import get_canonical_try_rate_with_fallback as _get_canonical_try_rate_with_fallback
 from aiogram.fsm.state import State, StatesGroup
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+async def _canonical_try_rate(rate_key):
+    return await _get_canonical_try_rate_with_fallback(rate_key, price_cache)
+
 
 ###############################################################################
 # CONFIGURATION
@@ -955,14 +960,13 @@ async def back_to_user_menu(message: types.Message, state: FSMContext):
 @dp.message(F.text == "خرید لیر از ما\n🇮🇷 ➡️ 🇹🇷")
 async def buy_lira_user(message: types.Message):
     wait1 = await message.answer("در حال دریافت آخرین نرخ... ⏳")
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    await wait1.delete()
-    if not usdt_irr or not usdt_try:
+    try:
+        rate = await _canonical_try_rate("buy_lira")
+    except Exception:
+        await wait1.delete()
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)
+    await wait1.delete()
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "buy_lira.pdf"
     if os.path.exists(pdf_path):
@@ -971,27 +975,25 @@ async def buy_lira_user(message: types.Message):
 @dp.message(F.text == "نرخ خرید لیر از ما\n🇮🇷 ➡️ 🇹🇷")
 async def main_menu_buy_lira_rate(message: types.Message):
     wait1 = await message.answer("در حال دریافت آخرین نرخ... ⏳")
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    await wait1.delete()
-    if not usdt_irr or not usdt_try:
+    try:
+        rate = await _canonical_try_rate("buy_lira")
+    except Exception:
+        await wait1.delete()
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)
+    await wait1.delete()
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
 async def sell_lira_user(message: types.Message):
     wait1 = await message.answer("در حال دریافت آخرین نرخ... ⏳")
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    await wait1.delete()
-    if not usdt_irr or not usdt_try:
+    try:
+        rate = await _canonical_try_rate("sell_lira")
+    except Exception:
+        await wait1.delete()
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+    await wait1.delete()
     await message.answer(f"هر واحد لیر ترکیه ��🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "sell_lira.pdf"
     if os.path.exists(pdf_path):
@@ -1000,14 +1002,13 @@ async def sell_lira_user(message: types.Message):
 @dp.message(F.text == "نرخ فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
 async def main_menu_sell_lira_rate(message: types.Message):
     wait1 = await message.answer("در حال دریافت آخرین نرخ... ⏳")
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    await wait1.delete()
-    if not usdt_irr or not usdt_try:
+    try:
+        rate = await _canonical_try_rate("sell_lira")
+    except Exception:
+        await wait1.delete()
         await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
         return
-    eff_toman = usdt_irr / 10
-    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+    await wait1.delete()
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 
