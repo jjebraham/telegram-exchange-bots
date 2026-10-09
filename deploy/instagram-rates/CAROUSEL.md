@@ -42,7 +42,9 @@ These are schema examples, not current prices. The live file must come from the
 successful Hawala Telegram publisher and be no older than 15 minutes. A future
 11:45 Telegram delivery cannot supply the 11:30 carousel; use an existing fresh
 earlier export or arrange a read-only Hawala calculation before that time.
-The Hawala source location still needs to be confirmed on Selenium.
+The running Selenium Hawala process has its export configured at
+`/home/kianirad2020/.local/state/kiani-x/hawala.json`. Its actual generation time
+and availability at the 11:30 slot still need a server check.
 
 ## Preview before activating
 
@@ -104,8 +106,7 @@ INSTAGRAM_FEED_FORMAT=carousel
 INSTAGRAM_TELEGRAM_REPO=/home/kianirad2020/telegram_bot_repo
 INSTAGRAM_TELEGRAM_PYTHON=/usr/bin/python3
 INSTAGRAM_MARKET_HISTORY_DB=/home/kianirad2020/telegram_bot_repo/channel_split/market_history_production.sqlite3
-# Set only after locating the Hawala delivery export:
-# INSTAGRAM_HAWALA_SNAPSHOT=/absolute/path/to/hawala.json
+INSTAGRAM_HAWALA_SNAPSHOT=/home/kianirad2020/.local/state/kiani-x/hawala.json
 ```
 
 Keep the env private with mode 0600. The existing wrapper already overrides the
