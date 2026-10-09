@@ -1,4 +1,4 @@
-# Instagram crypto news: manual rollout
+# Instagram crypto news: manual rollout and daily schedule
 
 This adds a separate news queue and renderer. Existing rate publishing is kept
 as installed. The new manual command can publish one image or a carousel of
@@ -80,8 +80,40 @@ such an attempt. Failures before that stage remain eligible for retry.
 Nine unit tests cover source JSON preservation, cache matching for titles with
 colons, the 24-hour window, manual metadata, ranking, canonical URL deduplication,
 atomic claims, successful publication state and uncertain publication results.
-The first example was rendered and visually reviewed at 1080×1350. A real
-Instagram news publication remains for the manual Selenium run.
+The first example was rendered and visually reviewed at 1080×1350. The user
+confirmed two successful Instagram publications from revision
+`f3a1fd016f8e471bbfbdfc3a7ee20f415cf1e37b`: the explicit France example and an
+automatically selected story from the real queue.
 
-No news schedule is installed by these commands. Choose its daily time after the
-manual test is reviewed; the active rate schedule is independent.
+## Daily schedule: 18:00 Istanbul
+
+The user requested one automatically selected news post every day at **18:00
+Europe/Istanbul**, corresponding to **15:00 UTC** on the existing UTC server.
+Run `activate_news_cron.py` as the existing publisher user, without sudo, passing
+`--repo` for the local Git repository containing the reviewed revisions.
+
+The activation helper:
+
+- Reads the two news modules from the exact revision used for both successful
+  manual publications and installs them in a permanent news publisher folder.
+- Checks the installed shared Instagram helper, fonts and logo against the
+  reviewed rate publisher revision, using those files in place.
+- Reuses the existing news SQLite database, including both manual publication
+  records. It requires the database and source JSON files from the manual test.
+- Creates a wrapper that imports the latest Telegram history, selects one
+  eligible unpublished story, renders it, and publishes it. The wrapper uses a
+  nonblocking process lock and preserves web-readable image permissions.
+- Backs up any prior news installation and the complete user crontab before
+  installing exactly one news entry. Repeating activation does not add duplicate
+  entries. Other cron entries are preserved, including the daily rate post.
+- Verifies the UTC server timezone, active cron service and installed crontab,
+  and prints the next scheduled run. No immediate post is made by activation.
+
+Failures are written to a separate news cron log. The existing publication
+status rules continue to block already published or unresolved stories. If
+there is no eligible story, the run records that error instead of reposting an
+old story. The source illustration fallback described above still applies.
+
+The backup includes `crontab.txt` and any previous versions of files that were
+replaced. If rollback is needed, review the saved crontab against the current
+one before restoring it so subsequent unrelated schedule edits are preserved.
