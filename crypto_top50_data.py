@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 import json
 import re
 import time
@@ -60,6 +60,17 @@ def number(value, label, *, positive=False):
     if not result.is_finite() or (positive and result <= 0):
         raise PricesError(f'Invalid {label}.')
     return result
+
+
+def round_market_rate(value):
+    """Round Toman per USDT to the nearest 100; exact half steps round up."""
+    raw = number(value, 'raw USDT/Toman market price', positive=True)
+    with localcontext() as context:
+        context.prec = 60
+        rounded = raw.quantize(Decimal('1E2'), rounding=ROUND_HALF_UP).quantize(Decimal(1))
+    if rounded <= 0:
+        raise PricesError('Rounded USDT/Toman market price must be positive.')
+    return rounded
 
 
 def timestamp(value):
@@ -152,14 +163,16 @@ def build_snapshot(tickers, stable_tag, wrapped_tag, market, *, sample=False):
     try:
         # USDTTMN is already Toman per USDT. Do not divide this quote by ten.
         pair = market['result']['symbols']['USDTTMN']
-        rate = number(pair['stats']['lastPrice'], 'Wallex USDTTMN market price', positive=True)
+        raw_rate = number(pair['stats']['lastPrice'], 'Wallex USDTTMN market price', positive=True)
     except (KeyError, TypeError):
         raise PricesError('Wallex USDTTMN market quote is unavailable; no customer quote substituted.') from None
     if not isinstance(market, dict) or market.get('success') is False:
         raise PricesError('Wallex returned an unsuccessful market response.')
+    rate = round_market_rate(raw_rate)
     coins = select_coins(tickers, set(stable_tag['coins']), set(wrapped_tag['coins']), rate, now, sample=sample)
-    return dict(schema=1, sample=sample, generated_at=now.isoformat(),
-                usdt_toman=str(rate), rate_source='Wallex USDTTMN last trade',
+    return dict(schema=2, sample=sample, generated_at=now.isoformat(),
+                usdt_toman=str(rate), raw_usdt_toman=str(raw_rate),
+                usdt_rounding='nearest 100 Toman, half up', rate_source='Wallex USDTTMN last trade',
                 rate_url=MARKET_URL, rate_observed_at=now.isoformat(),
                 coin_source='CoinPaprika', coin_url=TICKERS_URL,
                 exclusions='Stablecoins, asset-pegged coins, wrapped and staked duplicates', coins=coins)
@@ -175,12 +188,14 @@ def collect():
 
 
 def validate_snapshot(snapshot, *, publishing=False):
-    if snapshot.get('schema') != 1 or len(snapshot.get('coins', [])) != 50:
+    if snapshot.get('schema') != 2 or len(snapshot.get('coins', [])) != 50:
         raise PricesError('Expected one snapshot containing exactly 50 coins.')
     if publishing and snapshot.get('sample'):
         raise PricesError('A reference/sample snapshot cannot be published.')
     now = datetime.now(timezone.utc)
     rate = number(snapshot.get('usdt_toman'), 'USDT/Toman market price', positive=True)
+    if rate != round_market_rate(snapshot.get('raw_usdt_toman')):
+        raise PricesError('USDT/Toman rate must match the market price rounded to the nearest 100 Toman.')
     if publishing:
         fresh(snapshot['rate_observed_at'], now, RATE_MAX_AGE, 'USDT/Toman quote')
         fresh(snapshot['generated_at'], now, PRICE_MAX_AGE, 'Price snapshot')

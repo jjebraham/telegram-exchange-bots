@@ -20,9 +20,13 @@ The installed rates, economy news and crypto news jobs keep their schedules.
 - **Market USDT rate:** the public Wallex `USDTTMN` pair's `stats.lastPrice`,
   already denominated in **Toman per USDT**. It is not divided by ten and no
   adjusted customer buy/sell quote is used. An unavailable quote aborts the job.
-- **Toman = full-precision USD × market USDT/Toman.** Decimal arithmetic and
-  source values are saved before display rounding. Small positive prices keep
-  enough significant digits to avoid showing zero.
+- The market USDT/Toman quote is **rounded to the nearest 100 Toman**, with half
+  steps rounded up: 266,999 → 267,000; 268,346 → 268,300; 271,100 → 271,100.
+  The rounded rate appears on every slide and is also used for conversions.
+  The original unrounded market quote is retained in the saved snapshot.
+- **Toman = full-precision USD × rounded market USDT/Toman.** Decimal arithmetic
+  preserves the full USD source price until final display rounding. Small
+  positive prices keep enough significant digits to avoid showing zero.
 - All slides share the same rate and snapshot. Ticker update timestamps may be
   at most 20 minutes old; the observed market quote may be at most five minutes
   old at publication. This is the age of the API observation: Wallex's response
