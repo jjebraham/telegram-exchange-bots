@@ -1,0 +1,12 @@
+[Unit]
+Description=Publish Kiani Exchange Instagram rates daily at 11:10 Istanbul time
+
+[Timer]
+OnCalendar=*-*-* 11:10:00 Europe/Istanbul
+Persistent=true
+AccuracySec=1min
+Unit=kiani-instagram-rates.service
+
+[Install]
+WantedBy=timers.target
+
