@@ -6,6 +6,7 @@ history baselines, safety thresholds, or running bot processes are changed here.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -14,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -128,13 +130,21 @@ def _export(repo, post):
     history = Path(os.getenv("INSTAGRAM_MARKET_HISTORY_DB", str(repo / "channel_split/market_history_production.sqlite3"))).expanduser()
     if not script.is_file() or not history.is_file():
         raise CarouselError("Production Telegram publisher or market history is missing")
-    environment = dict(os.environ, MARKET_HISTORY_DB=str(history.resolve()), MARKET_SAFETY_MODE="enforce", PYTHONIOENCODING="utf-8")
+    environment = dict(os.environ, MARKET_SAFETY_MODE="enforce", PYTHONIOENCODING="utf-8")
     try:
-        result = subprocess.run(
-            [os.getenv("INSTAGRAM_TELEGRAM_PYTHON", "/usr/bin/python3"), str(script), "--post", post, "--export-json"],
-            cwd=script.parent, env=environment, capture_output=True, text=True, encoding="utf-8", timeout=180, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        # Like the existing X bridge, assess against a consistent read-only
+        # backup. Collector schema initialization cannot alter production DBs.
+        with tempfile.TemporaryDirectory(prefix="kiani-instagram-history-") as tmp:
+            snapshot = Path(tmp) / "history.sqlite3"
+            with closing(sqlite3.connect(history.resolve().as_uri()+"?mode=ro", uri=True, timeout=3)) as source:
+                with closing(sqlite3.connect(snapshot)) as target:
+                    source.backup(target)
+            environment["MARKET_HISTORY_DB"] = str(snapshot)
+            result = subprocess.run(
+                [os.getenv("INSTAGRAM_TELEGRAM_PYTHON", "/usr/bin/python3"), str(script), "--post", post, "--export-json"],
+                cwd=script.parent, env=environment, capture_output=True, text=True, encoding="utf-8", timeout=180, check=False,
+            )
+    except (OSError, sqlite3.Error, subprocess.TimeoutExpired) as exc:
         raise CarouselError("Telegram collection unavailable (" + type(exc).__name__ + ")") from exc
     if result.returncode:
         # Collector logs can contain credentials from external libraries. Do not
@@ -190,14 +200,26 @@ def collect_sections():
         for kind, future in futures:
             try:
                 section = future.result()
-                # Recheck after the other collectors finish, not just on read.
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(section["generated_at"])).total_seconds()
-                if age > 900:
-                    raise CarouselError("Section expired while collecting")
                 sections.append(section)
             except CarouselError as exc:
                 print(f"Carousel section omitted: {kind}: {exc}", file=sys.stderr, flush=True)
-    return sections
+    fresh = []
+    for section in sections:
+        maximum = 900 if section["kind"] == "hawala" else 300
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(section["generated_at"])).total_seconds()
+        if -60 <= age <= maximum:
+            fresh.append(section)
+        else:
+            print(f"Carousel section omitted: {section['kind']}: expired while collecting", file=sys.stderr, flush=True)
+    return fresh
+
+
+def assert_fresh_sections(sections):
+    for section in sections:
+        maximum = 900 if section["kind"] == "hawala" else 300
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(section["generated_at"])).total_seconds()
+        if not -60 <= age <= maximum:
+            raise CarouselError("Carousel section expired before publishing: " + section["kind"])
 
 
 def sample_bundle():

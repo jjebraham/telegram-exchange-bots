@@ -19,13 +19,16 @@ prices are labelled as informational and can differ from Kiani's customer rates.
 
 The market tables come from the installed Telegram publisher, using its
 `--export-json` action. The action fetches current sources, uses the production
-safety/history database, and returns only assessed/verified content. It sends no
+safety/history database through a consistent SQLite backup, and returns only
+assessed/verified content. Even collector schema initialization is isolated from
+production history. It sends no
 Telegram messages. This upgrade does not change Telegram or mini-app code.
 
 Missing/unverified market sections are omitted with a log entry. A completely
 unavailable market collection still permits the two Kiani customer quote slides
 when the customer API is available. Customer API failure blocks publication.
 Missing changes appear as `—`; no past/sample prices are substituted.
+Market table exports must be no older than five minutes when publication begins.
 
 Hawala requires `INSTAGRAM_HAWALA_SNAPSHOT` pointing to the existing export with:
 

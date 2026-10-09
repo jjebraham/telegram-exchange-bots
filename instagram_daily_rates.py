@@ -667,7 +667,7 @@ def main() -> int:
     image_dir = args.output or Path(os.getenv("INSTAGRAM_IMAGE_OUTPUT_DIR", DEFAULT_IMAGE_DIR))
     image_dir = image_dir.expanduser().resolve()
     if carousel:
-        from instagram_carousel import CarouselError, collect_sections, render_carousel, sample_bundle
+        from instagram_carousel import CarouselError, assert_fresh_sections, collect_sections, render_carousel, sample_bundle
         try:
             if args.sample_preview:
                 rates, sections = sample_bundle()
@@ -685,6 +685,10 @@ def main() -> int:
             print("Dry run complete; Instagram was not contacted.")
             return 0
         image_urls = [_public_image_url(path) for path in paths]
+        try:
+            assert_fresh_sections(sections)
+        except CarouselError as exc:
+            raise PublishError(str(exc)) from exc
         media_id = publish_carousel(image_urls, caption)
         _save_state(state_path, {
             "posted_date": now.date().isoformat(), "posted_at": now.isoformat(),
