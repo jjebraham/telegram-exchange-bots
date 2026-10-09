@@ -1,7 +1,8 @@
-"""Run the existing interactive bot with canonical Toman↔TRY pricing.
+"""Run the interactive bot with a shared five-minute Toman/TRY quote pair.
 
-Only the four TRY/Toman handlers are patched in memory. USDT and TRY/USDT
-conversion handlers are intentionally left unchanged.
+The four Toman/TRY buttons use the canonical API with a live-market fallback.
+Existing admin percentage adjustments for the other eight buttons are retained.
+The production bot source is transformed in memory.
 """
 
 from __future__ import annotations
@@ -179,7 +180,7 @@ def transform_source(source: str) -> tuple[str, tuple[str, ...]]:
     missing = sorted(set(PATCH_SPECS) - set(nodes))
     if missing:
         raise RuntimePatchError(
-            "Required TRY pricing handlers are missing: " + ", ".join(missing)
+            "Required pricing handlers are missing: " + ", ".join(missing)
         )
 
     lines = source.splitlines(keepends=True)
@@ -319,7 +320,7 @@ def main() -> None:
     if args.check:
         _patched, names = load_and_transform(source_path)
         print(
-            f"OK: patched and compiled {len(names)} TRY pricing handlers "
+            f"OK: patched and compiled {len(names)} pricing handlers "
             f"from {source_path}"
         )
         return
