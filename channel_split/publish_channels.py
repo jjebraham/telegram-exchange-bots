@@ -15,7 +15,7 @@ import os
 import sys
 import time
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
@@ -44,11 +44,6 @@ from iran_fx_adonis import fetch_adonis_try_sell_toman
 from iran_fx_dolarchand import fetch_dolarchand_iran_fx
 from iran_fx_pashizi import fetch_pashizi_iran_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
-from kiani_shared_pricing import (
-    calculate_kiani_rates,
-    fetch_btcturk_usdt_try,
-    load_shared_adjustments,
-)
 from kiani_posts import (
     build_kiani_rate_post,
     build_kiani_toman_receive_post,
@@ -112,7 +107,8 @@ from rate_change_history import (
     record_published_values,
 )
 
-DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
+from kiani_rates_api import DEFAULT_RATES_URL, fetch_kiani_rates
+
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 
 
@@ -140,59 +136,6 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
-
-
-def _positive_decimal(value: Any, key: str) -> Decimal:
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValueError(f"Rate {key!r} is not numeric") from exc
-    if not parsed.is_finite() or parsed <= 0:
-        raise ValueError(f"Rate {key!r} must be positive")
-    return parsed
-
-
-def fetch_kiani_rates(
-    url: str = DEFAULT_RATES_URL,
-    timeout: int = 20,
-    retries: int = 3,
-) -> dict[str, Decimal]:
-    last_error: Exception | None = None
-
-    for attempt in range(1, retries + 1):
-        request = Request(
-            url,
-            headers={"Accept": "application/json", "User-Agent": "Kiani-TelegramPublisher/1.4"},
-        )
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                payload = json.load(response)
-        except HTTPError as exc:
-            last_error = exc
-            if exc.code in {502, 503, 504} and attempt < retries:
-                time.sleep(attempt)
-                continue
-            raise RuntimeError(f"Kiani rates API returned HTTP {exc.code}") from exc
-        except (URLError, TimeoutError) as exc:
-            last_error = exc
-            if attempt < retries:
-                time.sleep(attempt)
-                continue
-            raise RuntimeError(f"Could not load Kiani rates: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Could not decode Kiani rates response: {exc}") from exc
-
-        raw = payload.get("rates") if isinstance(payload, dict) else None
-        if not isinstance(raw, dict):
-            raise ValueError("Kiani rates API response has no rates object")
-
-        keys = ("buy_lira", "sell_lira", "buy_usdt", "sell_usdt", "lira_to_usdt", "usdt_to_lira")
-        missing = [key for key in keys if key not in raw]
-        if missing:
-            raise ValueError("Missing Kiani rates: " + ", ".join(missing))
-        return {key: _positive_decimal(raw[key], key) for key in keys}
-
-    raise RuntimeError(f"Could not load Kiani rates: {last_error}")
 
 
 def _fmt_int(value: Decimal) -> str:
@@ -440,48 +383,16 @@ def main() -> int:
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
         if rates_cache is None:
-            quotes = get_hybrid_usdt()
-            buy_values = sorted(
-                Decimal(str(quote.buy_toman))
-                for quote in quotes
-            )
-            if not buy_values:
-                raise RuntimeError("No verified USDT/Toman market values for Kiani pricing")
-            middle = len(buy_values) // 2
-            if len(buy_values) % 2:
-                market_usdt_toman = buy_values[middle]
-            else:
-                market_usdt_toman = (
-                    buy_values[middle - 1] + buy_values[middle]
-                ) / Decimal("2")
-
             try:
-                market_usdt_try = fetch_btcturk_usdt_try()
-                note_source_health("kiani:btcturk-usdttry", True)
+                rates_cache = fetch_kiani_rates()
+                note_source_health("kiani:customer-rates-api", True)
             except Exception as exc:
                 note_source_health(
-                    "kiani:btcturk-usdttry",
+                    "kiani:customer-rates-api",
                     False,
                     f"{type(exc).__name__}: {exc}",
                 )
                 raise
-
-            try:
-                adjustments = load_shared_adjustments()
-                note_source_health("kiani:shared-pricing-db", True)
-            except Exception as exc:
-                note_source_health(
-                    "kiani:shared-pricing-db",
-                    False,
-                    f"{type(exc).__name__}: {exc}",
-                )
-                raise
-
-            rates_cache = calculate_kiani_rates(
-                market_usdt_toman,
-                market_usdt_try,
-                adjustments,
-            )
         return rates_cache
 
     def get_usd_quotes() -> list[Any]:
