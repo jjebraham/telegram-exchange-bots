@@ -136,6 +136,18 @@ def main():
     new_rates = new_rates.encode('utf-8')
     old_cron = cron_read()
     base = cron_base(old_cron)
+    if any(line.strip().startswith(('TZ=', 'CRON_TZ=')) for line in base.splitlines()):
+        raise ActivationError('A crontab timezone override needs review before activation')
+    for proc in Path('/proc').iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            arguments = (proc / 'cmdline').read_bytes().split(b'\0')
+            names = {Path(arg.decode(errors='replace')).name for arg in arguments if arg}
+            if names & {'publish-kiani-instagram-rates.sh', 'instagram_daily_rates.py'}:
+                raise ActivationError('The rates job is running; retry after it finishes')
+        except (OSError, ValueError):
+            continue
     expected_jobs = {
         'rates': ('30', '8'), 'economy': ('0', '10'),
         'top50': ('0', '13'), 'news': ('0', '15'),
