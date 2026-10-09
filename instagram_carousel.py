@@ -476,17 +476,34 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
                 frames.append(image)
             included.append("نرخ ارز بازار آزاد ایران")
         elif kind == "hawala":
-            image, draw = base("نرخ حواله به ایران", "", stamp, "flying_money", rule_y=1129, stamp_y=1260, left_key="IRAN")
+            image, draw = base("نرخ حواله به ایران", "", stamp, "flying_money", rule_y=1073, stamp_y=1278, left_key="IRAN")
             title(image, "پرداخت به تومان · قبل از واریز هماهنگ کنید", (540, 305), 29, "phone", muted, False, 28)
             for i, row in enumerate(rows):
-                y = 421+i*108
-                draw.rounded_rectangle((64, y-48, 1016, y+48), radius=16, fill="#FFFFFF" if i % 2 == 0 else "#E5EFE8")
+                y = 416+i*100
+                draw.rounded_rectangle((64, y-44, 1016, y+44), radius=16, fill="#FFFFFF" if i % 2 == 0 else "#E5EFE8")
                 currency(image, row["code"], (818, y), 38)
                 fa(draw, FX_NAMES[row["code"]], (553, y), 34)
                 latin(draw, amount(row["price"]), (87, y), 43, anchor="lm", bold=True)
-            title(image, "نرخ لحظه‌ای و سایر ارزها", (540, 1168), 28, "robot", muted, False, 29)
-            latin(draw, "@Kianiexchangebot", (540, 1210), 36, green, bold=True)
-            footer_positions[len(frames)+1] = 1312
+            title(image, "نرخ لحظه‌ای و سایر ارزها در ربات تلگرام صرافی کیانی", (540, 1110), 26, "robot", muted, False, 28)
+            # An explicit platform label and full URL help Instagram readers
+            # identify where to open the bot; image text itself is not clickable.
+            prefix, handle, address = "Telegram · ", "@kianiexchangebot", "https://t.me/kianiexchangebot"
+            prefix_width = draw.textlength(prefix, font=font(28))
+            line_width = prefix_width+draw.textlength(handle, font=font(28, True))
+            address_width = draw.textlength(address, font=font(26, True))
+            panel_width = max(line_width, address_width)+118
+            left, right = 540-panel_width/2, 540+panel_width/2
+            draw.rounded_rectangle((left, 1142, right, 1246), radius=22, fill="#FFFFFF", outline="#C4E6FB", width=2)
+            logo_x, logo_y = left+49, 1194
+            draw.ellipse((logo_x-32, logo_y-32, logo_x+32, logo_y+32), fill="#2AABEE")
+            # Draw the Telegram paper-plane mark without an OS emoji dependency.
+            draw.polygon(((logo_x-20, logo_y-2), (logo_x+19, logo_y-15), (logo_x+11, logo_y+19), (logo_x, logo_y+9), (logo_x-7, logo_y+15), (logo_x-6, logo_y+3)), fill="#FFFFFF")
+            draw.polygon(((logo_x-6, logo_y+3), (logo_x+12, logo_y-8), (logo_x, logo_y+9)), fill="#2AABEE")
+            text_x = left+100
+            latin(draw, prefix, (text_x, 1176), 28, anchor="lm")
+            latin(draw, handle, (text_x+prefix_width, 1176), 28, "#1594DA", anchor="lm", bold=True)
+            latin(draw, address, (text_x, 1216), 26, muted, anchor="lm", bold=True)
+            footer_positions[len(frames)+1] = 1322
             frames.append(image)
             included.append("حواله به ایران")
 
