@@ -1,8 +1,7 @@
-"""Run the existing interactive bot with live pricing percentages.
+"""Run the existing interactive bot with canonical Toman↔TRY pricing.
 
-The production bot file is intentionally left unchanged. This entry point reads it,
-strictly replaces the reviewed hard-coded pricing expressions in memory, compiles
-the transformed source, and then runs its async ``main`` function.
+Only the four TRY/Toman handlers are patched in memory. USDT and TRY/USDT
+conversion handlers are intentionally left unchanged.
 """
 
 from __future__ import annotations
@@ -22,34 +21,68 @@ class RuntimePatchError(RuntimeError):
     """Raised when the production source no longer matches the reviewed code."""
 
 
+BUY_LEGACY_BLOCK = """    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    await wait1.delete()
+    if not usdt_irr or not usdt_try:
+        await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
+        return
+    eff_toman = usdt_irr / 10
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)
+"""
+
+SELL_LEGACY_BLOCK = """    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    await wait1.delete()
+    if not usdt_irr or not usdt_try:
+        await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
+        return
+    eff_toman = usdt_irr / 10
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+"""
+
+BUY_CANONICAL_BLOCK = """    try:
+        rate = await _canonical_try_rate("buy_lira")
+    except Exception:
+        await wait1.delete()
+        await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
+        return
+    await wait1.delete()
+"""
+
+SELL_CANONICAL_BLOCK = """    try:
+        rate = await _canonical_try_rate("sell_lira")
+    except Exception:
+        await wait1.delete()
+        await message.answer("⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.")
+        return
+    await wait1.delete()
+"""
+
 PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
     "buy_lira_user": (
-        (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"0.67\"))",
-        ),
+        (BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),
+        (BUY_CANONICAL_BLOCK, BUY_CANONICAL_BLOCK),
     ),
     "main_menu_buy_lira_rate": (
-        (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"0.67\"))",
-        ),
+        (BUY_LEGACY_BLOCK, BUY_CANONICAL_BLOCK),
+        (BUY_CANONICAL_BLOCK, BUY_CANONICAL_BLOCK),
     ),
     "sell_lira_user": (
-        (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_sell_adjustment_pct\", \"-3.00\"))",
-        ),
+        (SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),
+        (SELL_CANONICAL_BLOCK, SELL_CANONICAL_BLOCK),
     ),
     "main_menu_sell_lira_rate": (
-        (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_sell_adjustment_pct\", \"-3.00\"))",
-        ),
+        (SELL_LEGACY_BLOCK, SELL_CANONICAL_BLOCK),
+        (SELL_CANONICAL_BLOCK, SELL_CANONICAL_BLOCK),
     ),
     "buy_tether_user": (
         (
             "rate = round_to_nearest_10(eff_toman * 1.01)",
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_buy_adjustment_pct\", \"1.00\"))",
+        ),
+        (
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_buy_adjustment_pct\", \"1.00\"))",
             "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_buy_adjustment_pct\", \"1.00\"))",
         ),
     ),
@@ -58,10 +91,18 @@ PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
             "rate = round_to_nearest_10(eff_toman * 1.01)",
             "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_buy_adjustment_pct\", \"1.00\"))",
         ),
+        (
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_buy_adjustment_pct\", \"1.00\"))",
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_buy_adjustment_pct\", \"1.00\"))",
+        ),
     ),
     "sell_tether_user": (
         (
             "rate = round_to_nearest_10(eff_toman * 0.99)",
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_sell_adjustment_pct\", \"-1.00\"))",
+        ),
+        (
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_sell_adjustment_pct\", \"-1.00\"))",
             "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_sell_adjustment_pct\", \"-1.00\"))",
         ),
     ),
@@ -70,10 +111,18 @@ PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
             "rate = round_to_nearest_10(eff_toman * 0.99)",
             "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_sell_adjustment_pct\", \"-1.00\"))",
         ),
+        (
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_sell_adjustment_pct\", \"-1.00\"))",
+            "rate = round_to_nearest_10(eff_toman * _pricing_factor(\"user_usdt_sell_adjustment_pct\", \"-1.00\"))",
+        ),
     ),
     "lira_to_tether_user": (
         (
             "rate = usdt_try * 1.02",
+            "rate = usdt_try * _pricing_factor(\"user_try_to_usdt_adjustment_pct\", \"2.00\")",
+        ),
+        (
+            "rate = usdt_try * _pricing_factor(\"user_try_to_usdt_adjustment_pct\", \"2.00\")",
             "rate = usdt_try * _pricing_factor(\"user_try_to_usdt_adjustment_pct\", \"2.00\")",
         ),
     ),
@@ -82,10 +131,18 @@ PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
             "rate = usdt_try * 1.02",
             "rate = usdt_try * _pricing_factor(\"user_try_to_usdt_adjustment_pct\", \"2.00\")",
         ),
+        (
+            "rate = usdt_try * _pricing_factor(\"user_try_to_usdt_adjustment_pct\", \"2.00\")",
+            "rate = usdt_try * _pricing_factor(\"user_try_to_usdt_adjustment_pct\", \"2.00\")",
+        ),
     ),
     "tether_to_lira_user": (
         (
             "rate = usdt_try * 0.98",
+            "rate = usdt_try * _pricing_factor(\"user_usdt_to_try_adjustment_pct\", \"-2.00\")",
+        ),
+        (
+            "rate = usdt_try * _pricing_factor(\"user_usdt_to_try_adjustment_pct\", \"-2.00\")",
             "rate = usdt_try * _pricing_factor(\"user_usdt_to_try_adjustment_pct\", \"-2.00\")",
         ),
     ),
@@ -94,12 +151,18 @@ PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
             "rate = usdt_try * 0.98",
             "rate = usdt_try * _pricing_factor(\"user_usdt_to_try_adjustment_pct\", \"-2.00\")",
         ),
+        (
+            "rate = usdt_try * _pricing_factor(\"user_usdt_to_try_adjustment_pct\", \"-2.00\")",
+            "rate = usdt_try * _pricing_factor(\"user_usdt_to_try_adjustment_pct\", \"-2.00\")",
+        ),
     ),
+
 }
 
-HELPER_SOURCE = '''\nfrom main_user_pricing_client import get_adjustment_factor as _get_adjustment_factor\n\ndef _pricing_factor(key, default_percentage):\n    return float(_get_adjustment_factor(key, default_percentage))\n\n'''
-
-
+HELPER_IMPORT = """from main_user_pricing_client import get_adjustment_factor as _get_adjustment_factor, get_canonical_try_rate_with_fallback as _get_canonical_try_rate_with_fallback\n_pricing_factor = lambda key, default_percentage: float(_get_adjustment_factor(key, default_percentage))"""
+HELPER_FUNCTION = """async def _canonical_try_rate(rate_key):
+    return await _get_canonical_try_rate_with_fallback(rate_key, price_cache)
+"""
 def _function_nodes(source: str) -> dict[str, ast.AsyncFunctionDef]:
     tree = ast.parse(source)
     return {
@@ -116,7 +179,7 @@ def transform_source(source: str) -> tuple[str, tuple[str, ...]]:
     missing = sorted(set(PATCH_SPECS) - set(nodes))
     if missing:
         raise RuntimePatchError(
-            "Required pricing handlers are missing: " + ", ".join(missing)
+            "Required TRY pricing handlers are missing: " + ", ".join(missing)
         )
 
     lines = source.splitlines(keepends=True)
@@ -138,24 +201,49 @@ def transform_source(source: str) -> tuple[str, tuple[str, ...]]:
         end = node.end_lineno
         block = "".join(lines[start:end])
 
-        for expected, replacement in PATCH_SPECS[function_name]:
-            occurrence_count = block.count(expected)
-            if occurrence_count != 1:
-                raise RuntimePatchError(
-                    f"{function_name}: expected exactly one occurrence of "
-                    f"{expected!r}, found {occurrence_count}"
-                )
-            block = block.replace(expected, replacement, 1)
+        matches = [
+            (expected, replacement, block.count(expected))
+            for expected, replacement in PATCH_SPECS[function_name]
+            if block.count(expected)
+        ]
+        if len(matches) != 1 or matches[0][2] != 1:
+            raise RuntimePatchError(
+                f"{function_name}: expected exactly one reviewed legacy or canonical "
+                f"pricing block; found {sum(match[2] for match in matches)}"
+            )
+        expected, replacement, _occurrence_count = matches[0]
+        block = block.replace(expected, replacement, 1)
 
         lines[start:end] = [block]
         patched_names.append(function_name)
 
     patched = "".join(lines)
-    if patched.startswith("#!"):
-        newline = patched.find("\n")
-        patched = patched[: newline + 1] + HELPER_SOURCE + patched[newline + 1 :]
+    if HELPER_IMPORT not in patched:
+        old_import = "from main_user_pricing_client import get_canonical_try_rate as _get_canonical_try_rate_sync"
+        if old_import in patched:
+            patched = patched.replace(old_import, HELPER_IMPORT, 1)
+        elif patched.startswith("#!"):
+            newline = patched.find("\n")
+            patched = patched[: newline + 1] + HELPER_IMPORT + "\n" + patched[newline + 1 :]
+        else:
+            patched = HELPER_IMPORT + "\n" + patched
+
+    # Keep an existing injected helper current too; production may already be
+    # running a previously patched source file.
+    helper_nodes = _function_nodes(patched)
+    helper_node = helper_nodes.get("_canonical_try_rate")
+    if helper_node is None:
+        if patched.startswith("#!"):
+            newline = patched.find("\n")
+            patched = patched[: newline + 1] + HELPER_FUNCTION + "\n" + patched[newline + 1 :]
+        else:
+            patched = HELPER_FUNCTION + "\n" + patched
     else:
-        patched = HELPER_SOURCE + patched
+        helper_lines = patched.splitlines(keepends=True)
+        helper_start = helper_node.lineno - 1
+        helper_end = helper_node.end_lineno
+        helper_lines[helper_start:helper_end] = [HELPER_FUNCTION]
+        patched = "".join(helper_lines)
 
     # Compile here as part of the transformation contract.
     compile(patched, "<main_user_bot_patched>", "exec")
@@ -207,7 +295,7 @@ def run_transformed_bot(source_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run or verify main_user_bot with shared live pricing"
+        description="Run or verify main_user_bot with canonical TRY pricing"
     )
     parser.add_argument(
         "--check",
@@ -231,7 +319,7 @@ def main() -> None:
     if args.check:
         _patched, names = load_and_transform(source_path)
         print(
-            f"OK: patched and compiled {len(names)} pricing handlers "
+            f"OK: patched and compiled {len(names)} TRY pricing handlers "
             f"from {source_path}"
         )
         return
