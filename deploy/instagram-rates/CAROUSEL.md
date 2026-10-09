@@ -19,6 +19,8 @@ prices are labelled as informational and can differ from Kiani's customer rates.
 
 The Feed design uses RTL tables, bold prices, bundled country flags and icons,
 and a progress bar that fills from the right. Page numbers remain at bottom left.
+The supplied Kiani Exchange monogram appears large on the cover and beside the
+brand name on every other slide. Its bundled SVG is drawn directly with Pillow.
 Vazirmatn Bold and a Twemoji atlas are bundled; rendering needs no asset downloads
 or new Python dependencies. Artwork attribution is included in the caption and
 `assets/instagram/README.md`. The brown sample ribbon appears only in previews.

@@ -231,15 +231,24 @@ def sample_bundle():
 def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
     """Render the approved RTL Feed design with bundled fonts and artwork."""
     from PIL import ImageFilter
+    import xml.etree.ElementTree as ET
 
     root = Path(__file__).resolve().parent
     bold_path = root / "fonts/Vazirmatn-Bold.ttf"
     asset_dir = root / "assets/instagram"
-    if not bold_path.is_file() or not (asset_dir / "icons.png").is_file() or not (asset_dir / "icons.json").is_file():
+    if not bold_path.is_file() or not all((asset_dir / name).is_file() for name in ("icons.png", "icons.json", "kiani-logo.svg")):
         raise CarouselError("Restore fonts/Vazirmatn-Bold.ttf and assets/instagram for the carousel design")
     with Image.open(asset_dir / "icons.png") as opened:
         atlas = opened.convert("RGBA")
     artwork = json.loads((asset_dir / "icons.json").read_text(encoding="utf-8"))
+    # The supplied monogram is a vector asset. Draw its polygons with Pillow so
+    # the production renderer needs no SVG library or external asset download.
+    logo_root = ET.parse(asset_dir / "kiani-logo.svg").getroot()
+    _, _, logo_width, logo_height = map(float, logo_root.attrib["viewBox"].split())
+    logo_polygons = [
+        [tuple(map(float, pair.split(","))) for pair in node.attrib["points"].split()]
+        for node in logo_root.iter("{http://www.w3.org/2000/svg}polygon")
+    ]
     font_cache, icon_cache = {}, {}
     directory.mkdir(parents=True, exist_ok=True)
     green, ink, muted = "#1C8C67", "#173D32", "#6D827A"
@@ -262,6 +271,18 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
         if cache_key not in icon_cache:
             icon_cache[cache_key] = atlas.crop(artwork[key]["box"]).resize((size, size), Image.Resampling.LANCZOS)
         image.paste(icon_cache[cache_key], (round(xy[0]-size/2), round(xy[1]-size/2)), icon_cache[cache_key])
+
+    def logo(image, xy, height):
+        cache_key = ("kiani-logo", height)
+        if cache_key not in icon_cache:
+            width = round(height*logo_width/logo_height)
+            mark = Image.new("RGBA", (width*4, height*4))
+            painter = ImageDraw.Draw(mark)
+            for polygon in logo_polygons:
+                painter.polygon([(x*width*4/logo_width, y*height*4/logo_height) for x, y in polygon], fill=ink)
+            icon_cache[cache_key] = mark.resize((width, height), Image.Resampling.LANCZOS)
+        mark = icon_cache[cache_key]
+        image.paste(mark, (round(xy[0]-mark.width/2), round(xy[1]-mark.height/2)), mark)
 
     def title(image, text, xy, size=58, key=None, fill=ink, bold=True, icon_size=None, left_key=None):
         draw = ImageDraw.Draw(image)
@@ -334,7 +355,7 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
         draw = ImageDraw.Draw(image)
         latin(draw, "kiani.exchange", (64, 137), 34, anchor="lm", bold=True)
         fa(draw, "صرافی کیانی", (976, 137), 34, anchor="rm", bold=True)
-        icon(image, "exchange", (1003, 137), 36)
+        logo(image, (1000, 139), 36)
         title(image, heading, (540, 237), 60, key, left_key=left_key)
         fa(draw, subtitle, (540, 306), 30, muted)
         draw.line((64, rule_y, 1016, rule_y), fill=rule, width=2)
@@ -355,13 +376,12 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
     # The Feed cover has its own approved layout; the Story renderer is unchanged.
     image = Image.new("RGB", (1080, 1350), background)
     draw = ImageDraw.Draw(image)
-    draw.ellipse((502, 114, 578, 190), fill="#D6EBE1")
-    latin(draw, "K", (540, 153), 42, green, bold=True)
-    title(image, "صرافی کیانی", (540, 239), 68, "exchange", icon_size=72)
-    title(image, "نرخ امروز", (540, 316), 32, "chart", muted, False, 30)
+    logo(image, (540, 179), 122)
+    title(image, "صرافی کیانی", (540, 289), 68)
+    title(image, "نرخ امروز", (540, 366), 32, "chart", muted, False, 30)
     for box, label, keys, badge in (
-        ((64, 354, 1016, 594), "لیر ترکیه", ("buy_lira", "sell_lira"), "TRY"),
-        ((64, 614, 1016, 854), "تتر (USDT)", ("buy_usdt", "sell_usdt"), "tether"),
+        ((64, 404, 1016, 644), "لیر ترکیه", ("buy_lira", "sell_lira"), "TRY"),
+        ((64, 664, 1016, 904), "تتر (USDT)", ("buy_usdt", "sell_usdt"), "tether"),
     ):
         card(image, box, shadow=True)
         draw = ImageDraw.Draw(image)
@@ -383,12 +403,12 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
             fa(draw, text, (931, y), 36, anchor="rm")
             fa(draw, ig._persian_number(rates[key]), (161, y), 54, anchor="lm", bold=True)
             fa(draw, "تومان", (151, y+8), 25, muted, anchor="rm")
-    card(image, (64, 874, 1016, 1060), shadow=True)
+    card(image, (64, 924, 1016, 1110), shadow=True)
     draw = ImageDraw.Draw(image)
-    title(image, "نرخ تبدیل", (540, 910), 36, "convert", muted, False, 34)
+    title(image, "نرخ تبدیل", (540, 960), 36, "convert", muted, False, 34)
     for y, text, key, right_flag, other in (
-        (963, "لیر به تتر", "lira_to_usdt", True, False),
-        (1017, "تتر به لیر", "usdt_to_lira", False, True),
+        (1013, "لیر به تتر", "lira_to_usdt", True, False),
+        (1067, "تتر به لیر", "usdt_to_lira", False, True),
     ):
         fa(draw, text, (930, y), 34, anchor="rm")
         if right_flag:
@@ -403,7 +423,7 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
             tether(draw, (793, y), 19)
         fa(draw, ig._persian_number(rates[key], decimals=2)+" لیر", (106, y), 42, anchor="lm", bold=True)
     local = moment.astimezone(ISTANBUL)
-    title(image, f"{local:%H:%M} · استانبول", (540, 1103), 30, "location", muted, False, 30)
+    title(image, f"{local:%H:%M} · استانبول", (540, 1153), 30, "location", muted, False, 30)
     title(image, "سفارش: لینک در Bio", (540, 1260), 46, "down", green, True, 46)
     frames.append(image)
 
