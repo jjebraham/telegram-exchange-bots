@@ -226,13 +226,13 @@ def caption(snapshot):
             'رتبه‌بندی بر اساس ارزش بازار، بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n\n'
             'قیمت تومان = قیمت دلاری هر ارز × نرخ بازار تتر\n'
             f"هر تتر = {price_text(snapshot['usdt_toman'])} تومان\n"
-            'نرخ تتر: آخرین معامله بازار USDTTMN در والکس.\n'
+            f"نرخ تتر: {snapshot.get('rate_caption_fa', 'آخرین معامله بازار USDTTMN در والکس')}.\n"
             'نرخ بازار تتر به نزدیک‌ترین ۱۰۰ تومان گرد شده است.\n'
             'محاسبه با قیمت دلاری کامل منبع انجام می‌شود؛ اعداد روی تصویر گرد شده‌اند.\n\n'
             f'{local:%Y/%m/%d · %H:%M} استانبول\n'
             'منبع قیمت دلاری و ارزش بازار: CoinPaprika\n'
             'https://coinpaprika.com\n'
-            'منبع نرخ بازار تتر: https://wallex.ir\n\n'
+            f"منبع نرخ بازار تتر: {snapshot.get('rate_public_url', 'https://wallex.ir')}\n\n"
             'نرخ‌ها صرفاً جهت اطلاع‌رسانی است.\n'
             'ربات تلگرام نرخ لحظه‌ای: @kianiexchangebot\n'
             'https://t.me/kianiexchangebot\n\n'

@@ -17,6 +17,7 @@ TICKERS_URL = 'https://api.coinpaprika.com/v1/tickers?quotes=USD'
 STABLE_URL = 'https://api.coinpaprika.com/v1/tags/stablecoin?additional_fields=coins'
 WRAPPED_URL = 'https://api.coinpaprika.com/v1/tags/wrapped-token?additional_fields=coins'
 MARKET_URL = 'https://api.wallex.ir/v1/markets'
+EXIR_URL = 'https://api.exir.io/v2/ticker?symbol=usdt-irt'
 PRICE_MAX_AGE = 1200  # CoinPaprika's free tickers normally update about every five minutes.
 RATE_MAX_AGE = 300
 UA = 'KianiExchange-InstagramPrices/1.0'
@@ -82,7 +83,7 @@ def fetch_json(url, *, attempts=3, timeout=25):
 def check_sources():
     """Read-only connectivity check using the publisher's real requests and SSL settings."""
     failed = False
-    for url in (STABLE_URL, WRAPPED_URL, TICKERS_URL, MARKET_URL):
+    for url in (STABLE_URL, WRAPPED_URL, TICKERS_URL):
         started = time.monotonic()
         try:
             fetch_json(url, attempts=1, timeout=12)
@@ -91,6 +92,14 @@ def check_sources():
             print(f'FAILED: {exc}', flush=True)
         else:
             print(f'OK: {provider_label(url)} ({time.monotonic() - started:.1f}s)', flush=True)
+    try:
+        quote = fetch_market_quote(attempts=1, timeout=8)
+    except PricesError as exc:
+        failed = True
+        print(f'FAILED: {exc}', flush=True)
+    else:
+        print(f"OK: market USDT/Toman | {quote['rate_source']} | "
+              f"{round_market_rate(quote['raw_usdt_toman'])} Toman", flush=True)
     print('Connection check complete. Nothing published or scheduled.', flush=True)
     return 1 if failed else 0
 
@@ -132,6 +141,51 @@ def fresh(value, now, max_age, label):
     age = (now - timestamp(value)).total_seconds()
     if age < -300 or age > max_age:
         raise PricesError(f'{label} is stale or dated in the future; no post created.')
+
+
+def parse_market_quote(payload, provider, *, sample=False):
+    """Both supported pairs are Toman per USDT; neither uses customer quotes."""
+    now = datetime.now(timezone.utc)
+    if not isinstance(payload, dict):
+        raise PricesError(f'{provider} returned an invalid market response.')
+    try:
+        if provider == 'Wallex':
+            if payload.get('success') is False:
+                raise PricesError('Wallex returned an unsuccessful market response.')
+            raw = payload['result']['symbols']['USDTTMN']['stats']['lastPrice']
+            updated = None  # This response does not timestamp the last trade.
+            source, url, public_url = 'Wallex USDTTMN last trade', MARKET_URL, 'https://wallex.ir'
+            caption = 'آخرین معامله بازار USDTTMN در والکس'
+        elif provider == 'Exir':
+            if payload.get('symbol', 'usdt-irt') != 'usdt-irt':
+                raise PricesError('Exir returned the wrong market pair.')
+            raw, updated = payload['last'], payload['timestamp']
+            timestamp(updated)
+            if not sample:
+                fresh(updated, now, RATE_MAX_AGE, 'Exir USDT/IRT ticker')
+            source, url, public_url = 'Exir USDT/IRT last trade', EXIR_URL, 'https://www.exir.io'
+            caption = 'آخرین معامله بازار USDT/IRT در اکسیر'
+        else:
+            raise PricesError('Unsupported market quote provider.')
+    except (KeyError, TypeError):
+        raise PricesError(f'{provider} market USDT/Toman quote is unavailable.') from None
+    raw_rate = number(raw, provider + ' USDT/Toman market price', positive=True)
+    return dict(raw_usdt_toman=str(raw_rate), rate_source=source, rate_url=url,
+                rate_public_url=public_url, rate_caption_fa=caption,
+                rate_observed_at=now.isoformat(), rate_updated_at=updated)
+
+
+def fetch_market_quote(*, attempts=2, timeout=12):
+    # Fail over quickly when Wallex is unreachable from the publishing server.
+    # Exir has a documented public USDT/IRT ticker, already quoted in Toman.
+    for provider, url in (('Wallex', MARKET_URL), ('Exir', EXIR_URL)):
+        try:
+            payload = fetch_json(url, attempts=1 if provider == 'Wallex' else attempts,
+                                 timeout=min(timeout, 8) if provider == 'Wallex' else timeout)
+            return parse_market_quote(payload, provider)
+        except PricesError as exc:
+            print(f'Market source unavailable: {exc}', flush=True)
+    raise PricesError('No valid live market USDT/Toman quote is available; no post created.')
 
 
 def excluded(coin, stable_ids, wrapped_ids):
@@ -198,27 +252,23 @@ def select_coins(tickers, stable_ids, wrapped_ids, rate, now, *, sample=False):
     return chosen
 
 
-def build_snapshot(tickers, stable_tag, wrapped_tag, market, *, sample=False):
+def build_snapshot(tickers, stable_tag, wrapped_tag, market=None, *, sample=False, market_quote=None):
     now = datetime.now(timezone.utc)
     for tag, label in ((stable_tag, 'stablecoin'), (wrapped_tag, 'wrapped-token')):
         if not isinstance(tag, dict) or tag.get('id') != label or not isinstance(tag.get('coins'), list):
             raise PricesError('Invalid coin classification response.')
         if not all(isinstance(k, str) for k in tag['coins']):
             raise PricesError('Invalid coin classification identities.')
-    try:
-        # USDTTMN is already Toman per USDT. Do not divide this quote by ten.
-        pair = market['result']['symbols']['USDTTMN']
-        raw_rate = number(pair['stats']['lastPrice'], 'Wallex USDTTMN market price', positive=True)
-    except (KeyError, TypeError):
-        raise PricesError('Wallex USDTTMN market quote is unavailable; no customer quote substituted.') from None
-    if not isinstance(market, dict) or market.get('success') is False:
-        raise PricesError('Wallex returned an unsuccessful market response.')
+    quote = market_quote if market_quote is not None else parse_market_quote(market, 'Wallex', sample=sample)
+    raw_rate = number(quote['raw_usdt_toman'], 'raw USDT/Toman market price', positive=True)
     rate = round_market_rate(raw_rate)
     coins = select_coins(tickers, set(stable_tag['coins']), set(wrapped_tag['coins']), rate, now, sample=sample)
     return dict(schema=2, sample=sample, generated_at=now.isoformat(),
                 usdt_toman=str(rate), raw_usdt_toman=str(raw_rate),
-                usdt_rounding='nearest 100 Toman, half up', rate_source='Wallex USDTTMN last trade',
-                rate_url=MARKET_URL, rate_observed_at=now.isoformat(),
+                usdt_rounding='nearest 100 Toman, half up',
+                rate_source=quote['rate_source'], rate_url=quote['rate_url'],
+                rate_public_url=quote['rate_public_url'], rate_caption_fa=quote['rate_caption_fa'],
+                rate_observed_at=quote['rate_observed_at'], rate_updated_at=quote['rate_updated_at'],
                 coin_source='CoinPaprika', coin_url=TICKERS_URL,
                 exclusions='Stablecoins, asset-pegged coins, wrapped and staked duplicates', coins=coins)
 
@@ -228,8 +278,8 @@ def collect():
     # use the age of the actual tickers, not just the age of a downloaded file.
     stable, wrapped = fetch_json(STABLE_URL), fetch_json(WRAPPED_URL)
     tickers = fetch_json(TICKERS_URL)
-    market = fetch_json(MARKET_URL)
-    return build_snapshot(tickers, stable, wrapped, market)
+    market_quote = fetch_market_quote()
+    return build_snapshot(tickers, stable, wrapped, market_quote=market_quote)
 
 
 def validate_snapshot(snapshot, *, publishing=False):
@@ -243,6 +293,8 @@ def validate_snapshot(snapshot, *, publishing=False):
         raise PricesError('USDT/Toman rate must match the market price rounded to the nearest 100 Toman.')
     if publishing:
         fresh(snapshot['rate_observed_at'], now, RATE_MAX_AGE, 'USDT/Toman quote')
+        if snapshot.get('rate_updated_at') is not None:
+            fresh(snapshot['rate_updated_at'], now, RATE_MAX_AGE, 'USDT/Toman ticker')
         fresh(snapshot['generated_at'], now, PRICE_MAX_AGE, 'Price snapshot')
     identities = set()
     for position, coin in enumerate(snapshot['coins'], 1):

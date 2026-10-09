@@ -18,8 +18,13 @@ The installed rates, economy news and crypto news jobs keep their schedules.
   staking governance tokens are not excluded just because of a sector tag.
   New identities remain dynamic; the top 50 is not a fixed list from the PDF.
 - **Market USDT rate:** the public Wallex `USDTTMN` pair's `stats.lastPrice`,
-  already denominated in **Toman per USDT**. It is not divided by ten and no
-  adjusted customer buy/sell quote is used. An unavailable quote aborts the job.
+  falling back to the public Exir `usdt-irt` ticker's `last` when Wallex is
+  unreachable or invalid. Both pairs are already denominated in **Toman per
+  USDT**; neither is divided by ten. Requests retain TLS certificate validation.
+  Wallex gets one attempt with an eight-second timeout, followed by up to two
+  twelve-second Exir attempts. If neither supplies a valid quote, the job stops.
+  No adjusted customer buy/sell quote or cached fallback rate is used.
+  The saved snapshot and Persian caption identify the source actually used.
 - The market USDT/Toman quote is **rounded to the nearest 100 Toman**, with half
   steps rounded up: 266,999 → 267,000; 268,346 → 268,300; 271,100 → 271,100.
   The rounded rate appears on every slide and is also used for conversions.
@@ -29,8 +34,10 @@ The installed rates, economy news and crypto news jobs keep their schedules.
   positive prices keep enough significant digits to avoid showing zero.
 - All slides share the same rate and snapshot. Ticker update timestamps may be
   at most 20 minutes old; the observed market quote may be at most five minutes
-  old at publication. This is the age of the API observation: Wallex's response
-  does not provide a timestamp for the particular last trade. The last trade
+  old at publication. Exir's returned ticker timestamp is also checked against
+  the five-minute limit, including immediately before publication. Wallex's
+  response does not provide a timestamp for the particular last trade, so that
+  source can only be checked by the age of the API observation. The last trade
   can differ from a bid/ask quote. Missing 24-hour changes show a dash.
 - A failed classification request, stale leading price, invalid conversion or
   incomplete set prevents publication. No partial carousel is published.
@@ -90,6 +97,20 @@ active. It preserves other cron jobs, backs up replaced files and the crontab,
 and rolls back its changes if installation fails. It never publishes while
 activating the schedule. No additional API key or translation service is needed.
 
+When publication and deployment have already been approved, the shorter
+`publish_and_activate.py` helper runs one fresh publication from an exact
+detached checkout, then finds its matching successful media ID and invokes the
+same activation checks. Load the existing Instagram environment first:
+
+```bash
+/usr/bin/python3 "$WORK/deploy/instagram-top50/publish_and_activate.py" \
+  --repo "$REPO" --revision "$EXPECTED" --at 16:00
+```
+
+The helper checks that the runtime and installer files match the pinned Git
+revision. Publication failure stops activation. Existing daily duplicate
+protection remains in effect; uncertain results are not retried blindly.
+
 Publisher path: `~/kiani-instagram-top50-publisher/instagram_top50_prices.py`.
 Wrapper: `~/publish-kiani-instagram-top50.sh`.
 Database: `~/.local/state/kiani-instagram-top50/top50.sqlite3`.
@@ -105,7 +126,9 @@ View recent publication history without fetching or posting:
 Data documentation:
 [CoinPaprika tickers](https://docs.coinpaprika.com/api-reference/tickers/get-tickers-for-all-active-coins),
 [CoinPaprika classifications](https://docs.coinpaprika.com/api-reference/tags/get-tag-by-id),
-[Wallex market API](https://docs.wallex.ir/#api-Market-getMarkets).
+[Wallex market API](https://docs.wallex.ir/#api-Market-getMarkets),
+[Exir ticker API](https://apidocs.exir.io/),
+[Exir's IRT/Toman denomination](https://www.exir.io/).
 
 ## Provider connection failures
 
@@ -117,7 +140,9 @@ Run a read-only check with the same Python interpreter as the live publisher:
 "$HOME/kiani-instagram-venv/bin/python" "$WORK/crypto_top50_data.py" --check-sources
 ```
 
-This checks the two classification endpoints, USD tickers and the USDT/Toman
-market endpoint without publishing, changing the database or activating cron.
+This checks the two classification endpoints, USD tickers and the live
+USDT/Toman source chain without publishing, changing the database or activating
+cron. A Wallex failure is reported, but the check succeeds if Exir returns a
+valid fresh quote and the three CoinPaprika endpoints respond successfully.
 Keep `set -e` inside the displayed subshell block: running it directly in an
 interactive SSH shell causes a failed command to close that shell.
