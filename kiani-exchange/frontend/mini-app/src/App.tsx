@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { calculateFee, calculateReceiveAmount } from './exchangeMath';
+import { calculateFee, calculateReceiveAmount, deriveRates } from './exchangeMath';
 import type { ExchangeType, Rates } from './exchangeMath';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
@@ -60,11 +60,9 @@ const RateBox = ({
         <span className="text-blue-600 font-bold text-lg">
           {loading
             ? '...'
-            : Number(rate) <= 0
-              ? '—'
-              : isConversionRate
-                ? `${rate.toLocaleString('fa-IR')} لیر`
-                : `${rate.toLocaleString('fa-IR')} تومان`}
+            : isConversionRate
+              ? `${rate.toLocaleString('fa-IR')} لیر`
+              : `${rate.toLocaleString('fa-IR')} تومان`}
         </span>
       </div>
     </div>
@@ -216,8 +214,6 @@ function App() {
     foreign_payment: 0,
   });
   const [loading, setLoading] = useState(true);
-  const [rateError, setRateError] = useState('');
-  const hasFetchedRatesRef = useRef(false);
   const [selectedExchange, setSelectedExchange] = useState<ExchangeType | null>(null);
 
   // Check for existing session on mount
@@ -248,38 +244,16 @@ function App() {
   };
 
   const fetchRates = async () => {
-    if (!hasFetchedRatesRef.current) setLoading(true);
+    if (!rates.buy_lira) setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/rates/current`, { cache: 'no-store' });
-      if (!response.ok) {
-        throw new Error(`Rate API returned HTTP ${response.status}`);
-      }
-
+      const response = await fetch(`${API_URL}/rates/current`);
       const data = await response.json();
-      const rawRates = data?.rates;
-      if (!rawRates || typeof rawRates !== 'object') {
-        throw new Error('Rate API response is missing its rates object');
-      }
 
-      const nextRates: Rates = {
-        buy_lira: Number(rawRates.buy_lira),
-        sell_lira: Number(rawRates.sell_lira),
-        buy_usdt: Number(rawRates.buy_usdt),
-        sell_usdt: Number(rawRates.sell_usdt),
-        usdt_to_lira: Number(rawRates.usdt_to_lira),
-        lira_to_usdt: Number(rawRates.lira_to_usdt),
-        foreign_payment: Number(rawRates.foreign_payment),
-      };
-      if (Object.values(nextRates).some((value) => !Number.isFinite(value) || value <= 0)) {
-        throw new Error('Rate API response contains missing or invalid customer rates');
-      }
-
-      setRates(nextRates);
-      setRateError('');
-      hasFetchedRatesRef.current = true;
+      const usdt_irr = data.rates.USDT_IRR;
+      const usdt_try = data.rates.USDT_TRY;
+      setRates(deriveRates(usdt_irr, usdt_try));
     } catch (error) {
       console.error('Rate fetch error:', error);
-      setRateError('نرخ‌ها بارگذاری نشدند. لطفاً اتصال را بررسی کنید و دوباره تلاش کنید.');
     } finally {
       setLoading(false);
     }
@@ -337,7 +311,6 @@ function App() {
           <DashboardPage
             rates={rates}
             loading={loading}
-            rateError={rateError}
             onExchangeClick={handleExchangeClick}
             onRefresh={fetchRates}
           />
@@ -431,13 +404,11 @@ function NavButton({
 function DashboardPage({
   rates,
   loading,
-  rateError,
   onExchangeClick,
   onRefresh,
 }: {
   rates: Rates;
   loading: boolean;
-  rateError: string;
   onExchangeClick: (type: ExchangeType) => void;
   onRefresh: () => void;
 }) {
@@ -454,12 +425,6 @@ function DashboardPage({
             بروزرسانی
           </button>
         </div>
-
-        {rateError && (
-          <div role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            {rateError}
-          </div>
-        )}
 
         <RateBox label="نرخ خرید لیر از ما" rate={rates.buy_lira} loading={loading} />
         <RateBox label="نرخ فروش لیر به ما" rate={rates.sell_lira} loading={loading} />
