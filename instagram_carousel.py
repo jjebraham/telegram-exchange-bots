@@ -229,138 +229,306 @@ def sample_bundle():
 
 
 def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
-    """Render a cover, optional market sections, and a customer TRY/contact card."""
-    font_path = ig._font_path()
-    fonts = {size: ImageFont.truetype(font_path, size, layout_engine=ImageFont.Layout.BASIC) for size in (24, 28, 30, 32, 34, 38, 42, 48, 58, 76)}
+    """Render the approved RTL Feed design with bundled fonts and artwork."""
+    from PIL import ImageFilter
+
+    root = Path(__file__).resolve().parent
+    bold_path = root / "fonts/Vazirmatn-Bold.ttf"
+    asset_dir = root / "assets/instagram"
+    if not bold_path.is_file() or not (asset_dir / "icons.png").is_file() or not (asset_dir / "icons.json").is_file():
+        raise CarouselError("Restore fonts/Vazirmatn-Bold.ttf and assets/instagram for the carousel design")
+    with Image.open(asset_dir / "icons.png") as opened:
+        atlas = opened.convert("RGBA")
+    artwork = json.loads((asset_dir / "icons.json").read_text(encoding="utf-8"))
+    font_cache, icon_cache = {}, {}
     directory.mkdir(parents=True, exist_ok=True)
+    green, ink, muted = "#1C8C67", "#173D32", "#6D827A"
+    background, rule, red, blue = "#EDF4F0", "#D6E4DC", "#D33226", "#307DAA"
 
-    def fa(draw, text, xy, size=32, fill=INK, anchor="mm"):
-        ig._draw_rtl(draw, text, xy, fonts[size], fill, anchor=anchor)
+    def font(size, bold=False):
+        key = (size, bold)
+        if key not in font_cache:
+            font_cache[key] = ImageFont.truetype(str(bold_path) if bold else ig._font_path(), size, layout_engine=ImageFont.Layout.BASIC)
+        return font_cache[key]
 
-    def latin(draw, text, xy, size=32, fill=INK, anchor="mm"):
-        draw.text(xy, text, font=fonts[size], fill=fill, anchor=anchor)
+    def fa(draw, text, xy, size=32, fill=ink, anchor="mm", bold=False):
+        ig._draw_rtl(draw, text, xy, font(size, bold), fill, anchor=anchor)
+
+    def latin(draw, text, xy, size=32, fill=ink, anchor="mm", bold=False):
+        draw.text(xy, str(text), font=font(size, bold), fill=fill, anchor=anchor)
+
+    def icon(image, key, xy, size=40):
+        cache_key = (key, size)
+        if cache_key not in icon_cache:
+            icon_cache[cache_key] = atlas.crop(artwork[key]["box"]).resize((size, size), Image.Resampling.LANCZOS)
+        image.paste(icon_cache[cache_key], (round(xy[0]-size/2), round(xy[1]-size/2)), icon_cache[cache_key])
+
+    def title(image, text, xy, size=58, key=None, fill=ink, bold=True, icon_size=None, left_key=None):
+        draw = ImageDraw.Draw(image)
+        rendered = ig._rtl(text)
+        while size > 22 and draw.textlength(rendered, font=font(size, bold)) + (size+22 if key else 0) + (size+22 if left_key else 0) > 942:
+            size -= 1
+        width = draw.textlength(rendered, font=font(size, bold))
+        pictogram = icon_size or size
+        full = width + pictogram + 18 if key else width
+        if left_key:
+            full += pictogram + 18
+        left = xy[0]-full/2
+        if left_key:
+            icon(image, left_key, (left+pictogram/2, xy[1]), pictogram)
+            left += pictogram+18
+        fa(draw, text, (left+width/2, xy[1]), size, fill, bold=bold)
+        if key:
+            icon(image, key, (left+width+18+pictogram/2, xy[1]), pictogram)
+
+    def card(image, box, *, stripe=None, shadow=False, radius=30):
+        if shadow:
+            layer = Image.new("RGBA", image.size)
+            sd = ImageDraw.Draw(layer)
+            x1, y1, x2, y2 = box
+            sd.rounded_rectangle((x1, y1+10, x2, y2+10), radius=radius, fill=(30, 60, 48, 18))
+            image.paste(Image.alpha_composite(image.convert("RGBA"), layer.filter(ImageFilter.GaussianBlur(12))).convert("RGB"))
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle(box, radius=radius, fill=stripe or "#FFFFFF")
+        if stripe:
+            x1, y1, x2, y2 = box
+            draw.rounded_rectangle((x1, y1, x2-12, y2), radius=radius, fill="#FFFFFF")
 
     def amount(value):
         return "—" if value is None else f"{int(Decimal(str(value)).quantize(Decimal('1'))):,}"
 
-    def percent(value):
-        return "—" if value is None else f"{Decimal(str(value)):+.2f}%"
+    def percent(draw, value, xy):
+        if value is None:
+            latin(draw, "—", xy, 26, muted)
+            return
+        change = Decimal(str(value))
+        color = green if change > 0 else red if change < 0 else muted
+        label = f"{change:+.2f}%"
+        width = draw.textlength(label, font=font(25))
+        left = xy[0]-(width+24)/2
+        cx, cy = left+6, xy[1]
+        if change > 0:
+            draw.polygon(((cx-7, cy+6), (cx+7, cy+6), (cx, cy-7)), fill=color)
+        elif change < 0:
+            draw.polygon(((cx-7, cy-6), (cx+7, cy-6), (cx, cy+7)), fill=color)
+        else:
+            draw.ellipse((cx-5, cy-5, cx+5, cy+5), fill=color)
+        latin(draw, label, (left+24, cy), 25, color, anchor="lm")
 
-    def pct_color(value):
-        return MUTED if value is None or Decimal(str(value)) == 0 else (GREEN if Decimal(str(value)) > 0 else RED)
-
-    def base(title, subtitle, stamp, *, customer=False):
-        image = Image.new("RGB", (1080, 1350), BG)
+    def currency(image, code, xy, size=34):
         draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((54, 44, 1026, 54), radius=5, fill=RULE)
-        draw.rounded_rectangle((54, 44, 255, 54), radius=5, fill=GREEN)
-        latin(draw, "kiani.exchange", (64, 102), 38, anchor="lm")
-        fa(draw, "صرافی کیانی", (1016, 102), 32, anchor="rm")
-        fa(draw, title, (540, 220), 58)
-        fa(draw, subtitle, (540, 288), 30, MUTED)
-        draw.line((72, 1182, 1008, 1182), fill=RULE, width=2)
+        width = draw.textlength(code, font=font(size, True))
+        full = 48+14+width
+        left = xy[0]-full/2
+        icon(image, code, (left+24, xy[1]), 48)
+        latin(draw, code, (left+62, xy[1]), size, green, anchor="lm", bold=True)
+
+    def timestamp(image, stamp, y=1230, customer=False):
+        t = datetime.fromisoformat(stamp).astimezone(ISTANBUL if customer else TEHRAN)
+        zone = "استانبول" if customer else "تهران"
+        title(image, f"{t:%Y/%m/%d} · {t:%H:%M} {zone}", (540, y), 26,
+              "location" if customer else "clock", muted, False, 28)
+
+    def base(heading, subtitle, stamp, key, *, customer=False, rule_y=1144, stamp_y=1230, left_key=None):
+        image = Image.new("RGB", (1080, 1350), background)
+        draw = ImageDraw.Draw(image)
+        latin(draw, "kiani.exchange", (64, 137), 34, anchor="lm", bold=True)
+        fa(draw, "صرافی کیانی", (976, 137), 34, anchor="rm", bold=True)
+        icon(image, "exchange", (1003, 137), 36)
+        title(image, heading, (540, 237), 60, key, left_key=left_key)
+        fa(draw, subtitle, (540, 306), 30, muted)
+        draw.line((64, rule_y, 1016, rule_y), fill=rule, width=2)
         if stamp:
-            t = datetime.fromisoformat(stamp).astimezone(ISTANBUL if customer else TEHRAN)
-            zone_name = "استانبول" if customer else "تهران"
-            fa(draw, f"{t:%Y/%m/%d} · {t:%H:%M} {zone_name}", (540, 1215), 28, MUTED)
+            timestamp(image, stamp, stamp_y, customer)
         return image, draw
 
-    frames = []
-    handle, name = tempfile.mkstemp(prefix=".carousel-cover-", suffix=".jpg", dir=directory)
-    os.close(handle)
-    cover = Path(name)
-    try:
-        ig.render_banner(rates, moment, "feed", cover)
-        with Image.open(cover) as opened:
-            frames.append(opened.convert("RGB"))
-    finally:
-        cover.unlink(missing_ok=True)
-    included = []
+    frames, included, footer_positions = [], [], {}
+
+    def tether(draw, xy, size):
+        # Vazirmatn does not contain U+20AE. Draw the Tether badge as geometry
+        # instead of relying on an unavailable OS/font fallback.
+        x, y = xy
+        scale = size/40
+        draw.rectangle((x-12*scale, y-13*scale, x+12*scale, y-8*scale), fill="#FFFFFF")
+        draw.rectangle((x-3*scale, y-8*scale, x+3*scale, y+14*scale), fill="#FFFFFF")
+        draw.ellipse((x-18*scale, y-3*scale, x+18*scale, y+4*scale), outline="#FFFFFF", width=max(1, round(2*scale)))
+    # The Feed cover has its own approved layout; the Story renderer is unchanged.
+    image = Image.new("RGB", (1080, 1350), background)
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((502, 114, 578, 190), fill="#D6EBE1")
+    latin(draw, "K", (540, 153), 42, green, bold=True)
+    title(image, "صرافی کیانی", (540, 239), 68, "exchange", icon_size=72)
+    title(image, "نرخ امروز", (540, 316), 32, "chart", muted, False, 30)
+    for box, label, keys, badge in (
+        ((64, 354, 1016, 594), "لیر ترکیه", ("buy_lira", "sell_lira"), "TRY"),
+        ((64, 614, 1016, 854), "تتر (USDT)", ("buy_usdt", "sell_usdt"), "tether"),
+    ):
+        card(image, box, shadow=True)
+        draw = ImageDraw.Draw(image)
+        top = box[1]
+        fa(draw, label, (907, top+46), 42, anchor="rm", bold=True)
+        draw.ellipse((922, top+20, 978, top+76), fill="#EB001B" if badge == "TRY" else "#25A17C")
+        if badge == "TRY":
+            # A circular Turkish badge drawn directly avoids a clipped rectangular flag.
+            draw.ellipse((934, top+33, 962, top+61), fill="#FFFFFF")
+            draw.ellipse((940, top+31, 966, top+57), fill="#EB001B")
+            import math
+            draw.polygon([(968+math.cos(-math.pi/2+i*math.pi/5)*(6 if i % 2 == 0 else 2.5),
+                           top+49+math.sin(-math.pi/2+i*math.pi/5)*(6 if i % 2 == 0 else 2.5)) for i in range(10)], fill="#FFFFFF")
+        else:
+            tether(draw, (950, top+49), 34)
+        for offset, text, key, dot in ((114, "از ما می‌خرید", keys[0], "#79B254"), (187, "به ما می‌فروشید", keys[1], "#51A9EA")):
+            y = top+offset
+            draw.ellipse((948, y-15, 978, y+15), fill=dot)
+            fa(draw, text, (931, y), 36, anchor="rm")
+            fa(draw, ig._persian_number(rates[key]), (161, y), 54, anchor="lm", bold=True)
+            fa(draw, "تومان", (151, y+8), 25, muted, anchor="rm")
+    card(image, (64, 874, 1016, 1060), shadow=True)
+    draw = ImageDraw.Draw(image)
+    title(image, "نرخ تبدیل", (540, 910), 36, "convert", muted, False, 34)
+    for y, text, key, right_flag, other in (
+        (963, "لیر به تتر", "lira_to_usdt", True, False),
+        (1017, "تتر به لیر", "usdt_to_lira", False, True),
+    ):
+        fa(draw, text, (930, y), 34, anchor="rm")
+        if right_flag:
+            icon(image, "TRY", (961, y), 34)
+        else:
+            draw.ellipse((946, y-15, 976, y+15), fill="#25A17C")
+            tether(draw, (961, y), 19)
+        if other:
+            icon(image, "TRY", (797, y), 34)
+        else:
+            draw.ellipse((778, y-15, 808, y+15), fill="#25A17C")
+            tether(draw, (793, y), 19)
+        fa(draw, ig._persian_number(rates[key], decimals=2)+" لیر", (106, y), 42, anchor="lm", bold=True)
+    local = moment.astimezone(ISTANBUL)
+    title(image, f"{local:%H:%M} · استانبول", (540, 1103), 30, "location", muted, False, 30)
+    title(image, "سفارش: لینک در Bio", (540, 1260), 46, "down", green, True, 46)
+    frames.append(image)
+
     for section in sections:
-        kind = section["kind"]
-        rows = section["rows"]
-        stamp = section["generated_at"]
+        kind, rows, stamp = section["kind"], section["rows"], section["generated_at"]
         if kind == "usdt":
-            image, draw = base("تتر در صرافی‌های ایران", "قیمت یک تتر به تومان · نرخ‌های اطلاع‌رسانی", stamp)
-            x = (170, 390, 595, 790, 943)
-            for label, cx in zip(("صرافی", "خرید شما", "فروش شما", "۲۴ ساعت", "۱ ماه"), x):
-                fa(draw, label, (cx, 357), 28)
+            image, draw = base("تتر در صرافی‌های ایران", "قیمت یک تتر به تومان · نرخ‌های اطلاع‌رسانی", stamp, "IRAN", rule_y=1192)
+            columns = (886, 652, 452, 266, 115)
+            for label, x in zip(("صرافی", "خرید شما", "فروش شما", "۲۴ ساعت", "۱ ماه"), columns):
+                fa(draw, label, (x, 375), 26, muted, bold=True)
+            # Seven providers fit the same summary area without reducing the type.
+            step = 87 if len(rows) <= 6 else 75
             for i, row in enumerate(rows):
-                y = 434 + i * 74
-                draw.rounded_rectangle((64, y-31, 1016, y+32), radius=14, fill="#FFFFFF" if i % 2 == 0 else "#E7F0EA")
-                latin(draw, row["name"], (x[0], y), 28)
-                latin(draw, amount(row["ask"]), (x[1], y), 32, GREEN)
-                latin(draw, amount(row["bid"]), (x[2], y), 32)
-                for cx, key in zip(x[3:], ("day", "month")):
-                    latin(draw, percent(row.get(key)), (cx, y), 24, pct_color(row.get(key)))
+                y = 443+i*step
+                draw.rounded_rectangle((64, y-39, 1016, y+40), radius=16, fill="#FFFFFF" if i % 2 == 0 else "#E5EFE8")
+                latin(draw, row["name"], (columns[0], y), 32, bold=True)
+                latin(draw, amount(row["ask"]), (columns[1], y), 33, green, bold=True)
+                latin(draw, amount(row["bid"]), (columns[2], y), 33)
+                percent(draw, row.get("day"), (columns[3], y))
+                percent(draw, row.get("month"), (columns[4], y))
             asks = [Decimal(row["ask"]) for row in rows]
             bids = [Decimal(row["bid"]) for row in rows if row["bid"] is not None]
-            fa(draw, "میانگین خرید شما", (780, 968), 28, MUTED)
-            fa(draw, "میانگین فروش شما", (310, 968), 28, MUTED)
-            latin(draw, amount(sum(asks)/len(asks)), (780, 1016), 42, GREEN)
-            latin(draw, amount(sum(bids)/len(bids)) if bids else "—", (310, 1016), 42)
+            for box, text, value, color, key in (
+                ((552, 964, 1016, 1130), "میانگین خرید شما", sum(asks)/len(asks), green, "cart"),
+                ((64, 964, 528, 1130), "میانگین فروش شما", sum(bids)/len(bids) if bids else None, ink, "money"),
+            ):
+                card(image, box, radius=20)
+                cx = (box[0]+box[2])/2
+                title(image, text, (cx, 1007), 29, key, muted, False, 30)
+                draw = ImageDraw.Draw(image)
+                latin(draw, amount(value), (cx, 1068), 56, color, bold=True)
             cheapest = min(rows, key=lambda row: Decimal(row["ask"]))
-            fa(draw, "کمترین قیمت خرید", (825, 1080), 28, MUTED)
-            latin(draw, cheapest["name"] + "  " + amount(cheapest["ask"]), (345, 1080), 28)
             selling = [row for row in rows if row["bid"] is not None]
-            if selling:
-                highest = max(selling, key=lambda row: Decimal(row["bid"]))
-                fa(draw, "بیشترین قیمت فروش", (825, 1136), 28, MUTED)
-                latin(draw, highest["name"] + "  " + amount(highest["bid"]), (345, 1136), 28)
+            highest = max(selling, key=lambda row: Decimal(row["bid"])) if selling else None
+            for cx, label, row, key in ((784, "کمترین قیمت خرید", cheapest, "ask"), (296, "بیشترین قیمت فروش", highest, "bid")):
+                name = row["name"]+" "+amount(row[key]) if row else "—"
+                size = 26
+                def summary_width():
+                    return draw.textlength(name, font=font(size, True))+draw.textlength(ig._rtl(label), font=font(size))+48
+                while size > 18 and summary_width() > 440:
+                    size -= 1
+                left = cx-summary_width()/2
+                latin(draw, name, (left, 1165), size, anchor="lm", bold=True)
+                left += draw.textlength(name, font=font(size, True))+12
+                fa(draw, label, (left, 1165), size, muted, anchor="lm")
+                left += draw.textlength(ig._rtl(label), font=font(size))+20
+                icon(image, "trophy", (left, 1165), 26)
             frames.append(image)
             included.append("مقایسه تتر در صرافی‌های ایران")
         elif kind == "fx":
             pages = [rows[index:index+9] for index in range(0, len(rows), 9)]
             for number, page in enumerate(pages, 1):
-                image, draw = base("نرخ ارز آزاد ایران", f"واحد: تومان · بازار آزاد · بخش {number} از {len(pages)}", stamp)
-                x = (132, 358, 631, 811, 956)
-                for label, cx in zip(("ارز", "نام ارز", "تومان", "۲۴ ساعت", "۱ ماه"), x):
-                    fa(draw, label, (cx, 362), 28)
+                image, draw = base("نرخ ارز آزاد ایران", f"واحد: تومان · بازار آزاد · بخش {number} از {len(pages)}", stamp, f"globe{number}")
+                columns = (885, 658, 448, 262, 114)
+                for label, x in zip(("ارز", "نام ارز", "تومان", "۲۴ ساعت", "۱ ماه"), columns):
+                    fa(draw, label, (x, 375), 26, muted, bold=True)
                 for i, row in enumerate(page):
-                    y = 440 + i * 77
-                    draw.rounded_rectangle((64, y-32, 1016, y+33), radius=14, fill="#FFFFFF" if i % 2 == 0 else "#E7F0EA")
-                    latin(draw, row["code"], (x[0], y), 32, GREEN)
-                    fa(draw, FX_NAMES[row["code"]], (x[1], y), 28)
-                    latin(draw, amount(row["price"]), (x[2], y), 32)
-                    for cx, key in zip(x[3:], ("day", "month")):
-                        latin(draw, percent(row.get(key)), (cx, y), 24, pct_color(row.get(key)))
-                fa(draw, "نرخ‌ها صرفاً جهت اطلاع‌رسانی است", (540, 1150), 28, MUTED)
+                    y = 438+i*77
+                    draw.rounded_rectangle((64, y-35, 1016, y+35), radius=16, fill="#FFFFFF" if i % 2 == 0 else "#E5EFE8")
+                    currency(image, row["code"], (columns[0], y))
+                    name = FX_NAMES[row["code"]]
+                    size = 30
+                    while size > 22 and draw.textlength(ig._rtl(name), font=font(size)) > 250:
+                        size -= 1
+                    fa(draw, name, (columns[1], y), size)
+                    latin(draw, amount(row["price"]), (columns[2], y), 34, bold=True)
+                    percent(draw, row.get("day"), (columns[3], y))
+                    percent(draw, row.get("month"), (columns[4], y))
+                title(image, "نرخ‌ها صرفاً جهت اطلاع‌رسانی است", (540, 1180), 27, "info", muted, False, 26)
                 frames.append(image)
             included.append("نرخ ارز بازار آزاد ایران")
         elif kind == "hawala":
-            image, draw = base("نرخ حواله به ایران", "پرداخت به تومان · قبل از واریز هماهنگ کنید", stamp)
+            image, draw = base("نرخ حواله به ایران", "", stamp, "flying_money", rule_y=1129, stamp_y=1260, left_key="IRAN")
+            title(image, "پرداخت به تومان · قبل از واریز هماهنگ کنید", (540, 305), 29, "phone", muted, False, 28)
             for i, row in enumerate(rows):
-                y = 412 + i * 91
-                draw.rounded_rectangle((72, y-36, 1008, y+37), radius=16, fill="#FFFFFF")
-                latin(draw, row["code"], (145, y), 34, GREEN)
-                fa(draw, FX_NAMES[row["code"]], (500, y), 34)
-                latin(draw, amount(row["price"]), (866, y), 38)
-            fa(draw, "نرخ لحظه‌ای و سایر ارزها", (540, 1090), 28, MUTED)
-            latin(draw, "@Kianiexchangebot", (540, 1138), 34, GREEN)
+                y = 421+i*108
+                draw.rounded_rectangle((64, y-48, 1016, y+48), radius=16, fill="#FFFFFF" if i % 2 == 0 else "#E5EFE8")
+                currency(image, row["code"], (818, y), 38)
+                fa(draw, FX_NAMES[row["code"]], (553, y), 34)
+                latin(draw, amount(row["price"]), (87, y), 43, anchor="lm", bold=True)
+            title(image, "نرخ لحظه‌ای و سایر ارزها", (540, 1168), 28, "robot", muted, False, 29)
+            latin(draw, "@Kianiexchangebot", (540, 1210), 36, green, bold=True)
+            footer_positions[len(frames)+1] = 1312
             frames.append(image)
             included.append("حواله به ایران")
 
-    image, draw = base("نرخ لیر ترکیه", "نرخ مشتری صرافی کیانی · تومان برای هر لیر", moment.isoformat(), customer=True)
-    for y, label, key, color in ((464, "خرید لیر از ما", "buy_lira", GREEN), (734, "فروش لیر به ما", "sell_lira", "#3B86A6")):
-        draw.rounded_rectangle((92, y-110, 988, y+115), radius=30, fill="#FFFFFF")
-        fa(draw, label, (540, y-45), 42, color)
-        latin(draw, amount(rates[key]), (540, y+35), 76, color)
-    fa(draw, "لطفاً قبل از واریز هماهنگ کنید", (540, 945), 34)
-    latin(draw, "Telegram: t.me/TL905411603664", (540, 1025), 32, GREEN)
-    latin(draw, "WhatsApp: +90 539 290 56 86", (540, 1080), 32, GREEN)
+    image, draw = base("نرخ لیر ترکیه", "نرخ مشتری صرافی کیانی · تومان برای هر لیر", moment.isoformat(), "TRY", customer=True, rule_y=1220, stamp_y=1258)
+    for box, label, key, color, symbol in (
+        ((64, 367, 1016, 653), "خرید لیر از ما", "buy_lira", green, "cart"),
+        ((64, 693, 1016, 979), "فروش لیر به ما", "sell_lira", blue, "money"),
+    ):
+        card(image, box, stripe=color, shadow=True)
+        title(image, label, (540, box[1]+72), 42, symbol, ink, True, 40)
+        draw = ImageDraw.Draw(image)
+        latin(draw, amount(rates[key]), (540, box[1]+182), 130, color, bold=True)
+    title(image, "لطفاً قبل از واریز هماهنگ کنید", (540, 1055), 41, "warning", ink, True, 38)
+    for y, label, value, key in (
+        (1134, "Telegram: ", "t.me/TL905411603664", "plane"),
+        (1191, "WhatsApp: ", "+90 539 290 56 86", "chat"),
+    ):
+        width1 = draw.textlength(label, font=font(36))
+        width2 = draw.textlength(value, font=font(36, True))
+        left = (1080-width1-width2-46)/2
+        icon(image, key, (left+16, y), 34)
+        latin(draw, label, (left+46, y), 36, green, anchor="lm")
+        latin(draw, value, (left+46+width1, y), 36, green, anchor="lm", bold=True)
     frames.append(image)
+
     if not 2 <= len(frames) <= 10:
         raise CarouselError("Rendered carousel exceeds the supported item count")
     digest = hashlib.sha256(json.dumps({"rates": rates, "sections": sections}, default=str, sort_keys=True).encode()).hexdigest()[:10]
     paths = []
     for index, image in enumerate(frames, 1):
         draw = ImageDraw.Draw(image)
-        latin(draw, f"{index} / {len(frames)}", (972, 1289), 28, MUTED)
-        if index > 1:
-            fa(draw, "صرافی کیانی · ورق بزنید", (416, 1289), 28, GREEN)
+        draw.rounded_rectangle((64, 76, 1016, 88), radius=6, fill=rule)
+        draw.rounded_rectangle((1016-round(952*index/len(frames)), 76, 1016, 88), radius=6, fill=green)
+        latin(draw, f"{index} / {len(frames)}", (64, 1282), 27, muted, anchor="lm")
+        if index == len(frames):
+            title(image, "صرافی کیانی", (540, 1305), 30, "handshake", green, False, 28)
+        elif index > 1:
+            footer_y = footer_positions.get(index, 1282)
+            title(image, "صرافی کیانی · ورق بزنید", (540, footer_y), 30, "next", green, False, 30)
         if sample:
-            draw.rectangle((0, 0, 1080, 39), fill="#A66D18")
-            fa(draw, "نمونه برای بررسی طرح · نرخ لحظه‌ای نیست", (540, 20), 24, "#FFFFFF")
+            draw.rectangle((0, 0, 1080, 54), fill="#A77221")
+            fa(draw, "نمونه برای بررسی طرح · نرخ لحظه‌ای نیست", (540, 27), 27, "#FFFFFF", bold=True)
         name = f"kiani-carousel-{moment.astimezone(ISTANBUL):%Y-%m-%d-%H%M%S}-{digest}-{index:02}.jpg"
         path = directory / name
         image.save(path, "JPEG", quality=94, optimize=True)
@@ -369,9 +537,9 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
     if included:
         caption += "، " + "، ".join(included)
     caption += "\nنرخ بازار و صرافی‌های دیگر صرفاً جهت اطلاع‌رسانی است و با نرخ مشتری کیانی تفاوت دارد.\nلطفاً قبل از واریز هماهنگ کنید."
+    caption += "\nIcons: Twemoji by Twitter and contributors · CC BY 4.0: https://creativecommons.org/licenses/by/4.0/"
     if sample:
         caption = "نمونه برای بررسی طرح؛ این نرخ‌ها لحظه‌ای نیستند و قابل انتشار نیستند.\n\n" + caption
-    # Save a local manifest for review without including tokens or API credentials.
     manifest = {"sample": sample, "generated_at": moment.isoformat(), "slides": [str(path) for path in paths], "sections": sections, "customer_rates": rates, "caption": caption}
     (directory / (paths[0].stem.rsplit("-", 1)[0] + ".json")).write_text(json.dumps(manifest, default=str, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
     return paths, caption

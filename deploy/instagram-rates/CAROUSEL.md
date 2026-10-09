@@ -6,7 +6,7 @@ still uses one 1080×1920 rate card. Each Feed slide is a JPEG at 1080×1350.
 
 ## Slides and sources
 
-1. Existing Kiani customer rate card, fetched directly from `KIANI_RATES_URL`.
+1. Kiani customer rate card in the approved Feed design, fetched directly from `KIANI_RATES_URL`.
 2. Iranian exchange USDT comparison, including asks, bids, averages, best prices,
    and available 24-hour/monthly changes.
 3–5. Iran free-market FX split into three readable pages of at most nine rows.
@@ -16,6 +16,12 @@ still uses one 1080×1920 rate card. Each Feed slide is a JPEG at 1080×1350.
 The cover and final TRY card share one API response. No percentage adjustments
 are reapplied to those already calculated customer quotes. Market and exchange
 prices are labelled as informational and can differ from Kiani's customer rates.
+
+The Feed design uses RTL tables, bold prices, bundled country flags and icons,
+and a progress bar that fills from the right. Page numbers remain at bottom left.
+Vazirmatn Bold and a Twemoji atlas are bundled; rendering needs no asset downloads
+or new Python dependencies. Artwork attribution is included in the caption and
+`assets/instagram/README.md`. The brown sample ribbon appears only in previews.
 
 The market tables come from the installed Telegram publisher, using its
 `--export-json` action. The action fetches current sources, uses the production
@@ -95,9 +101,11 @@ is rejected. The sample fixture is never used by a live run.
 Install only the publisher files into the existing standalone publisher checkout;
 keep its token, per-mode daily state files, wrapper, nginx paths and cron schedule.
 Make a private backup of the publisher and env first. Copy `instagram_daily_rates.py`
-and `instagram_carousel.py` from the reviewed checkout. The bundled font and current
-Pillow/Arabic dependencies are already installed on Selenium; no backend or bot
-restart is needed.
+and `instagram_carousel.py` from the reviewed checkout, plus
+`fonts/Vazirmatn-Bold.ttf`, `fonts/OFL.txt`, and the complete `assets/instagram/`
+directory. Keep the existing `fonts/Vazirmatn-Regular.ttf`. The current Pillow/Arabic
+dependencies are sufficient; no backend or bot restart is needed. Missing design
+assets produce a clear error instead of a partial carousel.
 
 Add the following non-secret settings to `~/.kiani-instagram.env`:
 
