@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Render and publish the Kiani Exchange daily Instagram rate card.
 
-The script reads the production mini-app's raw market rates and the same
-percentage adjustments used by the Telegram bot. It writes a public image for
-Meta's media container API, then publishes it as a Story or feed post.
+The script uses the production API's complete customer quotes. It writes public
+JPEGs for Meta's media container API and publishes a Story, single-image Feed,
+or optional Feed carousel with the Telegram publisher's assessed market tables.
 """
 
 from __future__ import annotations
@@ -67,8 +67,8 @@ def _positive_decimal(value: Any, label: str) -> Decimal:
     return parsed
 
 
-def fetch_market_rates(url: str | None = None, attempts: int = 4) -> tuple[Decimal, Decimal]:
-    """Fetch the raw USDT/IRR and USDT/TRY rates from the running API."""
+def fetch_customer_rates(url: str | None = None, attempts: int = 4) -> dict[str, Decimal]:
+    """Use the customer quotes returned by the API without recalculating them."""
     endpoint = (url or os.getenv("KIANI_RATES_URL", DEFAULT_RATES_URL)).strip()
     last_error: Exception | None = None
 
@@ -86,14 +86,14 @@ def fetch_market_rates(url: str | None = None, attempts: int = 4) -> tuple[Decim
             raw_rates = payload.get("rates") if isinstance(payload, dict) else None
             if not isinstance(raw_rates, dict):
                 raise PublishError("Rates API response does not contain a rates object")
-            if "USDT_IRR" not in raw_rates or "USDT_TRY" not in raw_rates:
-                raise PublishError(
-                    "Rates API must return rates.USDT_IRR and rates.USDT_TRY"
-                )
-            return (
-                _positive_decimal(raw_rates["USDT_IRR"], "USDT_IRR"),
-                _positive_decimal(raw_rates["USDT_TRY"], "USDT_TRY"),
-            )
+            keys = ("buy_lira", "sell_lira", "buy_usdt", "sell_usdt", "lira_to_usdt", "usdt_to_lira")
+            missing = [key for key in keys if key not in raw_rates]
+            if missing:
+                raise PublishError("Rates API is missing customer quotes: " + ", ".join(missing))
+            rates = {key: _positive_decimal(raw_rates[key], key) for key in keys}
+            if rates["sell_lira"] >= rates["buy_lira"] or rates["sell_usdt"] >= rates["buy_usdt"]:
+                raise PublishError("Rates API returned crossed customer buy/sell quotes")
+            return rates
         except HTTPError as exc:
             detail = exc.read(1000).decode("utf-8", errors="replace")
             last_error = PublishError(f"Rates API returned HTTP {exc.code}: {detail}")
@@ -522,17 +522,16 @@ def verify_public_image(url: str) -> None:
         raise PublishError("Public banner URL did not return a JPEG image")
 
 
-def publish_image(image_url: str, mode: str, caption: str) -> str:
-    fields = {"image_url": image_url}
-    if mode == "story":
-        fields["media_type"] = "STORIES"
-    else:
-        fields["caption"] = caption
+def _create_container(fields: dict[str, str]) -> str:
     container = _graph_request("/media", "POST", fields)
     container_id = str(container.get("id", "")).strip()
     if not container_id:
         raise PublishError("Instagram did not return a media container ID")
 
+    return container_id
+
+
+def _wait_for_container(container_id: str) -> None:
     for _ in range(30):
         status = _graph_request(
             "",
@@ -541,14 +540,16 @@ def publish_image(image_url: str, mode: str, caption: str) -> str:
             object_id=container_id,
         )
         status_code = str(status.get("status_code", "")).upper()
-        if status_code in {"FINISHED", "PUBLISHED"} or not status_code:
-            break
-        if status_code == "ERROR":
+        if status_code == "FINISHED":
+            return
+        if status_code in {"ERROR", "EXPIRED", "PUBLISHED"}:
             raise PublishError(f"Instagram media processing failed: {status.get('status', 'unknown error')}")
         time.sleep(2)
     else:
         raise PublishError("Instagram media container did not finish processing in time")
 
+
+def _publish_container(container_id: str) -> str:
     published = _graph_request(
         "/media_publish",
         "POST",
@@ -558,6 +559,35 @@ def publish_image(image_url: str, mode: str, caption: str) -> str:
     if not media_id:
         raise PublishError("Instagram did not return the published media ID")
     return media_id
+
+
+def publish_image(image_url: str, mode: str, caption: str) -> str:
+    fields = {"image_url": image_url}
+    if mode == "story":
+        fields["media_type"] = "STORIES"
+    else:
+        fields["caption"] = caption
+    container_id = _create_container(fields)
+    _wait_for_container(container_id)
+    return _publish_container(container_id)
+
+
+def publish_carousel(image_urls: list[str], caption: str) -> str:
+    # Keep this implementation within 2–10 items; all images use the same 4:5 ratio.
+    if not 2 <= len(image_urls) <= 10:
+        raise PublishError("A carousel requires 2–10 images")
+    for url in image_urls:
+        verify_public_image(url)
+    children = []
+    for url in image_urls:
+        child = _create_container({"image_url": url, "is_carousel_item": "true"})
+        _wait_for_container(child)
+        children.append(child)
+    parent = _create_container({
+        "media_type": "CAROUSEL", "children": ",".join(children), "caption": caption,
+    })
+    _wait_for_container(parent)
+    return _publish_container(parent)
 
 
 def _load_state(path: Path) -> dict[str, Any] | None:
@@ -592,28 +622,80 @@ def main() -> int:
     action.add_argument("--publish", action="store_true", help="Publish the rendered image to Instagram")
     parser.add_argument("--force", action="store_true", help="Allow a second post on the same Istanbul calendar day")
     parser.add_argument("--output", type=Path, default=None, help="Override the public image output directory")
+    parser.add_argument("--carousel", action="store_true", help="Render/publish a Feed carousel using Telegram's assessed exports")
+    parser.add_argument("--sample-preview", action="store_true", help="Render marked sample slides for design review; never publish")
     args = parser.parse_args()
     if args.force and not args.publish:
         parser.error("--force requires --publish")
+    if args.sample_preview and args.publish:
+        parser.error("--sample-preview cannot be published")
 
     mode = os.getenv("INSTAGRAM_PUBLISH_MODE", "story").strip().lower()
     if mode not in {"story", "feed"}:
         raise PublishError("INSTAGRAM_PUBLISH_MODE must be 'story' or 'feed'")
+    if args.sample_preview:
+        mode = "feed"
+    if args.carousel and mode != "feed":
+        parser.error("--carousel requires INSTAGRAM_PUBLISH_MODE=feed")
+    feed_format = os.getenv("INSTAGRAM_FEED_FORMAT", "single").strip().lower()
+    if feed_format not in {"single", "carousel"}:
+        raise PublishError("INSTAGRAM_FEED_FORMAT must be 'single' or 'carousel'")
+    carousel = mode == "feed" and (args.carousel or args.sample_preview or feed_format == "carousel")
 
     now = datetime.now(ISTANBUL_TZ)
     state_path = Path(os.path.expanduser(os.getenv("INSTAGRAM_STATE_FILE", DEFAULT_STATE_PATH)))
+    if args.publish:
+        # Hold the per-mode file lock for this function's lifetime. Closing this
+        # local file object on return releases it; cron/manual runs cannot race.
+        try:
+            import fcntl
+        except ImportError as exc:
+            raise PublishError("Publishing requires a server with POSIX file locking") from exc
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        run_lock = Path(str(state_path) + ".lock").open("a")
+        try:
+            fcntl.flock(run_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Another publisher is running for this state file; skipping.")
+            return 0
     state = _load_state(state_path)
     today = now.date().isoformat()
     if args.publish and not args.force and state and state.get("posted_date") == today:
         print(f"Instagram banner already published for {today}; skipping duplicate run.")
         return 0
 
-    raw_irr, raw_try = fetch_market_rates()
-    factors = load_pricing_factors()
-    rates = derive_bot_rates(raw_irr, raw_try, factors)
-
     image_dir = args.output or Path(os.getenv("INSTAGRAM_IMAGE_OUTPUT_DIR", DEFAULT_IMAGE_DIR))
     image_dir = image_dir.expanduser().resolve()
+    if carousel:
+        from instagram_carousel import CarouselError, collect_sections, render_carousel, sample_bundle
+        try:
+            if args.sample_preview:
+                rates, sections = sample_bundle()
+            else:
+                sections = collect_sections()
+                rates = fetch_customer_rates()
+            now = datetime.now(ISTANBUL_TZ)
+            paths, caption = render_carousel(sys.modules[__name__], rates, sections, now, image_dir, sample=args.sample_preview)
+        except CarouselError as exc:
+            raise PublishError(str(exc)) from exc
+        for index, path in enumerate(paths, 1):
+            print(f"Carousel slide {index}/{len(paths)}: {path}")
+        print(caption)
+        if not args.publish:
+            print("Dry run complete; Instagram was not contacted.")
+            return 0
+        image_urls = [_public_image_url(path) for path in paths]
+        media_id = publish_carousel(image_urls, caption)
+        _save_state(state_path, {
+            "posted_date": now.date().isoformat(), "posted_at": now.isoformat(),
+            "mode": mode, "format": "carousel", "media_id": media_id,
+            "image_urls": image_urls, "sections": [section["kind"] for section in sections],
+        })
+        print(f"Published Kiani Exchange Instagram carousel ({len(paths)} slides, media id: {media_id})")
+        return 0
+
+    rates = fetch_customer_rates()
+    now = datetime.now(ISTANBUL_TZ)
     width = 1080
     image_height = 1920 if mode == "story" else 1350
     rate_digest = hashlib.sha256(
@@ -622,7 +704,11 @@ def main() -> int:
     image_path = image_dir / f"kiani-rates-{today}-{rate_digest}-{now:%H%M%S}.jpg"
     render_banner(rates, now, mode, image_path)
     try:
-        image_url = _public_image_url(image_path)
+        configured_dir = Path(os.getenv("INSTAGRAM_IMAGE_OUTPUT_DIR", DEFAULT_IMAGE_DIR)).expanduser().resolve()
+        if args.output and image_dir != configured_dir and not args.publish:
+            image_url = ""
+        else:
+            image_url = _public_image_url(image_path)
     except PublishError:
         if args.publish:
             raise
@@ -661,4 +747,3 @@ if __name__ == "__main__":
     except PublishError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1)
-

@@ -1,0 +1,59 @@
+{
+  "customer_rates": {
+    "buy_lira": 5480, "sell_lira": 5320,
+    "buy_usdt": 270430, "sell_usdt": 265070,
+    "lira_to_usdt": 50.21, "usdt_to_lira": 48.24
+  },
+  "sections": [
+    {
+      "kind": "usdt", "generated_at": "2026-10-09T12:30:00+03:30",
+      "rows": [
+        {"name":"Wallex","ask":"267740","bid":"267701","day":"0.31","month":null},
+        {"name":"Nobitex","ask":"267798","bid":"267500","day":"0.22","month":null},
+        {"name":"Ramzinex","ask":"267716","bid":"267582","day":"0.12","month":null},
+        {"name":"AbanTether","ask":"267831","bid":"266306","day":"0.09","month":null},
+        {"name":"Tabdeal","ask":"266960","bid":null,"day":"-0.03","month":null},
+        {"name":"Exir","ask":"267536","bid":"266852","day":"0.02","month":null}
+      ]
+    },
+    {
+      "kind": "fx", "generated_at": "2026-10-09T13:00:00+03:30",
+      "rows": [
+        {"code":"USD","price":"267000","day":"-0.11","month":null},
+        {"code":"EUR","price":"299800","day":"0.09","month":null},
+        {"code":"GBP","price":"351860","day":"-0.11","month":null},
+        {"code":"CHF","price":"321550","day":"0.05","month":null},
+        {"code":"CAD","price":"187800","day":"-0.16","month":null},
+        {"code":"AUD","price":"186450","day":"-0.03","month":null},
+        {"code":"SEK","price":"26800","day":"0.07","month":null},
+        {"code":"NOK","price":"27910","day":"-0.23","month":null},
+        {"code":"RUB","price":"3140","day":"0.16","month":null},
+        {"code":"THB","price":"7960","day":"0.11","month":null},
+        {"code":"SGD","price":"208660","day":"-0.11","month":null},
+        {"code":"HKD","price":"34020","day":"-0.18","month":null},
+        {"code":"AZN","price":"157300","day":"-0.19","month":null},
+        {"code":"DKK","price":"40050","day":"-0.04","month":null},
+        {"code":"AED","price":"72810","day":"-0.22","month":null},
+        {"code":"TRY","price":"5440","day":"0.17","month":null},
+        {"code":"CNY","price":"39970","day":"-0.17","month":null},
+        {"code":"SAR","price":"71220","day":"-0.20","month":null},
+        {"code":"INR","price":"2760","day":"0.00","month":null},
+        {"code":"MYR","price":"65360","day":"-0.18","month":null},
+        {"code":"AFN","price":"4135","day":"0.61","month":null},
+        {"code":"KWD","price":"860100","day":"-0.22","month":null},
+        {"code":"BHD","price":"709540","day":"-0.12","month":null},
+        {"code":"OMR","price":"694500","day":"-0.19","month":null},
+        {"code":"QAR","price":"73450","day":"0.14","month":null}
+      ]
+    },
+    {
+      "kind":"hawala", "generated_at":"2026-10-09T11:45:00+03:00",
+      "rows":[
+        {"code":"USD","price":"262600"},{"code":"EUR","price":"294500"},
+        {"code":"GBP","price":"347400"},{"code":"CAD","price":"184600"},
+        {"code":"AUD","price":"182800"},{"code":"SEK","price":"26300"},
+        {"code":"TRY","price":"5330"}
+      ]
+    }
+  ]
+}

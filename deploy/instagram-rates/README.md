@@ -1,5 +1,8 @@
 # Daily Instagram publisher credential setup
 
+For the new daily Feed carousel, see [CAROUSEL.md](CAROUSEL.md). The existing
+Selenium cron remains 11:30 Istanbul and the Story keeps its current rate card.
+
 The Selenium cron job runs at `30 8 * * *` on a UTC server: 11:30 in
 `Europe/Istanbul`. It runs `~/publish-kiani-instagram-rates.sh publish`, which
 loads `~/.kiani-instagram.env` and publishes the Story and Feed separately.
@@ -51,4 +54,3 @@ Read the scheduled run output with:
 ```bash
 tail -n 100 ~/kiani-instagram-cron.log
 ```
-
