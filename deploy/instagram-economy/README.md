@@ -58,6 +58,16 @@ process environment values take precedence. Keys are never saved in the news
 database, manifests or repository. The default model is `deepseek-flash` as
 documented in the provider's current [JSON output example](https://api-docs.deepseek.com/guides/json_mode/).
 
+Translation explicitly disables [thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/),
+which the provider otherwise enables by default. It requests 4,096 output tokens
+initially. Empty, syntactically invalid or interrupted JSON responses are retried
+at most twice with 8,192 tokens and a clearer JSON instruction. Truncated output
+is rejected even if it can be parsed as JSON. Only final answer content is used;
+reasoning content and failed provider text are never replayed, printed or stored.
+Diagnostics contain only a known finish reason, content length and token count.
+HTTP/authentication failures, refusal responses and failed factual copy checks
+stop the run. Failed translations are not cached, rendered or published.
+
 The prompt treats article text as untrusted data and requests factual Persian
 copy without invented context, numerical conversions, advice or added links.
 Persian text, JSON structure, length and numerical values are checked. Numbers

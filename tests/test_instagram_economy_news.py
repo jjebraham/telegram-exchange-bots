@@ -6,8 +6,9 @@ import io
 import os
 import tempfile
 from types import SimpleNamespace
+from urllib.error import HTTPError
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import economy_news_picker as picker
 import economy_news_translation as translator
@@ -156,7 +157,137 @@ class EconomyNewsTests(unittest.TestCase):
             self.assertEqual(translator.translate(self.con, self.material(), api), first)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]['response_format'], {'type': 'json_object'})
+        self.assertEqual(calls[0]['thinking'], {'type': 'disabled'})
+        self.assertEqual(calls[0]['max_tokens'], 4096)
         self.assertNotIn('test-only', json.dumps(calls))
+
+    def test_empty_json_retried_then_valid_translation_cached(self):
+        calls = []
+        def api(body):
+            calls.append(body)
+            return '' if len(calls) == 1 else json.dumps(self.translated())
+        with patch.object(translator.time, 'sleep'), redirect_stdout(io.StringIO()):
+            result = translator.translate(self.con, self.material(), api)
+        self.assertEqual(result[0], self.translated()['headline_fa'])
+        self.assertEqual([body['max_tokens'] for body in calls], [4096, 8192])
+        self.assertTrue(all(body['thinking'] == {'type': 'disabled'} for body in calls))
+        self.assertEqual(len(calls[0]['messages']), 2)
+        self.assertEqual(len(calls[1]['messages']), 3)
+        self.assertEqual(self.con.execute('SELECT count(*) FROM economy_translation_cache').fetchone()[0], 1)
+
+    def test_truncated_reply_is_retried_even_if_its_content_is_valid_json(self):
+        responses = iter([translator.Completion(json.dumps(self.translated()), 'length', 4096),
+                          translator.Completion(json.dumps(self.translated()), 'stop', 250)])
+        with patch.object(translator.time, 'sleep'), redirect_stdout(io.StringIO()) as output:
+            translator.translate(self.con, self.material(), lambda body: next(responses))
+        self.assertIn('finish_reason=length', output.getvalue())
+        self.assertIn('completion_tokens=4096', output.getvalue())
+        self.assertEqual(self.con.execute('SELECT count(*) FROM economy_translation_cache').fetchone()[0], 1)
+
+    def test_invalid_json_is_not_replayed_in_the_retry_prompt(self):
+        calls, marker = [], 'private-provider-text'
+        def api(body):
+            calls.append(body)
+            return marker if len(calls) == 1 else json.dumps(self.translated())
+        with patch.object(translator.time, 'sleep'), redirect_stdout(io.StringIO()) as output:
+            translator.translate(self.con, self.material(), api)
+        self.assertNotIn(marker, output.getvalue())
+        self.assertNotIn(marker, json.dumps(calls))
+
+    def test_empty_retries_are_bounded_and_do_not_cache(self):
+        calls = []
+        def api(body):
+            calls.append(body)
+            return translator.Completion(None, 'stop', 0)
+        with patch.object(translator.time, 'sleep'), redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(NewsError, 'after 3 attempts.*empty_content'):
+                translator.translate(self.con, self.material(), api)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(self.con.execute('SELECT count(*) FROM economy_translation_cache').fetchone()[0], 0)
+
+    def test_interrupted_generations_are_retried(self):
+        for reason in ('aborted', 'insufficient_system_resource'):
+            with self.subTest(reason=reason):
+                replies = iter([translator.Completion(None, reason), json.dumps(self.translated())])
+                material = dict(self.material(), source_text=self.material()['source_text'] + reason)
+                with patch.object(translator.time, 'sleep'), redirect_stdout(io.StringIO()):
+                    translator.translate(self.con, material, lambda body: next(replies))
+
+    def test_content_filter_tool_calls_and_unknown_finish_do_not_retry(self):
+        for reason in ('content_filter', 'tool_calls', 'secret-provider-reason'):
+            with self.subTest(reason=reason):
+                calls = []
+                def api(body):
+                    calls.append(body)
+                    return translator.Completion(json.dumps(self.translated()), reason)
+                with redirect_stdout(io.StringIO()):
+                    with self.assertRaises(NewsError) as caught:
+                        translator.translate(self.con, self.material(), api)
+                self.assertEqual(len(calls), 1)
+                self.assertNotIn('secret-provider-reason', str(caught.exception))
+        self.assertEqual(self.con.execute('SELECT count(*) FROM economy_translation_cache').fetchone()[0], 0)
+
+    def test_real_response_uses_final_content_not_reasoning(self):
+        raw = {'choices': [{'finish_reason': 'length', 'message': {
+            'content': None, 'reasoning_content': 'private-reasoning'}}],
+            'usage': {'completion_tokens': 4096}}
+        response = io.BytesIO(json.dumps(raw).encode())
+        with patch.object(translator, 'urlopen', return_value=response) as opening:
+            result = translator.request_completion({'thinking': {'type': 'disabled'}}, 'test-key')
+        self.assertEqual(result, translator.Completion(None, 'length', 4096))
+        self.assertNotIn('private-reasoning', repr(result))
+        self.assertEqual(opening.call_args.args[0].get_header('Authorization'), 'Bearer test-key')
+
+    def test_http_failure_reports_code_without_key_or_body(self):
+        error = HTTPError('https://api.deepseek.com/chat/completions', 401,
+                          'private-key-and-provider-body', {}, io.BytesIO(b'private response'))
+        with patch.object(translator, 'urlopen', side_effect=error):
+            with self.assertRaisesRegex(NewsError, r'failed \(HTTP 401\)') as caught:
+                translator.request_completion({}, 'test-key')
+        self.assertNotIn('private', str(caught.exception))
+        self.assertNotIn('test-key', str(caught.exception))
+
+    def test_malformed_response_envelope_aborts_without_printing_payload(self):
+        for raw in ({'choices': []}, {'choices': [{'message': {'content': []}, 'finish_reason': 'stop'}]}):
+            with self.subTest(raw=raw):
+                with patch.object(translator, 'urlopen', return_value=io.BytesIO(json.dumps(raw).encode())):
+                    with self.assertRaises(NewsError):
+                        translator.request_completion({}, 'test-key')
+
+    def test_invalid_translation_facts_abort_without_retry(self):
+        calls = []
+        bad = self.translated()
+        bad['summary_fa'] += ' مبلغ ۹۹۹ میلیون دلار است.'
+        def api(body):
+            calls.append(body)
+            return json.dumps(bad)
+        with redirect_stdout(io.StringIO()), patch.object(translator.time, 'sleep') as sleeping:
+            with self.assertRaisesRegex(NewsError, 'number absent'):
+                translator.translate(self.con, self.material(), api)
+        self.assertEqual(len(calls), 1)
+        sleeping.assert_not_called()
+        self.assertEqual(self.con.execute('SELECT count(*) FROM economy_translation_cache').fetchone()[0], 0)
+
+    def test_translation_failure_never_reaches_render_or_publish(self):
+        story = picker.score(picker.Story([self.item()]), self.now)
+        renderer = SimpleNamespace(hero_image=lambda *a: object(), render_news=Mock())
+        argv = ['economy', '--db', str(self.root/'failed.sqlite3'), '--no-fetch',
+                '--output', str(self.root), '--publish']
+        with patch.object(economy.sys, 'argv', argv), patch.object(economy, 'rank', return_value=[story]), \
+             patch.object(economy, 'article_material', return_value=self.material()), \
+             patch.dict(economy.sys.modules, {'instagram_news_renderer': renderer}), \
+             patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'test-only'}), \
+             patch.object(translator, 'request_completion', return_value=translator.Completion(None, 'length', 4096)) as requesting, \
+             patch.object(translator.time, 'sleep'), patch.object(economy, 'publish') as posting, \
+             redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(NewsError, 'after 3 attempts'):
+                economy.main()
+        self.assertEqual(requesting.call_count, 3)
+        renderer.render_news.assert_not_called()
+        posting.assert_not_called()
+        with database(self.root/'failed.sqlite3') as con:
+            self.assertEqual(con.execute('SELECT count(*) FROM instagram_news').fetchone()[0], 0)
+            self.assertEqual(con.execute('SELECT count(*) FROM instagram_news_publications').fetchone()[0], 0)
 
     def test_changed_source_invalidates_translation_cache(self):
         material = self.material()

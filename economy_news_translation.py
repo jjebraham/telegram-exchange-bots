@@ -1,6 +1,7 @@
 """Fetch source material and translate the selected economy report with DeepSeek."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 from html.parser import HTMLParser
@@ -176,11 +177,56 @@ def validate_translation(result, source):
     return title, summary
 
 
+@dataclass(frozen=True)
+class Completion:
+    content: str | None
+    finish_reason: str = 'stop'
+    completion_tokens: int | None = None
+
+
+def request_completion(body, api_key):
+    request = Request('https://api.deepseek.com/chat/completions',
+                      data=json.dumps(body).encode(),
+                      headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'})
+    try:
+        with urlopen(request, timeout=60) as response:
+            data = response.read(200001)
+        if len(data) > 200000:
+            raise ValueError('Response too large')
+        envelope = json.loads(data)
+        choice = envelope['choices'][0]
+        content, reason = choice['message']['content'], choice['finish_reason']
+        if content is not None and not isinstance(content, str):
+            raise ValueError('Unexpected content type')
+        if not isinstance(reason, str):
+            raise ValueError('Unexpected finish reason')
+        usage = envelope.get('usage') or {}
+        tokens = usage.get('completion_tokens') if isinstance(usage, dict) else None
+        if type(tokens) is not int or tokens < 0:
+            tokens = None
+        # Never use, replay or print reasoning_content or provider response text.
+        return Completion(content, reason, tokens)
+    except Exception as exc:
+        # Do not print HTTP bodies, headers, environment contents or credentials.
+        code = getattr(exc, 'code', None)
+        detail = f'HTTP {code}' if type(code) is int else type(exc).__name__
+        raise NewsError(f'DeepSeek translation request failed ({detail}).') from None
+
+
+def completion_status(reply):
+    known = {'stop', 'length', 'content_filter', 'tool_calls',
+             'insufficient_system_resource', 'aborted'}
+    reason = reply.finish_reason if reply.finish_reason in known else 'unknown'
+    length = len(reply.content) if isinstance(reply.content, str) else 0
+    tokens = reply.completion_tokens if type(reply.completion_tokens) is int and reply.completion_tokens >= 0 else 'unavailable'
+    return f'finish_reason={reason}, content_chars={length}, completion_tokens={tokens}'
+
+
 def translate(con, material, request_fn=None):
     model = os.getenv('DEEPSEEK_MODEL', 'deepseek-flash')
     source = material['title_original'] + '\n' + material['source_text'] + '\n' + material['article_date']
     # Include model and prompt version: changing either invalidates the cached result.
-    key = hashlib.sha256(('economy-v1\n' + model + '\n' + source).encode()).hexdigest()
+    key = hashlib.sha256(('economy-v2-json\n' + model + '\n' + source).encode()).hexdigest()
     cached = con.execute('SELECT title_fa,summary_fa FROM economy_translation_cache WHERE input_hash=?', (key,)).fetchone()
     if cached:
         return cached[0], cached[1]
@@ -194,37 +240,50 @@ def translate(con, material, request_fn=None):
         'characters) and a neutral 3-5 sentence summary (80-1000 characters). Use only '
         'facts explicitly supported by the supplied article. Preserve uncertainty, '
         'negation, currencies, dates, numerical values and scale words such as million '
-        'and billion. Do not convert units or invent statistics, quotes, causes or '
+        'and billion. Keep numeric magnitudes as digits exactly as supplied; do not '
+        'rewrite 68000 as 68 thousand. Do not convert units or invent statistics, quotes, causes or '
         'predictions. No investment advice, links, handles or hashtags. Example JSON: '
         '{"headline_fa":"عنوان کوتاه فارسی", "summary_fa":"خلاصه فارسی خبر."}'
     )
-    payload = dict(model=model, temperature=0, max_tokens=1600,
+    payload = dict(model=model, temperature=0, thinking={'type': 'disabled'},
                    response_format={'type': 'json_object'},
                    messages=[{'role': 'system', 'content': system},
                              {'role': 'user', 'content': json.dumps({k: material[k] for k in
                               ('title_original', 'source_text', 'source_name', 'article_date')}, ensure_ascii=False)}])
-    def real_request(body):
-        request = Request('https://api.deepseek.com/chat/completions',
-                          data=json.dumps(body).encode(),
-                          headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'})
-        try:
-            with urlopen(request, timeout=60) as response:
-                data = response.read(200001)
-            if len(data) > 200000:
-                raise NewsError('Translation response too large')
-            return json.loads(data)['choices'][0]['message']['content']
-        except Exception as exc:
-            # Do not print HTTP bodies, headers, environment contents or credentials.
-            code = getattr(exc, 'code', None)
-            detail = f'HTTP {code}' if code else type(exc).__name__
-            raise NewsError(f'DeepSeek translation request failed ({detail}).') from None
-    content = (request_fn or real_request)(payload)
-    try:
-        result = json.loads(content)
-    except (TypeError, json.JSONDecodeError):
-        raise NewsError('DeepSeek returned invalid or empty JSON.') from None
-    title, summary = validate_translation(result, source)
-    with con:
-        con.execute('INSERT OR REPLACE INTO economy_translation_cache VALUES (?,?,?,?,?)',
-                    (key, model, title, summary, time.time()))
-    return title, summary
+    request_fn = request_fn or (lambda body: request_completion(body, api_key))
+    budgets = (4096, 8192, 8192)
+    for attempt, budget in enumerate(budgets, 1):
+        messages = list(payload['messages'])
+        if attempt > 1:
+            messages.append({'role': 'user', 'content':
+                'Return one complete nonempty JSON object with headline_fa and summary_fa. '
+                'Use the original article above and all its factual constraints. No preamble or code fences.'})
+        body = dict(payload, max_tokens=budget, messages=messages)
+        print(f'DeepSeek translation: attempt {attempt}/{len(budgets)} (JSON, thinking disabled, max_tokens={budget}).')
+        value = request_fn(body)
+        reply = value if isinstance(value, Completion) else Completion(value)
+        status = completion_status(reply)
+        if reply.finish_reason in {'content_filter', 'tool_calls'} or reply.finish_reason not in {
+                'stop', 'length', 'insufficient_system_resource', 'aborted'}:
+            raise NewsError(f'DeepSeek did not finish a translation ({status}).')
+        if reply.finish_reason in {'length', 'insufficient_system_resource', 'aborted'}:
+            failure = 'incomplete_response'
+        elif not isinstance(reply.content, str) or not reply.content.strip():
+            failure = 'empty_content'
+        else:
+            try:
+                result = json.loads(reply.content)
+            except json.JSONDecodeError:
+                failure = 'invalid_json'
+            else:
+                # Valid JSON still must pass Persian, length and source-number checks.
+                # A failed factual check aborts; it is never cached or published.
+                title, summary = validate_translation(result, source)
+                with con:
+                    con.execute('INSERT OR REPLACE INTO economy_translation_cache VALUES (?,?,?,?,?)',
+                                (key, model, title, summary, time.time()))
+                return title, summary
+        if attempt == len(budgets):
+            raise NewsError(f'DeepSeek returned no complete translation after {attempt} attempts ({failure}; {status}).')
+        print(f'DeepSeek response incomplete ({failure}; {status}); retrying.')
+        time.sleep(attempt)
