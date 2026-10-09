@@ -106,3 +106,18 @@ Data documentation:
 [CoinPaprika tickers](https://docs.coinpaprika.com/api-reference/tickers/get-tickers-for-all-active-coins),
 [CoinPaprika classifications](https://docs.coinpaprika.com/api-reference/tags/get-tag-by-id),
 [Wallex market API](https://docs.wallex.ir/#api-Market-getMarkets).
+
+## Provider connection failures
+
+The publisher reports the failing public host and endpoint, with a DNS, timeout,
+TLS or HTTP error category. Proxy addresses and credentials are not logged.
+Run a read-only check with the same Python interpreter as the live publisher:
+
+```bash
+"$HOME/kiani-instagram-venv/bin/python" "$WORK/crypto_top50_data.py" --check-sources
+```
+
+This checks the two classification endpoints, USD tickers and the USDT/Toman
+market endpoint without publishing, changing the database or activating cron.
+Keep `set -e` inside the displayed subshell block: running it directly in an
+interactive SSH shell causes a failed command to close that shell.

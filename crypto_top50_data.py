@@ -3,10 +3,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
+import errno
 import json
 import re
+import socket
+import ssl
 import time
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 TICKERS_URL = 'https://api.coinpaprika.com/v1/tickers?quotes=USD'
@@ -34,20 +38,61 @@ class PricesError(RuntimeError):
     pass
 
 
-def fetch_json(url):
+def provider_label(url):
+    parsed = urlsplit(url)
+    return (parsed.hostname or 'price provider') + parsed.path
+
+
+def connection_error(exc):
+    """Report useful public-provider diagnostics without proxy URLs or credentials."""
+    if isinstance(exc, HTTPError):
+        return f'HTTP {exc.code}'
+    reason = exc.reason if isinstance(exc, URLError) else exc
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return f'TLS certificate verification failed, code {reason.verify_code}'
+    if isinstance(reason, socket.gaierror):
+        return f'DNS lookup failed, code {reason.errno}'
+    if isinstance(reason, TimeoutError):
+        return 'connection or response timed out'
+    if isinstance(reason, ssl.SSLError):
+        return f'TLS connection failed ({getattr(reason, "reason", "SSLError")})'
+    if isinstance(reason, OSError) and reason.errno:
+        return f'network error ({errno.errorcode.get(reason.errno, reason.errno)})'
+    if isinstance(exc, json.JSONDecodeError):
+        return 'response was not valid JSON'
+    return type(reason).__name__
+
+
+def fetch_json(url, *, attempts=3, timeout=25):
     """Bound response size and retries; credentials are not required by these APIs."""
-    for attempt in range(3):
+    for attempt in range(attempts):
         try:
             request = Request(url, headers={'User-Agent': UA, 'Accept': 'application/json'})
-            with urlopen(request, timeout=25) as response:
+            with urlopen(request, timeout=timeout) as response:
                 data = response.read(8_000_001)
             if len(data) > 8_000_000:
-                raise PricesError('Price provider response exceeded the size limit.')
+                raise PricesError(f'{provider_label(url)} response exceeded the size limit.')
             return json.loads(data, parse_float=Decimal)
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-            if attempt == 2:
-                raise PricesError(f'Price provider unavailable ({type(exc).__name__}); no post created.') from None
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeError) as exc:
+            if attempt == attempts - 1:
+                raise PricesError(f'{provider_label(url)} unavailable ({connection_error(exc)}); no post created.') from None
             time.sleep(2 * (attempt + 1))
+
+
+def check_sources():
+    """Read-only connectivity check using the publisher's real requests and SSL settings."""
+    failed = False
+    for url in (STABLE_URL, WRAPPED_URL, TICKERS_URL, MARKET_URL):
+        started = time.monotonic()
+        try:
+            fetch_json(url, attempts=1, timeout=12)
+        except PricesError as exc:
+            failed = True
+            print(f'FAILED: {exc}', flush=True)
+        else:
+            print(f'OK: {provider_label(url)} ({time.monotonic() - started:.1f}s)', flush=True)
+    print('Connection check complete. Nothing published or scheduled.', flush=True)
+    return 1 if failed else 0
 
 
 def number(value, label, *, positive=False):
@@ -212,3 +257,11 @@ def validate_snapshot(snapshot, *, publishing=False):
             raise PricesError('Toman conversion does not match the full-precision USD price.')
         if publishing:
             fresh(coin['updated_at'], now, PRICE_MAX_AGE, coin['symbol'] + ' price')
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Read-only top 50 price provider diagnostics')
+    parser.add_argument('--check-sources', action='store_true', required=True)
+    parser.parse_args()
+    raise SystemExit(check_sources())
