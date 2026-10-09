@@ -79,15 +79,23 @@ def cron_base(cron):
 
 
 def rates_settings(text, home):
-    """Change only the known two-mode loop; never rewrite the rates launcher."""
+    """Remove the immediate Story invocation from a reviewed launcher shape."""
     loop = re.compile(r'(?m)^(\s*for\s+mode\s+in\s+)(feed\s+story|story\s+feed)(\s*;\s*do\s*)$')
     matches = list(loop.finditer(text))
-    if len(matches) == 1:
+    story_call = re.compile(r'(?m)^[ \t]*run_mode[ \t]+story[ \t]*$')
+    feed_call = re.compile(r'(?m)^[ \t]*run_mode[ \t]+feed[ \t]*$')
+    story_calls, feed_calls = list(story_call.finditer(text)), list(feed_call.finditer(text))
+    function = re.search(r'(?m)^run_mode\(\)[ \t]*\{[ \t]*$', text)
+    if function and not matches and len(feed_calls) == 1 and len(story_calls) <= 1:
+        # The live launcher has a shared run_mode function followed by these
+        # literal calls. Removing its Story call retains Feed error handling.
+        edited = story_call.sub('', text)
+    elif len(matches) == 1 and not story_calls and not feed_calls:
         edited = loop.sub(lambda m: m[1] + 'feed' + m[3], text)
-    elif re.search(r'(?m)^\s*for\s+mode\s+in\s+feed\s*;\s*do\s*$', text):
+    elif not function and re.search(r'(?m)^\s*for\s+mode\s+in\s+feed\s*;\s*do\s*$', text):
         edited = text  # Idempotent upgrade of an already-activated launcher.
     else:
-        raise ActivationError('Rates launcher modes differ from the reviewed loop; nothing changed')
+        raise ActivationError('Rates launcher calls differ from the reviewed formats; nothing changed')
     if 'SCRIPT="$HOME/kiani-instagram-publisher/instagram_daily_rates.py"' not in text:
         raise ActivationError('Rates publisher path differs from the reviewed launcher')
     if 'INSTAGRAM_STATE_FILE="$STATE_DIR/$mode.json"' not in text:

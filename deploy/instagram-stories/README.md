@@ -36,8 +36,9 @@ Run `activate_story_cron.py --repo REPOSITORY --revision EXACT_REVIEWED_SHA` as 
 existing publisher user on the UTC cron host. Use the helper from that same pinned
 revision. It confirms all four daily Feed schedules and existing shared assets,
 backs up the launcher/configuration/crontab, installs the independent worker, and
-replaces only the rates launcher's `feed story` loop with `feed`. All Feed times and
-other cron entries are preserved. The queue baselines existing posts on its first
+removes only the rates launcher's immediate `run_mode story` call, retaining
+`run_mode feed` and its error handling. The earlier two-mode loop format is also
+supported. All Feed times and other cron entries are preserved. The queue baselines existing posts on its first
 activation, so deployment sends no old Stories. Reinstallation preserves the queue.
 
 The launcher loads the existing private Instagram environment. Credentials are
