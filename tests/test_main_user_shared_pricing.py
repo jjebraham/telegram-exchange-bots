@@ -1,15 +1,45 @@
+import ast
+import asyncio
+import io
+import json
+import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
-from main_user_pricing_client import get_adjustment_factor
-from main_user_runtime import PATCH_SPECS, RuntimePatchError, transform_source
+from main_user_pricing_client import (
+    get_adjustment_factor,
+    get_canonical_try_rate,
+    get_canonical_try_rate_with_fallback,
+)
+from main_user_runtime import (
+    BUY_CANONICAL_BLOCK,
+    BUY_LEGACY_BLOCK,
+    PATCH_SPECS,
+    SELL_CANONICAL_BLOCK,
+    SELL_LEGACY_BLOCK,
+    RuntimePatchError,
+    transform_source,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 TRACKED_BOT = REPOSITORY_ROOT / "main_user_bot_clone.py"
+CANONICAL_RATES = {
+    "rates": {
+        "buy_lira": 5450,
+        "sell_lira": 5240,
+        "buy_adjustment_pct": "2",
+        "sell_adjustment_pct": "-2",
+        "market_usdt_toman": "262922.5",
+        "market_usdt_try": "49.182",
+        "source": "kiani-price-cache",
+    }
+}
 
 
 class MainUserSharedPricingTests(unittest.TestCase):
@@ -27,6 +57,15 @@ class MainUserSharedPricingTests(unittest.TestCase):
             )
         return db_path
 
+    def canonical_db(self, buy="2", sell="-2"):
+        return self.make_db({
+            "user_tl_buy_adjustment_pct": buy,
+            "user_tl_sell_adjustment_pct": sell,
+        })
+
+    def fetch_payload(self, payload=None):
+        return io.BytesIO(json.dumps(payload or CANONICAL_RATES).encode("utf-8"))
+
     def test_client_reads_factor_and_falls_back(self):
         db_path = self.make_db({"user_tl_buy_adjustment_pct": "2.75"})
         self.assertEqual(
@@ -40,21 +79,228 @@ class MainUserSharedPricingTests(unittest.TestCase):
             Decimal("0.97"),
         )
 
-    def test_tracked_clone_patches_and_compiles(self):
-        source = TRACKED_BOT.read_text(encoding="utf-8")
-        patched, names = transform_source(source)
+    def test_canonical_buy_and_sell_match_shared_admin_percentages(self):
+        db_path = self.canonical_db()
+        with patch(
+            "main_user_pricing_client.urlopen",
+            side_effect=lambda request, timeout: self.fetch_payload(),
+        ):
+            self.assertEqual(
+                get_canonical_try_rate("buy_lira", url="http://rates.test/try", db_path=db_path),
+                5450,
+            )
+            self.assertEqual(
+                get_canonical_try_rate("sell_lira", url="http://rates.test/try", db_path=db_path),
+                5240,
+            )
 
+    def test_canonical_client_uses_same_database_environment_as_api(self):
+        db_path = self.canonical_db()
+        with patch.dict(os.environ, {"KIANI_PRICING_DB_PATH": db_path}, clear=True):
+            with patch(
+                "main_user_pricing_client.urlopen",
+                side_effect=lambda request, timeout: self.fetch_payload(),
+            ):
+                self.assertEqual(
+                    get_canonical_try_rate("buy_lira", url="http://rates.test/try"),
+                    5450,
+                )
+
+    def test_canonical_client_rejects_percentage_drift(self):
+        db_path = self.canonical_db(buy="3")
+        with patch(
+            "main_user_pricing_client.urlopen",
+            side_effect=lambda request, timeout: self.fetch_payload(),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "does not match the admin-panel"):
+                get_canonical_try_rate(
+                    "buy_lira", url="http://rates.test/try", db_path=db_path
+                )
+
+    def test_canonical_client_rejects_rate_calculation_drift(self):
+        db_path = self.canonical_db()
+        changed = json.loads(json.dumps(CANONICAL_RATES))
+        changed["rates"]["buy_lira"] = 5400
+        with patch(
+            "main_user_pricing_client.urlopen",
+            side_effect=lambda request, timeout: self.fetch_payload(changed),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "does not match its market"):
+                get_canonical_try_rate(
+                    "buy_lira", url="http://rates.test/try", db_path=db_path
+                )
+
+    def test_persistent_pair_cache_deduplicates_concurrent_refreshes_and_expires(self):
+        db_path = self.canonical_db()
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache_path = str(Path(cache_dir) / "rates.sqlite3")
+
+            class FakePriceCache:
+                async def get_usdt_irr(self):
+                    return 2669020.0
+
+                async def get_usdt_try(self):
+                    return 49.229
+
+            cache = FakePriceCache()
+            with (
+                patch.dict(
+                    os.environ,
+                    {"KIANI_TRY_RATE_CACHE_DB": cache_path},
+                ),
+                patch(
+                    "main_user_pricing_client.urlopen",
+                    side_effect=lambda request, timeout: self.fetch_payload(),
+                ) as api,
+            ):
+                async def concurrent_requests():
+                    return await asyncio.gather(
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        ),
+                        get_canonical_try_rate_with_fallback(
+                            "sell_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        ),
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        ),
+                    )
+
+                self.assertEqual(asyncio.run(concurrent_requests()), [5450, 5240, 5450])
+                self.assertEqual(api.call_count, 1)
+
+                # The opposite direction and later requests reuse the saved pair.
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "sell_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        )
+                    ),
+                    5240,
+                )
+                self.assertEqual(api.call_count, 1)
+
+                with sqlite3.connect(cache_path) as connection:
+                    cached_at, expires_at = connection.execute(
+                        "SELECT cached_at, expires_at FROM kiani_try_rate_cache "
+                        "WHERE cache_key = 'customer'"
+                    ).fetchone()
+                    self.assertAlmostEqual(expires_at - cached_at, 300, places=5)
+
+                    # Simulate the five-minute expiry without waiting.
+                    connection.execute(
+                        "UPDATE kiani_try_rate_cache SET expires_at = ? "
+                        "WHERE cache_key = 'customer'",
+                        (time.time() - 1,),
+                    )
+
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, url="http://rates.test/try",
+                            db_path=db_path,
+                        )
+                    ),
+                    5450,
+                )
+                self.assertEqual(api.call_count, 2)
+
+    def test_bot_live_cache_fallback_calculates_and_caches_both_directions(self):
+        db_path = self.make_db({
+            "user_tl_buy_adjustment_pct": "1",
+            "user_tl_sell_adjustment_pct": "-2",
+        })
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache_path = str(Path(cache_dir) / "rates.sqlite3")
+
+            class FakePriceCache:
+                async def get_usdt_irr(self):
+                    return 2669020.0
+
+                async def get_usdt_try(self):
+                    return 49.229
+
+            cache = FakePriceCache()
+            with (
+                patch.dict(
+                    os.environ,
+                    {"KIANI_TRY_RATE_CACHE_DB": cache_path},
+                ),
+                patch(
+                    "main_user_pricing_client.get_canonical_try_rates",
+                    side_effect=RuntimeError("API returned HTTP 503"),
+                ) as api,
+            ):
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "buy_lira", cache, db_path=db_path
+                        )
+                    ),
+                    5480,
+                )
+                self.assertEqual(
+                    asyncio.run(
+                        get_canonical_try_rate_with_fallback(
+                            "sell_lira", cache, db_path=db_path
+                        )
+                    ),
+                    5310,
+                )
+                self.assertEqual(api.call_count, 1)
+
+    def test_all_tracked_try_button_handlers_use_canonical_rates(self):
+        source = TRACKED_BOT.read_text(encoding="utf-8")
+        patched, _names = transform_source(source)
+        tree = ast.parse(patched)
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef)
+        }
+        lines = patched.splitlines()
+        expected = {
+            "buy_lira_user": '_canonical_try_rate("buy_lira")',
+            "main_menu_buy_lira_rate": '_canonical_try_rate("buy_lira")',
+            "sell_lira_user": '_canonical_try_rate("sell_lira")',
+            "main_menu_sell_lira_rate": '_canonical_try_rate("sell_lira")',
+        }
+        for function_name, call in expected.items():
+            with self.subTest(handler=function_name):
+                node = functions[function_name]
+                block = "\n".join(lines[node.lineno - 1 : node.end_lineno])
+                self.assertIn(call, block)
+                self.assertNotIn("price_cache.get_usdt_irr", block)
+                self.assertNotIn("1.0167", block)
+                self.assertNotIn("* 0.97", block)
+        compile(patched, str(TRACKED_BOT), "exec")
+
+    def test_runtime_patcher_upgrades_legacy_source_and_is_idempotent(self):
+        legacy = TRACKED_BOT.read_text(encoding="utf-8")
+        self.assertEqual(legacy.count(BUY_LEGACY_BLOCK), 2)
+        self.assertEqual(legacy.count(SELL_LEGACY_BLOCK), 2)
+
+        patched, names = transform_source(legacy)
         self.assertEqual(set(names), set(PATCH_SPECS))
-        self.assertIn("_pricing_factor", patched)
-        self.assertIn("user_usdt_buy_adjustment_pct", patched)
-        self.assertIn("user_usdt_to_try_adjustment_pct", patched)
+        self.assertEqual(len(names), 12)
+        self.assertEqual(patched.count(BUY_CANONICAL_BLOCK), 2)
+        self.assertEqual(patched.count(SELL_CANONICAL_BLOCK), 2)
+        self.assertEqual(transform_source(patched)[0], patched)
+        self.assertEqual(patched.count("async def _canonical_try_rate("), 1)
+        self.assertIn('_pricing_factor("user_usdt_buy_adjustment_pct"', patched)
+        self.assertIn('_pricing_factor("user_try_to_usdt_adjustment_pct"', patched)
+        self.assertIn("_get_canonical_try_rate_with_fallback(rate_key, price_cache)", patched)
         compile(patched, str(TRACKED_BOT), "exec")
 
     def test_source_drift_fails_closed(self):
         source = TRACKED_BOT.read_text(encoding="utf-8")
         drifted = source.replace(
-            "rate = usdt_try * 1.02",
-            "rate = usdt_try * 1.03",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
+            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.019)",
             1,
         )
         with self.assertRaises(RuntimePatchError):
