@@ -47,7 +47,8 @@ def metadata(story):
         parser.feed(html.decode('utf-8', errors='replace'))
         values = parser.values
         story = dict(story)
-        story['image_url'] = story.get('image_url') or urljoin(story['source_url'], values.get('og:image', ''))
+        image = values.get('og:image') or values.get('twitter:image')
+        story['image_url'] = story.get('image_url') or (urljoin(story['source_url'], image) if image else None)
         story['source_name'] = values.get('og:site_name') or story['source_name']
         story['article_date'] = story.get('article_date') or values.get('article:published_time', '')[:10] or None
     except Exception as exc:
@@ -84,7 +85,10 @@ def hero_image(story, cache):
         return None
 
 
-def render_news(stories, output, asset_root):
+def render_news(stories, output, asset_root, *, news_label='خبر کریپتو',
+                caption_title='صرافی کیانی | خبر کریپتو',
+                caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi',
+                require_image=False):
     output = Path(output).expanduser().resolve()
     asset_root = Path(asset_root).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -135,7 +139,7 @@ def render_news(stories, output, asset_root):
         fa(draw, 'صرافی کیانی', (925, 73), 34, bold=True)
         draw.text((925, 111), 'kiani.exchange', font=font(25), fill=MUTED, anchor='rm')
         draw.rounded_rectangle((64, 61, 257, 120), radius=28, fill='#FDEDEB')
-        fa(draw, 'خبر کریپتو', (160, 92), 27, bold=True, fill=RED, anchor='mm')
+        fa(draw, news_label, (160, 92), 27, bold=True, fill=RED, anchor='mm')
         draw.line((64, 1246, 1016, 1246), fill='#E4EAE6', width=2)
         draw.text((64, 1282), 'kiani.exchange', font=font(25, True), fill=GREEN, anchor='lm')
         label = f"Source: {story['source_name']}"
@@ -154,6 +158,8 @@ def render_news(stories, output, asset_root):
         story = metadata(dict(saved))
         enriched.append(story)
         hero = hero_image(story, output / '.source-images')
+        if require_image and hero is None:
+            raise ValueError('A source illustration is required for this news post.')
         scratch = ImageDraw.Draw(Image.new('RGB', (1080, 1350)))
         title_size = 61
         title_rows = wrap(scratch, story['title_fa'], title_size, True)
@@ -224,17 +230,20 @@ def render_news(stories, output, asset_root):
         path = output / f'{prefix}-{index:02}.jpg'
         image.save(path, quality=95, subsampling=0)
         paths.append(path)
-    paragraphs = ['صرافی کیانی | خبر کریپتو']
+    paragraphs = [caption_title]
     for story in enriched:
         paragraphs.append(story['title_fa'])
         paragraphs.append(story['summary_fa'])
         paragraphs.append('منبع: ' + story['source_name'] + '\n' + story['source_url'])
-    paragraphs.append('اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi')
+    if caption_footer:
+        paragraphs.append(caption_footer)
     caption = '\n\n'.join(paragraphs)
     if len(caption) > 2200:
-        paragraphs = ['صرافی کیانی | خبر کریپتو']
+        paragraphs = [caption_title]
         paragraphs.extend(story['title_fa'] + '\nمنبع: ' + story['source_name'] + '\n' + story['source_url'] for story in enriched)
-        paragraphs.append('متن کامل خبرها روی اسلایدها\nتلگرام: https://t.me/kriptofarsi')
+        paragraphs.append('متن کامل خبرها روی اسلایدها')
+        if caption_footer:
+            paragraphs.append(caption_footer)
         caption = '\n\n'.join(paragraphs)
     if len(caption) > 2200:
         raise ValueError('News caption exceeds the Instagram limit; select fewer stories.')
