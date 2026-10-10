@@ -42,10 +42,10 @@ function timeNode(iso) {
   node.title = `${tehranFull.format(new Date(iso))} به وقت تهران`;
   return node;
 }
+// Two labels only: updated (fresh) or not updated (stale, or a customer price past its validity).
 function ageTag(quote) {
   const status = freshness(quote, Date.now(), state.connected);
-  if (status === "fresh") return null;
-  const tag = el("span", "age-tag", status === "expired" ? "منقضی" : "قدیمی");
+  const tag = el("span", "age-tag", status === "fresh" ? "به روز شده" : "به روز نشده");
   tag.dataset.state = status;
   return tag;
 }
