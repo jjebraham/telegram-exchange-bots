@@ -91,20 +91,36 @@ def _table_time(text):
 
 
 def _parse_usdt(text):
-    rows = []
-    for line in _table(text, ["EXCHANGE", "SELL", "BUY", "Δ24H", "Δ1M"]):
+    lines = _table(text, ["EXCHANGE", "SELL", "BUY", "Δ24H", "Δ1M"])
+    if not 2 <= len(lines) <= 7:
+        raise CarouselError("Unexpected exchange coverage")
+    stamp = _table_time(text)
+    rows, names, omitted = [], set(), []
+    for line in lines:
         cells = line.split()
         if len(cells) != 5 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", cells[0]):
             raise CarouselError("Unexpected exchange table row")
-        ask, bid = _number(cells[1]), _number(cells[2], optional=True)
-        if bid is not None and bid >= ask:
-            raise CarouselError("Crossed exchange buy/sell pair")
-        rows.append({"name": cells[0], "ask": str(ask), "bid": str(bid) if bid else None,
-                     "day": str(_change(cells[3])) if cells[3] != "—" else None,
-                     "month": str(_change(cells[4])) if cells[4] != "—" else None})
-    if not 2 <= len(rows) <= 7 or len({row["name"] for row in rows}) != len(rows):
-        raise CarouselError("Unexpected exchange coverage")
-    return {"kind": "usdt", "rows": rows, "generated_at": _table_time(text)}
+        name = cells[0]
+        if name in names:
+            raise CarouselError("Duplicate exchange in table")
+        names.add(name)
+        try:
+            ask, bid = _number(cells[1]), _number(cells[2], optional=True)
+            # Equal displayed prices are not crossed. Do not swap a genuine
+            # inverted pair or substitute a remembered price for that provider.
+            if bid is not None and bid > ask:
+                raise CarouselError("Crossed exchange buy/sell pair")
+            row = {"name": name, "ask": str(ask), "bid": str(bid) if bid is not None else None,
+                   "day": str(_change(cells[3])) if cells[3] != "—" else None,
+                   "month": str(_change(cells[4])) if cells[4] != "—" else None}
+        except CarouselError as exc:
+            omitted.append({"name": name, "reason": str(exc)})
+            print(f"Carousel exchange omitted: {name}: {exc}", file=sys.stderr, flush=True)
+            continue
+        rows.append(row)
+    if len(rows) < 2:
+        raise CarouselError("Fewer than two valid exchange quotes remain")
+    return {"kind": "usdt", "rows": rows, "generated_at": stamp, "omitted_exchanges": omitted}
 
 
 def _parse_fx(text):
