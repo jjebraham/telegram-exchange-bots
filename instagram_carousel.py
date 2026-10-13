@@ -176,14 +176,34 @@ def _export(repo, post):
 
 
 def _hawala_snapshot():
-    configured = os.getenv("INSTAGRAM_HAWALA_SNAPSHOT", "").strip()
-    if not configured:
-        raise CarouselError("Set INSTAGRAM_HAWALA_SNAPSHOT to the existing successful Telegram delivery export")
+    mode = os.getenv("INSTAGRAM_HAWALA_SOURCE", "snapshot").strip().lower()
+    if mode == "calculator":
+        from instagram_hawala_source import HawalaSourceError, fresh_snapshot
+        try:
+            payload = fresh_snapshot()
+        except HawalaSourceError as exc:
+            raise CarouselError(str(exc)) from None
+        print("Carousel Hawala source: fresh calculator (7 currencies)", flush=True)
+    elif mode == "snapshot":
+        configured = os.getenv("INSTAGRAM_HAWALA_SNAPSHOT", "").strip()
+        if not configured:
+            raise CarouselError("Set INSTAGRAM_HAWALA_SNAPSHOT to the existing successful Telegram delivery export")
+        try:
+            payload = json.loads(Path(configured).expanduser().read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CarouselError("Hawala snapshot is missing or invalid") from exc
+    else:
+        raise CarouselError("INSTAGRAM_HAWALA_SOURCE must be snapshot or calculator")
+    return _parse_hawala_payload(payload)
+
+
+def _parse_hawala_payload(payload):
+    if not isinstance(payload, dict):
+        raise CarouselError("Hawala snapshot must contain a rates object")
     try:
-        payload = json.loads(Path(configured).expanduser().read_text(encoding="utf-8"))
         generated = datetime.fromisoformat(payload["generated_at"])
         raw = payload["rates"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError) as exc:
         raise CarouselError("Hawala snapshot is missing or invalid") from exc
     if not isinstance(payload, dict) or not isinstance(raw, dict):
         raise CarouselError("Hawala snapshot must contain a rates object")
@@ -191,7 +211,7 @@ def _hawala_snapshot():
         raise CarouselError("Hawala snapshot lacks trusted provenance or timezone")
     age = (datetime.now(timezone.utc) - generated).total_seconds()
     if not -60 <= age <= 900:
-        raise CarouselError("Hawala Telegram snapshot is older than 15 minutes")
+        raise CarouselError("Hawala snapshot is older than 15 minutes")
     rows = []
     for code in HAWALA_CODES:
         if code not in raw:
@@ -200,7 +220,8 @@ def _hawala_snapshot():
         if value != value.to_integral_value():
             raise CarouselError("Hawala snapshot contains fractional Toman")
         rows.append({"code": code, "price": str(value)})
-    return {"kind": "hawala", "rows": rows, "generated_at": generated.isoformat()}
+    return {"kind": "hawala", "rows": rows, "generated_at": generated.isoformat(),
+            "calculation_mode": payload.get("calculation_mode", "telegram-delivery")}
 
 
 def collect_sections():
