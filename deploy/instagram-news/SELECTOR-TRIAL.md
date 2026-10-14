@@ -45,7 +45,9 @@ roundups are excluded. Alleged/proposed developments can qualify but retain that
 uncertainty. Unknown events do not qualify.
 
 A second bounded JSON assessment groups reports of the same event and compares
-them with 30 days of published news plus all unresolved attempts. Repeated
+them with 30 days of published news plus all unresolved attempts (at most 100
+history records, with 500-character titles and 1,000-character summary excerpts).
+Repeated
 events are excluded unless there is a material new development. Highest score,
 then newer original source time, then URL choose each representative and final
 order. The default preview threshold is 60; fewer than five eligible distinct
@@ -64,7 +66,8 @@ existing DeepSeek factual/number checks. The event-summary interpretation is
 not the translation input. Existing Vazirmatn fonts, Kiani logo and card renderer
 are reused. A source picture is used if available, otherwise a text card; a
 picture does not determine a story's score. Longer copy can continue on another
-slide, following the existing renderer. No source text is silently removed.
+slide, following the existing renderer. Translated summary text is not silently
+truncated by the renderer.
 
 Unmodified preview helpers are bundled under `selector_trial_runtime/` from the
 reviewed economy revision `ed50327ee0bd0082be479606f26648a46e35c636`. Their source

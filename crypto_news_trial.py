@@ -207,7 +207,7 @@ def source_material(story, now):
         passage = clean_text(article.meta.get('og:description') or article.meta.get('description'))
     if len(passage) < 160:
         raise NewsError('No usable original source passage; saved translations alone are insufficient.')
-    title = clean_text(article.meta.get('og:title') or story['title_original'])
+    title = clean_text(article.meta.get('og:title') or story['title_original'])[:500]
     image = article.meta.get('og:image') or article.meta.get('twitter:image')
     if image:
         try:
@@ -383,8 +383,10 @@ def event_groups(con, candidates, history):
     payload = {'candidates': [{'id': s['id'], 'title': s['title_original'],
                 'event': s['assessment']['event_summary'], 'published_at': s['article_published_at']}
                 for s in candidates],
-               'published': [{k: s[k] for k in ('id', 'title_original', 'title_fa', 'summary_fa', 'status')}
-                             for s in history]}
+               'published': [dict(id=s['id'], status=s['status'],
+                   title_original=clean_text(s['title_original'])[:500],
+                   title_fa=clean_text(s['title_fa'])[:500],
+                   summary_fa=clean_text(s['summary_fa'])[:1000]) for s in history]}
     return ask_json(con, GROUP_PROMPT, payload,
                     lambda r: validate_groups(r, candidates, history))['groups']
 
@@ -458,7 +460,8 @@ def main():
     report = dict(version=VERSION, run_id=run_id, started_at=now, status='running',
                   minimum_score=args.minimum_score, history_days=30, excluded=[], top_five=[],
                   model=os.getenv('DEEPSEEK_MODEL', 'deepseek-flash'), prompt_hash=digest(ASSESS_PROMPT),
-                  grouping_prompt_hash=digest(GROUP_PROMPT), history_count=len(history))
+                  grouping_prompt_hash=digest(GROUP_PROMPT), history_count=len(history),
+                  history_context_limits={'title_characters': 500, 'summary_characters': 1000})
     with database(args.trial_db) as con:
         init_trial(con)
         with con:
