@@ -267,6 +267,8 @@ def sample_bundle():
 
 def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
     """Render the approved RTL Feed design with bundled fonts and artwork."""
+    from instagram_calendar import calendar_labels
+    calendar = calendar_labels(moment)
     from PIL import ImageFilter
     import xml.etree.ElementTree as ET
 
@@ -415,7 +417,8 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
     draw = ImageDraw.Draw(image)
     logo(image, (540, 179), 122)
     title(image, "صرافی کیانی", (540, 289), 68)
-    title(image, "نرخ امروز", (540, 366), 32, "chart", muted, False, 30)
+    title(image, calendar["persian_line"], (540, 350), 30, "chart", muted, False, 28)
+    latin(draw, calendar["english_line"], (540, 382), 28, muted)
     for box, label, keys, badge in (
         ((64, 404, 1016, 644), "لیر ترکیه", ("buy_lira", "sell_lira"), "TRY"),
         ((64, 664, 1016, 904), "تتر (USDT)", ("buy_usdt", "sell_usdt"), "tether"),
@@ -459,8 +462,7 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
             draw.ellipse((778, y-15, 808, y+15), fill="#25A17C")
             tether(draw, (793, y), 19)
         fa(draw, ig._persian_number(rates[key], decimals=2)+" لیر", (106, y), 42, anchor="lm", bold=True)
-    local = moment.astimezone(ISTANBUL)
-    title(image, f"{local:%H:%M} · استانبول", (540, 1153), 30, "location", muted, False, 30)
+    title(image, calendar["time_english"] + " · استانبول", (540, 1153), 30, "location", muted, False, 30)
     title(image, "سفارش: لینک در Bio", (540, 1260), 46, "down", green, True, 46)
     frames.append(image)
 
@@ -614,6 +616,6 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
     caption += "\nIcons: Twemoji by Twitter and contributors · CC BY 4.0: https://creativecommons.org/licenses/by/4.0/"
     if sample:
         caption = "نمونه برای بررسی طرح؛ این نرخ‌ها لحظه‌ای نیستند و قابل انتشار نیستند.\n\n" + caption
-    manifest = {"sample": sample, "generated_at": moment.isoformat(), "slides": [str(path) for path in paths], "sections": sections, "customer_rates": rates, "caption": caption}
+    manifest = {"sample": sample, "generated_at": moment.isoformat(), "calendar": calendar, "slides": [str(path) for path in paths], "sections": sections, "customer_rates": rates, "caption": caption}
     (directory / (paths[0].stem.rsplit("-", 1)[0] + ".json")).write_text(json.dumps(manifest, default=str, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
     return paths, caption
