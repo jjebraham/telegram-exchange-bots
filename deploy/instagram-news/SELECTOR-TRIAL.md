@@ -95,6 +95,31 @@ keeps the small source directory for follow-up review. No deployment or automati
 occurs. Actual server candidates and a live model result must be inspected
 before scheduling this selector.
 
+### If the server is out of space
+
+`diagnostics/cleanup_obsolete_instagram_trials.py --repo REPO` performs a
+read-only inspection of four exact, superseded Instagram test worktrees.
+With `--apply`, it removes only eligible targets through Git's ordinary
+`worktree remove`, retaining their committed revisions in dedicated recovery
+refs. It stops after at least 128 MiB is available. There is no forced removal,
+broad `/tmp` cleanup, worktree pruning, publisher/database deletion or
+configuration replacement.
+
+Run this helper through `sudo` from the publisher account so it can inspect
+process paths, environments, open files and mapped libraries for all users.
+It checks path/ownership, exact detached HEAD, tracked/untracked/ignored data,
+launchers, service/cron configuration and process references. Environment and
+configuration values are never printed. All Git inspections, recovery refs and
+removals run as the repository owner. Changes, data other than disposable Python
+bytecode, active references or failed inspections cause a target to be retained.
+Without `--apply`, no refs or worktrees are changed.
+
+The cleanup helper is extracted separately from the pinned revision with
+`git show`; it does not need a checkout or any Python packages. Keep Git's
+automatic maintenance disabled for the low-space fetch using the per-command
+settings `gc.auto=0` and `maintenance.auto=false`. Once sufficient space is
+available, invoke the existing small-file preview launcher as the normal user.
+
 ## Record comparable Instagram observations
 
 `diagnostics/record_news_metrics.py --csv OBSERVATIONS.csv` reads known successful
