@@ -85,10 +85,13 @@ directory. The printed URLs are previews, not Instagram posts. Keep the full
 JSON audit private; paste the console ranking and preview URLs for review.
 
 Run the pinned `run_selector_trial.py --repo REPO --revision EXACT_SHA` helper
-with the system Python. It creates a detached temporary worktree and invokes
-the existing Instagram virtual environment. It loads only translation settings,
+with the system Python. It extracts an exact allowlist of nine small trial/helper
+files from Git into a private temporary directory and invokes the existing
+Instagram virtual environment. It never checks out the full repository or its
+tracked virtual environments. It requires at least 64 MiB free on the temporary,
+home and preview filesystems to leave room for reports/cache/images. It loads only translation settings,
 streams progress to the terminal and `~/kiani-news-selector-trial.log`, and
-keeps the checkout for follow-up review. No deployment or automatic posting
+keeps the small source directory for follow-up review. No deployment or automatic posting
 occurs. Actual server candidates and a live model result must be inspected
 before scheduling this selector.
 
