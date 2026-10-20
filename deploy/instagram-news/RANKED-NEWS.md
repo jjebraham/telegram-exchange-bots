@@ -137,6 +137,24 @@ excluded/merged events, components, selected IDs, model/prompt/runtime fingerpri
 preview URLs and, after publication, media IDs. Source passages stay in private
 audits and are not placed in public preview manifests.
 
+### Assessment recovery
+
+An invalid model response is retried once with a specific local validation reason
+such as a field-length, score-band or verbatim-quote failure. The provider's raw
+response, reasoning, credentials and headers are never printed or replayed.
+If a multi-article batch still fails, its articles are assessed individually with
+the same two-attempt bound and the same schema, score-band and source-quote checks.
+Articles that still fail are explicitly excluded in the console and private audit;
+they receive no fabricated score. Remaining validated articles can be ranked.
+If no article can be validated, selection stops. Network, authentication and other
+request failures still stop the run instead of being mistaken for bad article data.
+
+Validated assessments are cached per article as well as per batch, keyed by model,
+prompt and input passage, and revalidated on reuse. Moving an article between
+batches does not require reassessing a valid cached record. Private source/audit
+data is written before assessment, so a later model failure retains diagnostics.
+Neither this recovery nor its logging relaxes freshness, evidence or score rules.
+
 Publishing preserves the existing crypto/economy publication databases and schema,
 so their prior posts and the Story worker remain visible. A durable per-day slot
 ledger plus legacy locks and daily caps prevent repeated slot runs and third

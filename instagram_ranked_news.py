@@ -286,7 +286,7 @@ direct Iran/Turkey consequences earn25. Do not invent regional links.'''
     engine.GROUP_PROMPT = BASE_GROUP_PROMPT.replace('cryptocurrency reports', kind + ' news reports').replace('30-day', '14-day')
 
 
-def rank_events(con, kind, now):
+def rank_events(con, kind, now, checkpoint=None):
     configure_engine(kind)
     blocked, history = histories(now)
     groups, telegram, counts = discovery(con, kind, now)
@@ -297,6 +297,7 @@ def rank_events(con, kind, now):
     readable_ids = {g.lead.id for g in readable}
     selected = shortlist(con, readable, kind)
     audit = dict(version=VERSION, kind=kind, selected_at=now, collection=counts,
+        runtime_fingerprint=runtime_fingerprint(), status='checking_sources',
         popularity_basis='distinct normalized outlet coverage; not measured audience impressions',
         discovery=[{'id': g.lead.id, 'title': g.lead.title, 'outlets': sorted(coverage(g)),
                     'urls': [i.link for i in g.items], 'has_approved_source': g.lead.id in readable_ids}
@@ -333,8 +334,17 @@ def rank_events(con, kind, now):
     failures = Counter(x['reason'] for x in audit['excluded'])
     print(kind, 'source exclusions:', json.dumps(dict(failures), ensure_ascii=False), flush=True)
     materials.sort(key=lambda r: r['id'])
-    assessed = engine.grade(con, materials, now)
+    audit.update(status='assessing', source_materials=materials, assessment_failures=[])
+    if checkpoint:
+        checkpoint(audit)
+    assessed = engine.grade(con, materials, now, failures=audit['assessment_failures'])
     audit['assessments'] = assessed
+    audit['excluded'].extend(dict(row, stage='assessment') for row in audit['assessment_failures'])
+    print(f'{kind}: {len(assessed)} validated assessments; {len(audit["assessment_failures"])} excluded after retries.', flush=True)
+    if checkpoint:
+        checkpoint(audit)
+    if materials and not assessed:
+        raise NewsError('All source assessments failed validation; inspect the private ranking audit.')
     eligible = [r for r in assessed if r['assessment']['story_type'] == 'hard_news'
                 and r['assessment']['certainty'] != 'unknown'
                 and r['assessment']['relevance']['points'] > 0]
@@ -440,23 +450,34 @@ def run(kind, slot, publish_mode, asset_root):
                 if previous and previous[0] != 'failed':
                     print(f'{kind}: slot is complete or unresolved; no duplicate retry.')
                     return
-        ranked, audit = rank_events(ranking, kind, now)
-        candidates = [r for r in ranked if r['trial_score'] >= MINIMUM_SCORE]
-        chosen = candidates[:remaining if publish_mode else 2]
         run_id = datetime.fromtimestamp(now, engine.ISTANBUL).strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
         folder = STATE / 'runs' / (kind + '-' + run_id)
         folder.mkdir(parents=True, exist_ok=False, mode=0o700)
         report = folder / 'ranking.json'
+        audit = dict(version=VERSION, kind=kind, selected_at=now, status='selecting',
+                     runtime_fingerprint=runtime_fingerprint(), slot=slot,
+                     chosen_ids=[], preview_urls=[], media_ids=[])
+        def persist(progress=None):
+            report.write_text(json.dumps(dict(audit, **(progress or {})), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        persist()
+        print('Private ranking audit:', report, flush=True)
+        try:
+            ranked, audit = rank_events(ranking, kind, now, checkpoint=persist)
+        except Exception as exc:
+            progress = json.loads(report.read_text(encoding='utf-8'))
+            progress.update(status='failed', error_type=type(exc).__name__,
+                            error=str(exc) if isinstance(exc, NewsError) else type(exc).__name__)
+            persist(progress)
+            raise
+        candidates = [r for r in ranked if r['trial_score'] >= MINIMUM_SCORE]
+        chosen = candidates[:remaining if publish_mode else 2]
         audit.update(chosen_ids=[r['id'] for r in chosen], status='ranked', slot=slot, preview_urls=[], media_ids=[])
-        def persist():
-            report.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         persist()
         for index, row in enumerate(ranked[:5], 1):
             print(f"{kind} #{index}: {row['trial_score']}/100 — {row.get('title_fa') or row['title_original']}", flush=True)
             print('  Weights:', json.dumps(row['components']), '| outlets:', len(row['coverage_outlets']), flush=True)
             for key in ('impact', 'relevance', 'usefulness'):
                 print(' ', key + ':', row['assessment'][key]['reason'], flush=True)
-        print('Private ranking audit:', report, flush=True)
         if not chosen:
             audit['status'] = 'no_qualifying_story'
             persist()
