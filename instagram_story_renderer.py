@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 LABELS = {
     'rates': 'نرخ امروز', 'economy': 'خبر اقتصادی',
     'top50': 'قیمت ارزهای دیجیتال', 'crypto': 'خبر کریپتو',
+    'calendar': 'تقویم اقتصادی',
 }
 
 
