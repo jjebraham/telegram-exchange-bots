@@ -16,7 +16,7 @@ Every slot re-ranks a rolling 24-hour window and excludes previous events. A
 second-slot run can catch up two posts if the first run produced none. The cap
 is two news stories per category and Istanbul calendar day, including successful
 legacy publications and unresolved/in-flight attempts. It selects the top two
-distinct eligible stories, without an additional numeric score cutoff. If fewer
+eligible stories with different main developments, without an additional numeric score cutoff. If fewer
 than two verified, fresh hard-news events are available, it reports the shortage
 and uses only the available eligible stories.
 
@@ -95,8 +95,11 @@ evaluation. No unobserved platform metric is scored as zero.
 - Opinion, promotion, broad roundups, unrelated topics, unsupported uncertainty
   and speculative price forecasts are excluded. Official economic reports and
   institutional forecast announcements can be factual hard news.
-- Rank by total score, newer verified original source time, then URL. No topic
-  quota displaces a higher-ranked distinct qualifying event merely for variety.
+- Rank by total score, newer verified original source time, then URL. A final
+  main-story check excludes reports that substantially repeat the main development
+  already covered in another selected post or an earlier same-category post that
+  Istanbul day. It then selects the next highest-ranked eligible different story.
+  Shared country, asset or broad topic alone is not grounds for exclusion.
 
 Model inputs are untrusted data, not instructions. Quote validation establishes
 presence in the supplied passage, not truth or correct interpretation. Full
@@ -177,6 +180,34 @@ Private grouping diagnostics retain aliases, the chosen recovery method and each
 fallback comparison. The final groups are validated again using original database
 IDs. Model interpretation of whether events match remains an editorial judgment;
 the recovery prevents ID/format mistakes from silently changing group membership.
+
+### Different main stories across the two daily slots
+
+In addition to exact-event deduplication, the approved editorial policy avoids
+closely overlapping main stories. The final selector compares the full bounded
+original source passage with the other selected posts and that category's same-day
+published summaries, plus unresolved publication attempts. For example, a broad
+report on financial stress/protests that already discusses high government bond
+yields can displace a second report merely restating those yields. An independent
+jobs report, policy decision or separate incident can remain a different story
+even if it involves the same country or asset.
+
+The model returns one existing reference alias or null, with verbatim supporting
+quotes and a reason. All comparisons require an exact candidate quote; an overlap
+also requires an exact quote from the matched reference. The format, aliases and
+quotes are validated with at most two attempts. Still-unresolved candidates are
+explicitly excluded and logged; request/authentication failures stop the run.
+Score order among the remaining eligible stories is preserved. There is no
+blanket country/topic quota and no restored numeric score floor.
+At most the12highest-ranked eligible events are considered by this final pass,
+stopping as soon as the requested number is selected. The audit and shortage log
+make this comparison budget explicit; lower-ranked unexamined events are not
+silently described as rejected.
+
+The private audit records every decision, quote, matched story and prompt hash.
+These are model judgments about reader-facing overlap, not mechanically proven
+fact equivalence. The second slot reads the actual earlier publication history
+rather than assuming what the first slot selected.
 
 Publishing preserves the existing crypto/economy publication databases and schema,
 so their prior posts and the Story worker remain visible. A durable per-day slot
