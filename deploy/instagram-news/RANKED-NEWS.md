@@ -15,8 +15,10 @@ times above. Existing 11:30 rates, 16:00 top 50 and Story-worker jobs are preser
 Every slot re-ranks a rolling 24-hour window and excludes previous events. A
 second-slot run can catch up two posts if the first run produced none. The cap
 is two news stories per category and Istanbul calendar day, including successful
-legacy publications and unresolved/in-flight attempts. It never fills a slot
-with an under-threshold story just to reach two.
+legacy publications and unresolved/in-flight attempts. It selects the top two
+distinct eligible stories, without an additional numeric score cutoff. If fewer
+than two verified, fresh hard-news events are available, it reports the shortage
+and uses only the available eligible stories.
 
 ## What the old scores were doing
 
@@ -44,7 +46,9 @@ was never confirmed deployed; this release does not assume that it was.
 | Original source freshness | 10 | Under6h=10; under12h=7; remaining24h=4 |
 | Current outlet coverage | 10 | Additional normalized outlets: 0/3/6/9/10 for1/2/3/4/5+outlets |
 
-Minimum55 is an initial editorial threshold, not a learned performance guarantee.
+Scores order eligible stories; they are initial editorial settings, not learned
+performance predictions. The trial's55-point cutoff has been removed so it does
+not suppress the second-ranked valid story from the requested top-two selection.
 DeepSeek assesses the first three factors and attribution from retrieved source
 passages, with discrete numeric bands and validated verbatim evidence quotes.
 Its base relevance bands0/5/15/25 are rescaled to0/4/12/20; usefulness0/5/10/20
@@ -75,8 +79,8 @@ evaluation. No unobserved platform metric is scored as zero.
   source-reading shortlist considers all remaining groups (maximum400) and
   chooses up to40. If fewer than12 original articles can be verified, a second
   pass selects from the remaining groups, within an80-group total reading budget.
-  This reserve improves source access; it changes neither the score threshold nor
-  the24-hour rule. Twelve is a retrieval target, not a publication requirement.
+  This reserve improves source access without changing the24-hour rule.
+  Twelve is a retrieval target, not a publication requirement.
   The audit preserves all discovered groups, exclusions and both shortlists.
   This is not a claim to assess every global story.
 - Up to four source reports per discovery group are tried. Unavailable/unapproved,

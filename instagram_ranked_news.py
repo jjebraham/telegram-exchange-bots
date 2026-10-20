@@ -24,7 +24,6 @@ from economy_news_translation import load_translation_env, resolve_google, trans
 from instagram_crypto_news import NewsError, canonical_url, database, publish, save_story, sync_telegram
 
 VERSION = 'ranked-news-v2'
-MINIMUM_SCORE = 55
 BASE_ASSESS_PROMPT = engine.ASSESS_PROMPT
 BASE_GROUP_PROMPT = engine.GROUP_PROMPT
 BASE_PUBLISHER = engine.publisher
@@ -302,7 +301,8 @@ def rank_events(con, kind, now, checkpoint=None):
         discovery=[{'id': g.lead.id, 'title': g.lead.title, 'outlets': sorted(coverage(g)),
                     'urls': [i.link for i in g.items], 'has_approved_source': g.lead.id in readable_ids}
                    for g in groups],
-        shortlist_ids=[], shortlist_passes=[], excluded=[], minimum_score=MINIMUM_SCORE,
+        shortlist_ids=[], shortlist_passes=[], excluded=[], minimum_score=None,
+        selection_policy='top_two_distinct_verified_fresh_hard_news_per_category',
         source_target=SOURCE_TARGET, source_group_budget=SOURCE_GROUP_BUDGET)
     audit['excluded'] = [dict(id=g.lead.id, title=g.lead.title,
         reason='Discovery group has no approved eligible source.') for g in groups if g.lead.id not in readable_ids]
@@ -478,8 +478,10 @@ def run(kind, slot, publish_mode, asset_root):
                             error=str(exc) if isinstance(exc, NewsError) else type(exc).__name__)
             persist(progress)
             raise
-        candidates = [r for r in ranked if r['trial_score'] >= MINIMUM_SCORE]
-        chosen = candidates[:remaining if publish_mode else 2]
+        # Eligibility is established by source/date/evidence/type/dedup checks.
+        # The score orders that pool; an arbitrary score floor must not suppress
+        # its second-ranked valid story when the requested daily count is two.
+        chosen = ranked[:remaining if publish_mode else 2]
         audit.update(chosen_ids=[r['id'] for r in chosen], status='ranked', slot=slot, preview_urls=[], media_ids=[])
         persist()
         for index, row in enumerate(ranked[:5], 1):
@@ -490,8 +492,11 @@ def run(kind, slot, publish_mode, asset_root):
         if not chosen:
             audit['status'] = 'no_qualifying_story'
             persist()
-            print('No distinct fresh story meets the minimum score; no weaker substitute posted.')
+            print('No unpublished verified fresh hard-news event is available; nothing posted.')
             return
+        requested = remaining if publish_mode else 2
+        if len(chosen) < requested:
+            print(f'Only {len(chosen)} eligible distinct events available for {requested} requested posts.', flush=True)
         output = Path('/var/www/peerexo.com/public/instagram-rates') / ({'crypto': 'news', 'economy': 'economy'}[kind] if publish_mode else 'ranked-news-preview/' + kind)
         public_base = 'https://peerexo.com/instagram-rates/' + ('news' if kind == 'crypto' else 'economy')
         if not publish_mode:
