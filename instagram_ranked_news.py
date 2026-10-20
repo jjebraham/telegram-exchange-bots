@@ -292,7 +292,9 @@ def day_bounds(now):
 def consumed(con, now):
     day, start, end = day_bounds(now)
     # Include uncertain/in-flight stories so an ambiguous response cannot create a third post.
-    return con.execute("SELECT COUNT(*) FROM instagram_news_publications WHERE status!='failed' AND started_at>=? AND started_at<?", (start, end)).fetchone()[0]
+    return con.execute("""SELECT COUNT(*) FROM instagram_news_publications WHERE status!='failed'
+        AND ((started_at>=? AND started_at<?) OR (finished_at>=? AND finished_at<?))""",
+        (start, end, start, end)).fetchone()[0]
 
 
 def init_slots(con):
@@ -331,6 +333,7 @@ def prepare(con, row, kind, output, asset_root):
 
 def run(kind, slot, publish_mode, asset_root):
     now = time.time()
+    print(f'{engine.local_time(now)} Start {kind} slot={slot}, publish={publish_mode}.', flush=True)
     target = 1 if slot == 'first' else 2
     with locks(kind, preview=not publish_mode), database(STATE / (kind + '.sqlite3')) as ranking:
         engine.init_trial(ranking)
@@ -398,6 +401,8 @@ def run(kind, slot, publish_mode, asset_root):
             current_id = None
             try:
                 for row, (saved, paths, caption, manifest) in zip(chosen, prepared):
+                    if day_bounds(time.time())[0] != day:
+                        raise NewsError('Istanbul date changed between posts; rerun selection.')
                     if consumed(production, time.time()) >= target:
                         break
                     if row['article_published_at'] < time.time() - 86400:
@@ -412,7 +417,25 @@ def run(kind, slot, publish_mode, asset_root):
                                 VALUES (?,?,?,?,?,?)''', (current_id, json.dumps(row['event_titles']),
                                 json.dumps(row['event_members']), row['source_text'], row['source_url'], time.time()))
                     story = dict(production.execute('SELECT * FROM instagram_news WHERE id=?', (current_id,)).fetchone())
-                    media_id = publish(production, [story], paths, caption, ig, manifest)
+                    class BeforePublish(NewsError):
+                        pass
+                    class CheckedPublisher:
+                        def __getattr__(self, name):
+                            return getattr(ig, name)
+
+                        def _publish_container(self, container):
+                            current = time.time()
+                            if day_bounds(current)[0] != day or row['article_published_at'] < current - 86400:
+                                raise BeforePublish('Source expired or Istanbul date changed before final publication.')
+                            return ig._publish_container(container)
+                    try:
+                        media_id = publish(production, [story], paths, caption, CheckedPublisher(), manifest)
+                    except BeforePublish:
+                        # The final API request was never made; this is retryable,
+                        # not an ambiguous successful publication.
+                        with production:
+                            production.execute("UPDATE instagram_news_publications SET status='failed' WHERE story_id=?", (current_id,))
+                        raise
                     audit['media_ids'].append(media_id)
                     print(f'Published {kind} news: media id {media_id}', flush=True)
                     persist()
