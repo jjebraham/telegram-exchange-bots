@@ -412,12 +412,16 @@ def grade(con, materials, now, failures=None):
                 rows = ask_json(con, ASSESS_PROMPT, payload_for(pending),
                                 lambda r: validate_assessments(r, pending))['assessments']
                 by_id.update({r['id']: r for r in rows})
-            except ModelResponseError:
+            except ModelResponseError as batch_error:
                 if len(pending) == 1 and failures is None:
                     raise
-                print('Batch response rejected; assessing its articles separately.', flush=True)
+                if len(pending) > 1:
+                    print('Batch response rejected; assessing its articles separately.', flush=True)
                 for material in pending:
                     try:
+                        if len(pending) == 1:
+                            # This was already an individual two-attempt request.
+                            raise batch_error
                         by_id[material['id']] = single(material)
                     except ModelResponseError as exc:
                         if failures is None:
