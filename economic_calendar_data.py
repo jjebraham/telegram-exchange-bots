@@ -384,7 +384,11 @@ def validate(snapshot, *, publishing=False):
         if row['id'] in seen or row['kind'] not in RULES:
             raise CalendarError('Invalid or duplicate calendar event.')
         seen.add(row['id'])
-        if moment.astimezone(TEHRAN).isoformat() != row['tehran'] or not start <= moment < end:
+        source_zone = ZoneInfo(row['source_timezone'])
+        source_wall = moment.replace(tzinfo=None).replace(tzinfo=source_zone)
+        if (source_wall.utcoffset() != moment.utcoffset()
+            or moment.astimezone(timezone.utc).isoformat() != row['utc']
+            or moment.astimezone(TEHRAN).isoformat() != row['tehran'] or not start <= moment < end):
             raise CalendarError('Event timezone/window mismatch.')
         for field in ('source_url', 'time_source_url'):
             validate_url(row[field])
