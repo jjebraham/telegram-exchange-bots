@@ -141,7 +141,9 @@ set +a
         if config_path.read_bytes() != original_config or any(p.exists() != bool(old) or old and p.read_bytes() != old[0] for p, old in before.items()):
             raise RuntimeError('Publisher files changed during preparation; nothing replaced.')
         original = cron()
-        command = f'30 6 * * 6 {launcher} >> {home}/kiani-instagram-calendar-cron.log 2>&1'
+        schedules = ('30,45 6 * * 6', '*/15 7 * * 6', '0,15 8 * * 6')
+        commands = [f'{schedule} {launcher} >> {home}/kiani-instagram-calendar-cron.log 2>&1'
+                    for schedule in schedules]
         kept = []
         for line in original.decode().splitlines():
             stripped = line.strip()
@@ -150,11 +152,11 @@ set +a
             if stripped in {BEGIN, END}:
                 continue
             if str(launcher) in line and not stripped.startswith('#'):
-                if stripped != command:
+                if stripped not in commands:
                     raise RuntimeError('An existing calendar cron command differs; nothing replaced.')
                 continue
             kept.append(line)
-        replacement = ('\n'.join(kept).rstrip() + '\n\n' + BEGIN + '\n' + command + '\n' + END + '\n').encode()
+        replacement = ('\n'.join(kept).rstrip() + '\n\n' + BEGIN + '\n' + '\n'.join(commands) + '\n' + END + '\n').encode()
         backup = Path(tempfile.mkdtemp(prefix='kiani-instagram-calendar-weekly-backup-', dir=home))
         (backup / 'crontab.txt').write_bytes(original)
         (backup / 'paths.json').write_text(json.dumps([str(p) for p in before]))
@@ -189,6 +191,7 @@ set +a
     next_run = start if start > now else start + timedelta(days=7)
     print('Backup:', backup)
     print('Weekly Feed: Saturday 10:00 Asia/Tehran (06:30 UTC).')
+    print('Temporary failures retry every 15 minutes until 11:45 Tehran; at most one successful Feed per week.')
     print('Next scheduled post:', next_run.isoformat())
     print('Story: 30 minutes after successful Feed publication, through the existing worker.')
     print('Event times: Tehran; Persian and Gregorian dates; fresh official calendars each week.')

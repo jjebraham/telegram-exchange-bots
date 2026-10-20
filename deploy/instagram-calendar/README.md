@@ -1,7 +1,11 @@
 # Weekly economic calendar
 
 One scheduled Instagram Feed post every **Saturday at 10:00 Asia/Tehran**.
-The installed host uses UTC; the exact cron entry is Saturday **06:30 UTC**.
+The installed host uses UTC; the first attempt is Saturday **06:30 UTC**.
+Temporary failures retry at 15-minute intervals through 11:45 Tehran. Later
+invocations exit before fetching calendars after the week's successful post;
+uncertain final requests remain blocked for review. This is still one weekly
+Feed publication, with a bounded recovery window rather than catch-up on other days.
 The existing delayed Story worker sends the first slide 30 minutes after actual
 successful Feed publication (normally around 10:30 Tehran).
 
