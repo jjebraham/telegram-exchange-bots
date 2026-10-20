@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta
@@ -26,6 +27,9 @@ VERSION = 'ranked-news-v2'
 MINIMUM_SCORE = 55
 BASE_ASSESS_PROMPT = engine.ASSESS_PROMPT
 BASE_GROUP_PROMPT = engine.GROUP_PROMPT
+BASE_PUBLISHER = engine.publisher
+SOURCE_TARGET = 12
+SOURCE_GROUP_BUDGET = 80
 STATE = Path.home() / '.local/state/kiani-instagram-news-ranking'
 SOURCES = {
     'crypto': Path.home() / '.local/state/kiani-instagram-news/news.sqlite3',
@@ -45,6 +49,18 @@ EXTRA_PUBLISHERS = {
     'aljazeera.com': 'Al Jazeera', 'cnn.com': 'CNN', 'axios.com': 'Axios',
     'marketwatch.com': 'MarketWatch', 'finance.yahoo.com': 'Yahoo Finance',
     'fortune.com': 'Fortune', 'businessinsider.com': 'Business Insider',
+    'euronews.com': 'Euronews', 'channelnewsasia.com': 'CNA',
+    'abcnews.go.com': 'ABC News US', 'abcnews.com': 'ABC News US',
+    'abc.net.au': 'ABC News Australia', 'scmp.com': 'South China Morning Post',
+    'nytimes.com': 'The New York Times', 'marketscreener.com': 'MarketScreener',
+    'tradingview.com': 'TradingView',
+}
+OUTLET_ALIASES = {
+    'yahoo': 'yahoo finance', 'yahoo! finance canada': 'yahoo finance',
+    'wsj': 'wall street journal', 'marketscreener.com': 'marketscreener',
+    'www.marketscreener.com': 'marketscreener', 'euronews.com': 'euronews',
+    'abc news - breaking news, latest news and videos': 'abc news us',
+    'abc news & headlines – australian broadcasting corporation': 'abc news australia',
 }
 RUNTIME_FILES = ('instagram_ranked_news.py', 'crypto_news_trial.py',
     'selector_trial_runtime/economy_news_picker.py',
@@ -57,6 +73,43 @@ def runtime_fingerprint(root=None):
     root = Path(root or Path(__file__).resolve().parent)
     return hashlib.sha256(b'\0'.join(name.encode() + b'\0' + (root / name).read_bytes()
                                     for name in RUNTIME_FILES)).hexdigest()
+
+
+def outlet_key(value):
+    key = source_key(value)
+    return OUTLET_ALIASES.get(key, key)
+
+
+def coverage(group):
+    return {outlet_key(item.source) for item in group.items}
+
+
+def reviewed_publisher(url):
+    host = (urlsplit(url).hostname or '').lower()
+    if host == 'tradingview.com' or host.endswith('.tradingview.com'):
+        # This distributor also hosts community/other-provider material. Only
+        # its identified Reuters news route is included in this source review.
+        if not urlsplit(url).path.startswith('/news/reuters.com,'):
+            return None
+        return 'Reuters via TradingView'
+    return BASE_PUBLISHER(url)
+
+
+def approved_item(item):
+    if engine.publisher(item.link):
+        return True
+    if urlsplit(item.link).hostname != 'news.google.com':
+        return False
+    # A feed label only determines whether to try resolving a Google link.
+    # The resulting hostname/path still has to pass reviewed_publisher().
+    return outlet_key(item.source) in {outlet_key(v) for v in engine.PUBLISHERS.values()}
+
+
+class SourceUnavailable(NewsError):
+    def __init__(self, attempts):
+        self.attempts = attempts
+        reasons = sorted({a['reason'] for a in attempts})
+        super().__init__('No verified fresh source passage: ' + '; '.join(reasons))
 
 
 @contextmanager
@@ -120,7 +173,7 @@ def discovery(con, kind, now):
     groups = []
     seen = set()
     for item in sorted(items, key=lambda r: (-source_weight(r.source), -r.published, r.link)):
-        signature = (source_key(item.source), canonical_url(item.link))
+        signature = (outlet_key(item.source), canonical_url(item.link))
         if signature in seen:
             continue
         seen.add(signature)
@@ -143,7 +196,8 @@ def shortlist(con, groups, kind, limit=40):
     if len(groups) > 400:
         raise NewsError('More than 400 discovery groups; no silently truncated candidate pool selected.')
     payload = [{'id': g.lead.id, 'title': g.lead.title, 'summary': g.lead.summary[:400],
-                'outlets': len(g.sources), 'other_titles': [i.title for i in g.items[:3]]} for g in groups]
+                'outlets': len(coverage(g)), 'other_titles': [i.title for i in g.items[:3]],
+                'approved_source_titles': [i.title for i in g.items if approved_item(i)][:4]} for g in groups]
     expected = {g.lead.id for g in groups}
     def validate(result):
         ids = result.get('ids') if isinstance(result, dict) else None
@@ -162,14 +216,15 @@ This is only a source-reading shortlist; final scoring uses original passages.''
 
 
 def material_for(group, telegram, kind, blocked, now):
-    candidates = [i for i in group.items if kind != 'crypto' or i.link in telegram]
-    errors = []
+    candidates = [i for i in group.items if approved_item(i)
+                  and (kind != 'crypto' or i.link in telegram)]
+    attempts = []
     seen, providers = set(), set()
     ordered = sorted(candidates, key=lambda r: (urlsplit(r.link).hostname == 'news.google.com',
                                                 -source_weight(r.source), -r.published, r.link))
     distinct, extras = [], []
     for item in ordered:
-        provider = source_key(item.source)
+        provider = outlet_key(item.source)
         if provider in providers:
             extras.append(item)
         else:
@@ -181,8 +236,10 @@ def material_for(group, telegram, kind, blocked, now):
         seen.add(item.link)
         if len(seen) > 4:
             break
+        attempt = dict(discovery_url=item.link, outlet=item.source)
         try:
             url = canonical_url(resolve_google(item.link))
+            attempt['resolved_url'] = url
             if url in blocked:
                 raise NewsError('Already published/unresolved source URL in either category.')
             row = dict(telegram.get(item.link, {}), id=group.lead.id,
@@ -193,17 +250,24 @@ def material_for(group, telegram, kind, blocked, now):
             result = engine.source_material(row, now)
             if canonical_url(result['source_url']) in blocked:
                 raise NewsError('Resolved URL was already published or is unresolved.')
-            result['coverage_outlets'] = sorted(group.sources)
+            result['coverage_outlets'] = sorted(coverage(group))
             result['discovery_urls'] = sorted({i.link for i in group.items})
             result['related_titles'] = sorted({i.title for i in group.items})
+            result['source_attempts'] = attempts + [dict(attempt, status='verified')]
             return result
         except Exception as exc:
-            errors.append(str(exc) if isinstance(exc, NewsError) else type(exc).__name__)
-    raise NewsError('No verified fresh source passage: ' + '; '.join(sorted(set(errors))))
+            reason = str(exc) if isinstance(exc, NewsError) else type(exc).__name__
+            if type(getattr(exc, 'code', None)) is int:
+                reason += ' HTTP ' + str(exc.code)
+            attempts.append(dict(attempt, status='excluded', reason=reason))
+    if not attempts:
+        attempts = [dict(status='excluded', reason='No approved eligible source in this discovery group.')]
+    raise SourceUnavailable(attempts)
 
 
 def configure_engine(kind):
     engine.PUBLISHERS.update(EXTRA_PUBLISHERS)
+    engine.publisher = reviewed_publisher
     prompt = BASE_ASSESS_PROMPT
     if kind == 'economy':
         prompt = prompt.replace('crypto news', 'economy news').replace(
@@ -226,24 +290,48 @@ def rank_events(con, kind, now):
     configure_engine(kind)
     blocked, history = histories(now)
     groups, telegram, counts = discovery(con, kind, now)
-    # Preserve the entire discovery pool and the exact shortlist in the audit.
-    selected = shortlist(con, groups, kind)
+    # Avoid spending the article-reading shortlist on sources this reader is
+    # configured to reject. Keep all such groups visible in the private audit.
+    readable = [g for g in groups if any(approved_item(i)
+        and (kind != 'crypto' or i.link in telegram) for i in g.items)]
+    readable_ids = {g.lead.id for g in readable}
+    selected = shortlist(con, readable, kind)
     audit = dict(version=VERSION, kind=kind, selected_at=now, collection=counts,
         popularity_basis='distinct normalized outlet coverage; not measured audience impressions',
-        discovery=[{'id': g.lead.id, 'title': g.lead.title, 'outlets': sorted(g.sources),
-                    'urls': [i.link for i in g.items]} for g in groups],
-        shortlist_ids=[g.lead.id for g in selected], excluded=[], minimum_score=MINIMUM_SCORE)
+        discovery=[{'id': g.lead.id, 'title': g.lead.title, 'outlets': sorted(coverage(g)),
+                    'urls': [i.link for i in g.items], 'has_approved_source': g.lead.id in readable_ids}
+                   for g in groups],
+        shortlist_ids=[], shortlist_passes=[], excluded=[], minimum_score=MINIMUM_SCORE,
+        source_target=SOURCE_TARGET, source_group_budget=SOURCE_GROUP_BUDGET)
+    audit['excluded'] = [dict(id=g.lead.id, title=g.lead.title,
+        reason='Discovery group has no approved eligible source.') for g in groups if g.lead.id not in readable_ids]
     materials = []
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        pending = {pool.submit(material_for, g, telegram, kind, blocked, now): g for g in selected}
-        for index, task in enumerate(as_completed(pending), 1):
-            group = pending[task]
-            try:
-                materials.append(task.result())
-            except Exception as exc:
-                audit['excluded'].append({'id': group.lead.id, 'title': group.lead.title,
-                    'reason': str(exc) if isinstance(exc, NewsError) else type(exc).__name__})
-            print(f'{kind} source checks: {index}/{len(selected)}.', flush=True)
+    while selected:
+        audit['shortlist_ids'].extend(g.lead.id for g in selected)
+        audit['shortlist_passes'].append([g.lead.id for g in selected])
+        print(f'{kind}: approved-source groups {len(readable)}/{len(groups)}; source pass {len(audit["shortlist_passes"])}.', flush=True)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            pending = {pool.submit(material_for, g, telegram, kind, blocked, now): g for g in selected}
+            for index, task in enumerate(as_completed(pending), 1):
+                group = pending[task]
+                try:
+                    materials.append(task.result())
+                except Exception as exc:
+                    audit['excluded'].append({'id': group.lead.id, 'title': group.lead.title,
+                        'reason': str(exc) if isinstance(exc, NewsError) else type(exc).__name__,
+                        'attempts': getattr(exc, 'attempts', [])})
+                print(f'{kind} source checks: {index}/{len(selected)}.', flush=True)
+        tried = set(audit['shortlist_ids'])
+        reserve = [g for g in readable if g.lead.id not in tried]
+        remaining_budget = SOURCE_GROUP_BUDGET - len(tried)
+        if len(materials) >= SOURCE_TARGET or not reserve or remaining_budget <= 0:
+            break
+        print(f'{kind}: only {len(materials)} verified sources; checking the next approved-source shortlist.', flush=True)
+        selected = shortlist(con, reserve, kind, min(40, remaining_budget))
+    audit['verified_source_count'] = len(materials)
+    print(f'{kind}: verified {len(materials)} source articles from {len(audit["shortlist_ids"])} checked groups.', flush=True)
+    failures = Counter(x['reason'] for x in audit['excluded'])
+    print(kind, 'source exclusions:', json.dumps(dict(failures), ensure_ascii=False), flush=True)
     materials.sort(key=lambda r: r['id'])
     assessed = engine.grade(con, materials, now)
     audit['assessments'] = assessed

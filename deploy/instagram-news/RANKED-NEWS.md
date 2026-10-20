@@ -69,13 +69,21 @@ evaluation. No unobserved platform metric is scored as zero.
   have a timezone-aware original publication timestamp within24h. Source pages,
   original-date metadata and passages are checked; dateModified, date-only and
   Telegram timestamps cannot refresh an old article.
-- Lexical discovery groups reduce duplicates. If there are more than40 groups,
-  a documented headline/feed-summary shortlist reads all groups (maximum400)
-  before choosing40 for full source retrieval. The audit preserves the complete
-  discovered pool and shortlist. This is not a claim to assess every global story.
+- Lexical discovery groups reduce duplicates. Groups without an eligible source
+  from the configured publisher list are recorded and excluded before the source
+  shortlist, rather than occupying slots the reader will always reject. The
+  source-reading shortlist considers all remaining groups (maximum400) and
+  chooses up to40. If fewer than12 original articles can be verified, a second
+  pass selects from the remaining groups, within an80-group total reading budget.
+  This reserve improves source access; it changes neither the score threshold nor
+  the24-hour rule. Twelve is a retrieval target, not a publication requirement.
+  The audit preserves all discovered groups, exclusions and both shortlists.
+  This is not a claim to assess every global story.
 - Up to four source reports per discovery group are tried. Unavailable/unapproved,
   undated or stale articles are excluded. Only the selected source passage is
   assessed for final impact; access failures do not justify inventing facts.
+  Known approved sources are tried before unsupported outlets. Attempts record
+  resolved URLs, publisher names and HTTP status codes in the private audit.
 - A semantic event pass merges wording variants and compares both categories'
   last14days of published events plus all unresolved attempts (maximum160).
   Previously published URLs are excluded across all retained history. A material
@@ -89,6 +97,27 @@ evaluation. No unobserved platform metric is scored as zero.
 Model inputs are untrusted data, not instructions. Quote validation establishes
 presence in the supplied passage, not truth or correct interpretation. Full
 passages are bounded to6500characters. Semantic judgments require preview review.
+
+### Economy source coverage
+
+The reader includes Euronews, CNA, ABC News (US/Australia), South China Morning
+Post, The New York Times and MarketScreener alongside its existing publishers.
+TradingView is accepted only for its identified Reuters news URL route, not
+community posts or every provider on that platform. Publisher-label aliases such
+as Yahoo/Yahoo Finance, WSJ/Wall Street Journal and MarketScreener spelling
+variants share one coverage identity. A Google feed label can make a link worth
+trying; the resolved publisher hostname/path still must be approved.
+
+Publisher identity references: [Euronews](https://www.euronews.com/about),
+[CNA](https://www.channelnewsasia.com/about-us),
+[ABC News US](https://abcnews.com/Contact),
+[ABC Australia](https://www.abc.net.au/news/about-abc-news),
+[SCMP](https://corp.scmp.com/about-us/),
+[TradingView Reuters provider](https://www.tradingview.com/news/top-providers/reuters/),
+[MarketScreener Reuters report](https://www.marketscreener.com/news/back-to-business-ce7e50dcda8ef422).
+These identify sources and distribution routes; membership alone is not a truth
+guarantee. Only accessible original passages with a valid original date qualify.
+No paywall, subscription or blocked-source access is bypassed.
 
 ## Preview, storage and publication safety
 
