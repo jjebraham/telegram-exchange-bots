@@ -127,6 +127,9 @@ creates a versioned runtime and backs up existing wrappers plus the full crontab
 
 Only the two news launchers and their recognized cron entries are changed.
 Economy collection is preserved; all unrelated jobs and Story state are retained.
+Collection uses a separate lock, so its hourly21:30run cannot make the crypto
+21:30publication skip due to a shared selection lock.
+Manual previews also use their own locks instead of blocking scheduled publishing.
 It adds the20:00economy and21:30crypto slots and preserves13:00/18:00. Conflicting
 unrecognized commands/timezones or busy publishers stop activation. Activation
 publishes nothing immediately. A failed installation restores wrappers and,

@@ -60,10 +60,13 @@ def runtime_fingerprint(root=None):
 
 
 @contextmanager
-def locks(kind, *, preview=False):
+def locks(kind, *, preview=False, collection_only=False):
     import fcntl
-    paths = [STATE / 'selection.lock']
-    if not preview:
+    # The hourly economy collector also runs at 21:30. It must not contend
+    # with the second crypto publication's cross-category selection lock.
+    primary = kind + '.collection.lock' if collection_only else kind + '.preview.lock' if preview else 'selection.lock'
+    paths = [STATE / primary]
+    if not preview and not collection_only:
         # Match BOTH legacy publishers' lock conventions during handover.
         paths += [Path(str(SOURCES[kind]) + '.lock')]
         if kind == 'crypto':
@@ -469,7 +472,7 @@ def main():
     os.umask(0o077)
     for kind in ('economy', 'crypto') if args.kind == 'both' else (args.kind,):
         if args.collect_only:
-            with locks(kind, preview=True), database(STATE / (kind + '.sqlite3')) as con:
+            with locks(kind, collection_only=True), database(STATE / (kind + '.sqlite3')) as con:
                 print(json.dumps(collect(con, feeds=CRYPTO_FEEDS if kind == 'crypto' else FEEDS)))
         else:
             run(kind, args.slot, args.publish, args.publisher_root)
