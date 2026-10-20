@@ -155,6 +155,25 @@ batches does not require reassessing a valid cached record. Private source/audit
 data is written before assessment, so a later model failure retains diagnostics.
 Neither this recovery nor its logging relaxes freshness, evidence or score rules.
 
+### Event-grouping recovery
+
+Candidate and published database IDs are mapped to disjoint short C/P aliases for
+the model, then mapped back only after validating membership and full coverage.
+Published IDs cannot be inserted into candidate groups, and no candidate can be
+omitted or appear twice. A failed global grouping request is retried once with a
+specific validation reason. If it still fails, a bounded fallback compares each
+candidate with ALL supplied published/unresolved reports and the candidate groups
+already formed. This fallback returns at most one existing group and one published
+reference; a historical match propagates to every report in the matched group.
+Local code assigns each candidate exactly once. Each comparison has
+the same two-attempt validation bound. A failed comparison stops selection rather
+than assuming the story is new or bypassing historical duplicate checks.
+
+Private grouping diagnostics retain aliases, the chosen recovery method and each
+fallback comparison. The final groups are validated again using original database
+IDs. Model interpretation of whether events match remains an editorial judgment;
+the recovery prevents ID/format mistakes from silently changing group membership.
+
 Publishing preserves the existing crypto/economy publication databases and schema,
 so their prior posts and the Story worker remain visible. A durable per-day slot
 ledger plus legacy locks and daily caps prevent repeated slot runs and third

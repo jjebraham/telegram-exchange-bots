@@ -348,8 +348,17 @@ def rank_events(con, kind, now, checkpoint=None):
     eligible = [r for r in assessed if r['assessment']['story_type'] == 'hard_news'
                 and r['assessment']['certainty'] != 'unknown'
                 and r['assessment']['relevance']['points'] > 0]
-    event_groups = engine.event_groups(con, eligible, history)
+    audit.update(status='grouping', grouping_diagnostics={})
+    if checkpoint:
+        checkpoint(audit)
+    try:
+        event_groups = engine.event_groups(con, eligible, history, diagnostics=audit['grouping_diagnostics'])
+    finally:
+        if checkpoint:
+            checkpoint(audit)
     audit['event_groups'] = event_groups
+    if checkpoint:
+        checkpoint(audit)
     indexed = {r['id']: r for r in eligible}
     result = []
     for group in event_groups:
