@@ -1,4 +1,4 @@
-"""Owner-authorized 12-hour/400-view policy, restricted to new automated news.
+"""Owner-authorized two-hour/100-view policy, restricted to new automated news.
 
 Deletion is disabled until activation verifies real insights access and the
 current token's management permission. No replacement publishing exists here.
@@ -16,11 +16,19 @@ from instagram_insights_data import (GraphError, InsightsError, METRICS, count, 
     moment, read_db, set_setting, setting)
 
 NEWS = {'crypto', 'economy'}
-AGE, GRACE, MINIMUM = 12 * 3600, 30 * 60, 400
+AGE, GRACE, MINIMUM = 2 * 3600, 30 * 60, 100
 NEWS_SOURCES = {
     'crypto': Path.home() / '.local/state/kiani-instagram-news/news.sqlite3',
     'economy': Path.home() / '.local/state/kiani-instagram-economy/economy.sqlite3',
 }
+
+
+def policy_matches(con):
+    policy = setting(con, 'retention_policy', {})
+    return (isinstance(policy, dict) and policy.get('version') == 3 and
+        policy.get('assessment_hours') == AGE // 3600 and
+        policy.get('keep_at_or_above_views') == MINIMUM and
+        policy.get('assessment_grace_minutes') == GRACE // 60)
 
 
 def permission_proof(con, graph):
@@ -62,14 +70,15 @@ def note(con, media_id, status, *, views=None, sample_id=None, error=None, evide
             finished_at=excluded.finished_at,error_type=excluded.error_type,evidence_json=excluded.evidence_json''',
             (media_id, status, time.time(), views, sample_id,
              time.time() if status in {'kept', 'deleted', 'held', 'needs_review', 'missed'} else None,
-             error, json.dumps(evidence or {})))
+             error, json.dumps(dict(evidence or {}, policy_version=3, assessment_hours=AGE // 3600,
+                 keep_at_or_above_views=MINIMUM))))
 
 
 def delete_news(con, graph, config, post, registry, fresh_views, first_sample_id):
     """The only DELETE path; every restriction is checked again at the boundary."""
     source_confirms(config, post, registry)
     permission_proof(con, graph)
-    if not setting(con, 'retention_enabled', False) or setting(con, 'retention_paused'):
+    if not setting(con, 'retention_enabled', False) or setting(con, 'retention_paused') or not policy_matches(con):
         raise InsightsError('News deletion is not active.')
     cutoff = setting(con, 'retention_enrolled_after')
     if (not isinstance(cutoff, (int, float)) or post['published_at'] < cutoff or
@@ -77,7 +86,7 @@ def delete_news(con, graph, config, post, registry, fresh_views, first_sample_id
         not post['published_at'] + AGE <= time.time() < post['published_at'] + AGE + GRACE):
         raise InsightsError('News post is outside the authorized deletion conditions.')
     if count(fresh_views) is None or fresh_views >= MINIMUM:
-        raise InsightsError('A fresh, explicit view count below 400 is required.')
+        raise InsightsError('A fresh, explicit view count below 100 is required.')
     first = con.execute('SELECT * FROM samples WHERE id=? AND media_id=?', (first_sample_id, post['media_id'])).fetchone()
     if not first:
         raise InsightsError('The earlier low-view observation is missing.')
@@ -106,7 +115,7 @@ def delete_news(con, graph, config, post, registry, fresh_views, first_sample_id
         raise InsightsError('Final deletion window or request budget expired; keep the post.')
     identifier(post['media_id'])
     evidence = dict(kind=post['kind'], owner=graph.account_id, views=views,
-        checked_at=final['observed_at'], rule='news only; below 400 at 12 hours',
+        checked_at=final['observed_at'], rule='news only; below 100 at two hours',
         api_version=graph.version, replacements=False)
     evidence['first_sample_id'] = first_sample_id
     # Commit before the irreversible request. A crash/timeout can never cause a
@@ -146,6 +155,8 @@ def process(con, graph, config, registry, owned):
     if setting(con, 'retention_paused'):
         print('News deletion paused for review; analytics collection continues.', flush=True)
         return
+    if not policy_matches(con):
+        raise InsightsError('Two-hour retention policy has not been activated; no deletion allowed.')
     try:
         permission_proof(con, graph)
     except InsightsError:
@@ -185,7 +196,7 @@ def process(con, graph, config, registry, owned):
                     VALUES (?,?,?,?,?,?)''', (post['media_id'], sample['started_at'], sample['observed_at'], graph.version, json.dumps(sample['metrics']), int(sample['complete'])))
                 sample_id = cur.lastrowid
                 if post['published_at'] + AGE <= sample['started_at'] <= sample['observed_at'] < post['published_at'] + AGE + GRACE:
-                    con.execute("UPDATE checkpoints SET status='collected',sample_id=?,attempts=attempts+1,error_type=NULL WHERE media_id=? AND hours=12 AND status!='collected'", (sample_id, post['media_id']))
+                    con.execute("UPDATE checkpoints SET status='collected',sample_id=?,attempts=attempts+1,error_type=NULL WHERE media_id=? AND hours=? AND status!='collected'", (sample_id, post['media_id'], AGE // 3600))
             if views['value'] >= MINIMUM:
                 note(con, post['media_id'], 'kept', views=views['value'], sample_id=sample_id)
             else:

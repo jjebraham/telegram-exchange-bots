@@ -23,13 +23,14 @@ from zoneinfo import ZoneInfo
 from instagram_insights_data import (Graph, GraphError, InsightsError, KINDS, METRICS,
     RUNTIME, STATE, STORY_CONFIG, bind_account, count, database, fingerprint, identifier, inventory,
     register, set_setting, setting, story_config)
+from instagram_news_retention import AGE, MINIMUM, policy_matches
 
 TEHRAN = ZoneInfo('Asia/Tehran')
 CHECKPOINTS = (2, 12, 24, 48, 72)
 LABELS = dict(rates='Exchange rates', economy='Economy news', crypto='Crypto news',
     top50='Top 50 crypto', iran_gold='Iran gold', calendar='Economic calendar', crypto_calendar='Crypto calendar')
-POLICY = dict(version=2, news_categories=['crypto', 'economy'], assessment_hours=12,
-    keep_at_or_above_views=400, assessment_grace_minutes=30, delete_replacements=False,
+POLICY = dict(version=3, news_categories=['crypto', 'economy'], assessment_hours=2,
+    keep_at_or_above_views=100, assessment_grace_minutes=30, delete_replacements=False,
     rate_deletion=False, historical_deletion=False, automatic_ranking_changes=False)
 
 
@@ -217,29 +218,29 @@ def baseline_review(con, post, now):
 
 def decide(con, post, now):
     """The owner's current rule supersedes the earlier advisory 72-hour proposal."""
-    detail = dict(policy=POLICY, automatic_deletion_enabled=bool(setting(con, 'retention_enabled', False)))
+    detail = dict(policy=POLICY, automatic_deletion_enabled=bool(setting(con, 'retention_enabled', False) and policy_matches(con)))
     if post['kind'] not in {'crypto', 'economy'}:
         return 'protected_non_news', dict(detail, reason='Only crypto/economy news is eligible. Rate, gold, top 50 and calendar posts are protected.')
     if post['manual_keep'] or post['exposure'] != 'organic':
         return 'protected', dict(detail, reason='Manually protected, promoted or unclassified post.')
     job = con.execute('SELECT * FROM retention_jobs WHERE media_id=?', (post['media_id'],)).fetchone()
     if job:
-        return 'news_' + job['status'], dict(detail, reason='Recorded 12-hour news policy result.', retention=dict(job))
+        return 'news_' + job['status'], dict(detail, reason='Recorded news policy result; earlier results may use the previous policy.', retention=dict(job))
     cutoff = setting(con, 'retention_enrolled_after')
     if cutoff is not None and post['published_at'] < cutoff:
         return 'historical_measurement_only', dict(detail, reason='Published before news retention activation; no retroactive deletion.')
-    if now < post['published_at'] + 12 * 3600:
-        return 'waiting_12h', dict(detail, reason='Waiting for the 12-hour news assessment.')
+    if now < post['published_at'] + AGE:
+        return 'waiting_2h', dict(detail, reason='Waiting for the two-hour news assessment.')
     checkpoint = con.execute('''SELECT s.* FROM checkpoints c JOIN samples s ON s.id=c.sample_id
-        WHERE c.media_id=? AND c.hours=12 AND c.status='collected' ''', (post['media_id'],)).fetchone()
+        WHERE c.media_id=? AND c.hours=2 AND c.status='collected' ''', (post['media_id'],)).fetchone()
     if not checkpoint:
-        return 'insufficient_data', dict(detail, reason='A valid 12-hour views observation is unavailable; keep the post.')
+        return 'insufficient_data', dict(detail, reason='A valid two-hour views observation is unavailable; keep the post.')
     views = numbers(checkpoint)['views']
     if views is None:
         return 'insufficient_data', dict(detail, reason='Views are missing, not zero; keep the post.')
-    if views >= 400:
-        return 'news_keep', dict(detail, reason='At least 400 views at the 12-hour check.', views=views)
-    return 'below_400_at_12h', dict(detail, reason='Below the owner-selected threshold. Deletion still requires activation, fresh rechecks and verified permissions.', views=views)
+    if views >= MINIMUM:
+        return 'news_keep', dict(detail, reason='At least 100 views at the two-hour check.', views=views)
+    return 'below_100_at_2h', dict(detail, reason='Below the owner-selected threshold. Deletion still requires activation, fresh rechecks and verified permissions.', views=views)
 
 
 def report(con, state):
@@ -319,7 +320,7 @@ select{padding:10px;border:1px solid #bed6c9;border-radius:8px;margin-bottom:18p
 <h1>Kiani · Instagram performance</h1><p>Private analytics report. Updated: UPDATE · Tehran.</p><p>News retention: <strong>RETENTION_STATE</strong></p>
 <p>Views, reach and engagement are cumulative observations at the displayed age. Compare posts using the same age checkpoint and category.
 An em dash means unavailable—not zero. Paid/unknown exposure is excluded from organic comparisons.</p>
-<p><strong>News policy: keep at least 400 views; below 400 at the 12-hour assessment is eligible for deletion only when the policy is activated.</strong>
+<p><strong>News policy: keep at least 100 views; below 100 at the two-hour assessment is eligible for deletion only when the policy is activated.</strong>
 Rate, gold, top 50 and calendar posts are protected. Missing views mean keep. No automatic replacement posts are created.
 Additional 72-hour comparisons are advisory analytics; they do not override the owner's news threshold.</p>
 <select id="kind" aria-label="Filter category"><option value="">All categories</option>OPTIONS</select>
@@ -327,7 +328,9 @@ Additional 72-hour comparisons are advisory analytics; they do not override the 
 <p class="muted">Existing posts discovered too late cannot supply historical 2/24/48/72-hour readings. Those checkpoints stay missed.
 The report does not imply low performance when the API returns no usable data.</p>
 <script>document.getElementById('kind').addEventListener('change',function(){document.querySelectorAll('tbody tr').forEach(r=>r.hidden=!!this.value&&r.dataset.kind!==this.value)})</script></html>'''
-    state_label = 'Paused for review' if setting(con, 'retention_paused') else 'Active for new news only' if setting(con, 'retention_enabled', False) else 'Disabled'
+    state_label = ('Paused for review' if setting(con, 'retention_paused') else
+                   'Active for new news only' if setting(con, 'retention_enabled', False) and policy_matches(con) else
+                   'Pending policy migration' if setting(con, 'retention_enabled', False) else 'Disabled')
     page = page.replace('RETENTION_STATE', state_label).replace('UPDATE', datetime.fromtimestamp(now, TEHRAN).strftime('%d %b %Y %H:%M')).replace('OPTIONS', options).replace('HEADERS', ''.join('<th>' + html.escape(x) + '</th>' for x in headers)).replace('ROWS', ''.join(rows))
     atomic(reports / 'latest.html', page.encode())
     totals = {status: sum(x['review_status'] == status for x in output) for status in sorted({x['review_status'] for x in output})}

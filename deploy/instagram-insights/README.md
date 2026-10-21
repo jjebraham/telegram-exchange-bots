@@ -1,12 +1,16 @@
-# Instagram insights, news batches and the 12-hour retention rule
+# Hourly Instagram news and the two-hour retention rule
 
 ## Owner's requested policy
 
 - All current automated posts are organic (confirmed by the account owner).
-- Publish up to **10 different qualifying news stories in each existing slot**:
-  economy 13:00/20:00, crypto 18:00/21:30, Europe/Istanbul.
-- At the **12-hour assessment**, keep news with **400 Views or more** and remove
-  news below 400. Views, not unique Viewers, is the requested measure.
+- Publish **one** qualifying crypto story hourly at **10:00 through 19:00**, and
+  **one** economy story at **10:30 through 19:30**, Europe/Istanbul.
+- Maximum **10 per category per Istanbul day**, not ten per slot. Each slot
+  reranks the rolling last 24 hours and selects the best remaining distinct
+  unpublished main story. Deleted, unresolved and in-flight publications still
+  count toward the daily cap. There are no missed-slot catch-up batches.
+- At the **two-hour assessment**, keep news with **100 Views or more**; below
+  100 may be removed after verification. Views, not unique Viewers, is the measure.
 - Only crypto/economy **Feed news** is eligible. Exchange rates, Iran gold,
   top 50 prices, calendars and all Stories are excluded from deletion.
 - **No replacement post is triggered by deletion.** All publishing uses the
@@ -16,7 +20,11 @@ The rule is an owner-selected experiment. Low exposure is not proof of dislike;
 this code does not claim that deleting weak posts increases subsequent reach or
 followers. Profile visits, follows and other engagement are recorded separately.
 The original 72-hour relative-baseline proposal is retained only as supplementary
-analysis; it does not override the owner's explicit 12-hour/400-view policy.
+analysis; it does not override the owner's explicit two-hour/100-view policy.
+This is a conservative starting threshold selected by the owner, not a validated
+predictor of eventual reach. A fresh API response does not guarantee that all
+platform activity has already appeared in the metric. Missing or inconsistent
+statistics keep the post, and two separate low readings are required.
 
 ## Read-only access probe first
 
@@ -83,21 +91,22 @@ Primary Meta sources:
 
 ## Publishing capacity and story reservations
 
-Ten stories in four slots could produce 40 news Feed posts and 40 delayed Stories
-per rolling day, plus other posts. Do not hardcode Meta's account quota as 100.
+Ten stories per category could produce 20 news Feed posts and 20 delayed Stories
+per day, plus other posts. Do not hardcode Meta's account quota as 100.
 
 `instagram_news_batch.py` reads `content_publishing_limit` including
 `config.quota_total`, `quota_duration` and `quota_usage` from the actual account.
 It conservatively reserves 12 units for non-news Feed/Story pairs and budgets two
-units for each new news Feed plus its delayed Story. A fair per-slot cap is
-`min(10, floor((quota_total - 12) / 8))`: a reported quota of 50 permits at most
-four per slot; 100 permits up to ten. This is a conservative planning rule.
+units for each new news Feed plus its delayed Story. A fair per-category daily
+cap is `min(10, floor((quota_total - 12) / 4))`: a reported quota of 50 permits
+at most nine per category/day; 100 permits up to ten. Each invocation can publish
+only one. This is a conservative planning rule.
 
 Before **each final Feed publish**, the worker rechecks remaining quota and
 pending/newly published Feed Story reservations. Insufficient quota or an
 unreadable reservation source defers extra news. Deleting an old post is never
 assumed to refund quota. The existing Story worker is unchanged and continues its
-own quota checks. Exact capacity may be lower than the initial slot cap.
+own quota checks. Exact capacity may be lower than the initial daily cap.
 
 All existing fresh original-source/date/evidence/translation requirements remain
 mandatory. Scores still rank importance; ten is a maximum, not a requirement to
@@ -116,29 +125,30 @@ API version, metric availability, checkpoints, retention jobs and run health.
 
 | Checkpoint | Observation window after actual publication |
 |---|---|
-| 2 hours | 2:00 to before 2:30 |
-| 12 hours (news only) | 12:00 to before 12:30 |
+| 2 hours (news retention) | 2:00 to before 2:30 |
+| 12 hours (news analytics only) | 12:00 to before 12:30 |
 | 24 hours | 24:00 to before 25:00 |
 | 48 hours | 48:00 to before 49:00 |
 | 72 hours | 72:00 to before 73:00 |
 
 Queries must start/end inside their window. Counts are queried sequentially, not
 as one atomic transaction. Existing posts receive honest current observations;
-their historical 12-hour counts cannot be reconstructed. Missing checkpoints
+their historical two-hour counts cannot be reconstructed. Missing checkpoints
 remain missed. Unavailable counts are never classified as poor performance.
 
-Retention begins with posts published **after retention activation**, never a
-retroactive cleanup. All of these must pass before DELETE:
+The policy upgrade resets eligibility to posts published **after this policy's
+activation**, never a retroactive cleanup. Old observations and decisions remain
+in the analytics database. All of these must pass before DELETE:
 
 1. The post is classified crypto/economy, confirmed by the canonical original
    news publication database, and present in the account's current media listing.
 2. The owner has declared organic exposure, the post is not manually protected,
-   and the 12-hour assessment window is still open.
+   and the two-hour assessment window is still open.
 3. Current token fingerprint/scopes/expiry match the verified permission proof.
-4. Fresh views/reach are valid and consistent; views are below 400 in two
+4. Fresh views/reach are valid and consistent; views are below 100 in two
    observations at least 10 minutes apart within the assessment window.
 5. An immediate metadata read confirms the exact media ID, account owner, Feed
-   type and publication timestamp. A **second fresh Views read** remains below400.
+   type and publication timestamp. A **second fresh Views read** remains below100.
 6. The final request state is committed before sending DELETE. Only an explicit
    `success:true` response marks deletion complete.
 
@@ -163,9 +173,22 @@ declaration. It creates immutable releases, backs up changed launchers/config,
 analytics settings and crontab, checks concurrent edits and uses guarded rollback.
 No immediate post is published or deleted during installation.
 
-The collector runs every15minutes at minutes07/22/37/52. Existing four news slot
-times and all rate/calendar/Story schedules stay in place. New batch launchers
-use the new immutable news runtime; old release files remain recoverable.
+The collector runs every15minutes at minutes07/22/37/52. Low posts therefore
+usually receive a second check about 15 minutes after their initial two-hour
+observation; all evidence must be collected before age2:30. A missed assessment
+keeps the post. This replaces the previous12-hour deletion rule entirely.
+
+The installer validates the confirmed PR66 source hashes, launchers and exact
+four news cron entries, replaces them with two hourly entries, and moves hourly
+economy discovery from minute30 to minute15 to avoid the economy Feed start.
+UTC cron expressions are crypto `0 7-16 * * *` and economy `30 7-16 * * *`.
+Actual server UTC timezone and Istanbul UTC+3 offset are verified. Each Feed
+must finish its selection/publish within25minutes of its scheduled start;
+outside that window it is skipped. Original publications still count toward the
+new cap on transition day, so that day may have fewer than ten new hourly posts.
+All unrelated Feed/Story jobs, original publication databases and deduplication
+history are preserved. Existing post decisions are never retroactively rewritten.
+New launchers use immutable releases; old releases remain recoverable.
 
 Private database: `~/.local/state/kiani-instagram-insights/insights.sqlite3`.
 Log: `~/kiani-instagram-insights-cron.log`.

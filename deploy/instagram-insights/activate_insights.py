@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 from contextlib import ExitStack
+from datetime import datetime
 import fcntl
 import hashlib
 import importlib.util
@@ -17,10 +18,13 @@ import subprocess
 import sys
 import tempfile
 import time
+from zoneinfo import ZoneInfo
 
 BEGIN, END = '# BEGIN Kiani Instagram insights', '# END Kiani Instagram insights'
-OLD_REVISION = 'ea6d9e4646e4dfc6e60e06b9bdad960c76befa6a'
-OLD_HASH = '598218d915c66f759b62f88b8310db1e83ebaf7afdc0048f61c226d1d73032c0'
+OLD_REVISION = '8f270cff3f40d56ea85b68e4c3b69497cf641dd3'
+OLD_HASH = '9f856ef182cb265290714595c1c0153a7233caa43e05a7f68f282cb6a0165cb3'
+OLD_ANALYTICS_HASH = 'c5314a04ef818856ed85144301357305cf527e206185dfd08afbeda76d5f1c37'
+NEWS_BEGIN, NEWS_END = '# BEGIN Kiani hourly news v1', '# END Kiani hourly news v1'
 
 
 def cron():
@@ -36,6 +40,78 @@ def release(app, source, target, names):
             app.atomic(path, content)
 
 
+def hourly_wrappers(home, runtime):
+    python = shlex.quote(str(home / 'kiani-instagram-venv/bin/python'))
+    script = shlex.quote(str(runtime / 'instagram_ranked_news.py'))
+    header = '''#!/bin/bash
+set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin
+export TZ=Europe/Istanbul
+export PYTHONIOENCODING=utf-8
+umask 077
+action="${1:-publish}"
+case "$action" in
+'''
+    outputs = {}
+    for kind, filename in (('crypto', 'publish-kiani-instagram-news.sh'), ('economy', 'publish-kiani-instagram-economy.sh')):
+        text = header
+        if kind == 'economy':
+            text += f'  collect) exec {python} -u {script} --kind economy --collect-only ;;\n'
+        text += '''  publish) slot="hour-$(date +%H)" ;;
+  *) echo "Usage: publish''' + ('|collect' if kind == 'economy' else '') + '''" >&2; exit 2 ;;
+esac
+set -a
+. "$HOME/.kiani-instagram.env"
+set +a
+'''
+        text += f'exec {python} -u {script} --kind {kind} --slot "$slot" --publish\n'
+        outputs[home / filename] = text.encode()
+    return outputs
+
+
+def hourly_cron(original, home):
+    """Replace exactly the deployed four news jobs, preserving unrelated jobs."""
+    paths = {str(home / 'publish-kiani-instagram-news.sh'): 'crypto',
+             str(home / 'publish-kiani-instagram-economy.sh'): 'economy'}
+    expected = {('crypto', 'first'): '0 15 * * *', ('crypto', 'second'): '30 18 * * *',
+                ('economy', 'first'): '0 10 * * *', ('economy', 'second'): '0 17 * * *',
+                ('economy', 'collect'): '30 * * * *'}
+    upgraded = {('crypto', 'publish'): '0 7-16 * * *', ('economy', 'publish'): '30 7-16 * * *',
+                ('economy', 'collect'): '15 * * * *'}
+    seen, kept = {}, []
+    for line in original.decode().splitlines():
+        stripped = line.strip()
+        if stripped in {NEWS_BEGIN, NEWS_END, '# BEGIN Kiani ranked news v2', '# END Kiani ranked news v2'}:
+            continue
+        if stripped.startswith('CRON_TZ=') and stripped.split('=', 1)[1].strip('"\'') not in {'UTC', 'Etc/UTC'}:
+            raise RuntimeError('A non-UTC CRON_TZ requires review before hourly scheduling.')
+        if not stripped or stripped.startswith('#') or not any(path in line for path in paths):
+            kept.append(line)
+            continue
+        fields = stripped.split(None, 5)
+        if len(fields) != 6:
+            raise RuntimeError('Unexpected existing news cron format.')
+        command = shlex.split(fields[5])
+        if len(command) < 4 or command[0] not in paths:
+            raise RuntimeError('Indirect or incomplete news command needs review.')
+        kind = paths[command[0]]
+        explicit = command[1] not in {'>>', '>'}
+        action = command[1] if explicit else 'first'
+        key = (kind, action)
+        log = home / ('kiani-instagram-news-cron.log' if kind == 'crypto' else 'kiani-instagram-economy-cron.log')
+        if command[2 if explicit else 1:] != ['>>', str(log), '2>&1'] or key in seen:
+            raise RuntimeError('A news cron command changed or is duplicated; nothing replaced.')
+        seen[key] = ' '.join(fields[:5])
+    if seen not in (expected, upgraded):
+        raise RuntimeError('Existing news schedules differ from the reviewed four-slot or hourly setup.')
+    crypto, economy = home / 'publish-kiani-instagram-news.sh', home / 'publish-kiani-instagram-economy.sh'
+    block = [NEWS_BEGIN,
+        f'15 * * * * {economy} collect >> {home}/kiani-instagram-economy-cron.log 2>&1',
+        f'0 7-16 * * * {crypto} publish >> {home}/kiani-instagram-news-cron.log 2>&1',
+        f'30 7-16 * * * {economy} publish >> {home}/kiani-instagram-economy-cron.log 2>&1', NEWS_END]
+    return ('\n'.join(kept).rstrip() + '\n\n' + '\n'.join(block) + '\n').encode()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
@@ -43,6 +119,8 @@ def main():
     parser.add_argument('--news-batch', action='store_true')
     parser.add_argument('--news-retention', action='store_true')
     args = parser.parse_args()
+    if not (args.news_batch and args.news_retention):
+        parser.error('This correction requires --news-batch and --news-retention together to avoid mixing schedules and policy versions.')
     if not hasattr(os, 'geteuid') or os.geteuid() == 0 or not re.fullmatch(r'[0-9a-f]{40}', args.revision):
         parser.error('Run as the publisher user without sudo, using the reviewed revision.')
     home, root = Path.home(), args.runtime.resolve()
@@ -55,6 +133,9 @@ def main():
             ast.parse((root / name).read_text(encoding='utf-8'), filename=name)
     if subprocess.run(['systemctl', 'is-active', '--quiet', 'cron'], timeout=15).returncode:
         raise RuntimeError('The existing cron service is not active.')
+    zone = subprocess.check_output(['timedatectl', 'show', '--property=Timezone', '--value'], text=True, timeout=15).strip()
+    if zone not in {'UTC', 'Etc/UTC'} or datetime.now(ZoneInfo('Europe/Istanbul')).utcoffset().total_seconds() != 10800:
+        raise RuntimeError('Server timezone differs from the reviewed UTC/Istanbul schedule.')
     graph = data.Graph()  # Configuration validation; no network request.
     launcher, config_path = home / 'collect-kiani-instagram-insights.sh', data.STATE / 'activation.json'
     config_hash = hashlib.sha256(data.private_file(data.STORY_CONFIG).read_bytes()).hexdigest()
@@ -104,8 +185,17 @@ case "$action" in
 esac
 ''' + 'exec ' + shlex.quote(str(python)) + ' -u ' + shlex.quote(str(app_root / 'instagram_post_insights.py')) + ' "--$action" "$@"\n'
             prior = json.loads(config_path.read_text()) if config_path.is_file() else {}
+            if prior.get('revision') not in {OLD_REVISION, args.revision} or not prior.get('news_batch_enabled') or not prior.get('news_retention_enabled'):
+                raise RuntimeError('Expected the confirmed PR66 installation; review the installed configuration first.')
+            old_analytics = home / 'kiani-instagram-insights-releases' / OLD_REVISION
+            if data.fingerprint(old_analytics) != OLD_ANALYTICS_HASH:
+                raise RuntimeError('Installed analytics source differs from the reviewed PR66 release.')
+            old_wrapper = wrapper.replace(str(app_root / 'instagram_post_insights.py'), str(old_analytics / 'instagram_post_insights.py')).encode()
+            if data.private_file(launcher).read_bytes() not in {old_wrapper, wrapper.encode()}:
+                raise RuntimeError('Installed analytics launcher differs from the reviewed release.')
             metadata = dict(revision=args.revision, activated_at=time.time(), runtime_hash=data.fingerprint(root),
                 account_id=graph.account_id, api_version=graph.version, probe=probe, policy=app.POLICY,
+                news_schedule=dict(timezone='Europe/Istanbul', crypto='10:00-19:00 hourly', economy='10:30-19:30 hourly', per_slot=1, per_category_day=10),
                 news_batch_enabled=args.news_batch or prior.get('news_batch_enabled', False),
                 news_retention_enabled=args.news_retention or data.setting(con, 'retention_enabled', False))
             changed = {launcher: (wrapper.encode(), 0o700), config_path: (json.dumps(metadata, indent=2).encode(), 0o600)}
@@ -121,7 +211,7 @@ esac
                 spec.loader.exec_module(previous)
                 news_root = home / 'kiani-instagram-ranked-news-releases' / args.revision
                 release(app, root, news_root, data.NEWS_RUNTIME)
-                expected, proposed = previous.wrappers(home, old_root), previous.wrappers(home, news_root)
+                expected, proposed = previous.wrappers(home, old_root), hourly_wrappers(home, news_root)
                 for path, content in proposed.items():
                     if data.private_file(path).read_bytes() not in {expected[path], content}:
                         raise RuntimeError('A news launcher differs from the reviewed setup; nothing replaced.')
@@ -133,10 +223,13 @@ esac
                 before[path] = (path.read_bytes(), path.stat().st_mode & 0o777) if path.exists() else None
             keys = ('retention_enabled', 'retention_enrolled_after', 'retention_policy')
             old_settings = {key: con.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone() for key in keys}
+            old_policy = data.setting(con, 'retention_policy')
+            if not isinstance(old_policy, dict) or old_policy.get('version') not in {2, 3}:
+                raise RuntimeError('Existing retention policy needs review before migration.')
             original = cron()
             command = f'7,22,37,52 * * * * {launcher} run >> {home}/kiani-instagram-insights-cron.log 2>&1'
             kept = []
-            for line in original.decode().splitlines():
+            for line in hourly_cron(original, home).decode().splitlines():
                 stripped = line.strip()
                 if stripped in {BEGIN, END}:
                     continue
@@ -168,8 +261,8 @@ esac
                 if args.news_retention:
                     with con:
                         con.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('retention_enabled', 'true'))
-                        if data.setting(con, 'retention_enrolled_after') is None:
-                            con.execute('INSERT INTO settings VALUES (?,?)', ('retention_enrolled_after', json.dumps(time.time())))
+                        if data.setting(con, 'retention_enrolled_after') is None or old_policy != app.POLICY:
+                            con.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('retention_enrolled_after', json.dumps(time.time())))
                         con.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('retention_policy', json.dumps(app.POLICY)))
             except BaseException:
                 for path, old in before.items():
@@ -193,11 +286,13 @@ esac
     print('Backup:', backup)
     print('Insights: every 15 minutes; checkpoints 2, 12 (news), 24, 48 and 72 hours. Missing data stays unknown.')
     if metadata['news_batch_enabled']:
-        cap = min(10, max(0, (probe['publishing_quota']['total'] - 12) // 8))
-        print(f'News: up to 10/slot; current total quota permits at most {cap}/slot, with additional dynamic Story reservations.')
-        print('Istanbul slots preserved: economy 13:00/20:00; crypto 18:00/21:30.')
+        cap = min(10, max(0, (probe['publishing_quota']['total'] - 12) // 4))
+        print(f'News: ONE per hourly slot, at most TEN per category/day; current quota planning cap {cap}/category/day.')
+        print('Istanbul crypto: 10:00 through 19:00 hourly. Economy: 10:30 through 19:30 hourly.')
+        print('Hourly collection moved to minute 15; existing publications count toward today\'s cap. No missed-slot catch-up.')
     if metadata['news_retention_enabled']:
-        print('NEW crypto/economy Feed only: keep >=400 Views at 12h; below 400 may be deleted after fresh rechecks.')
+        print('NEW crypto/economy Feed only: keep >=100 Views at TWO hours; below 100 may be deleted after fresh rechecks.')
+        print('Two-hour assessment window: 2:00-2:30 after actual publication; two low readings at least ten minutes apart.')
         print('Rate/gold/top 50/calendars protected. Missing metrics => keep. No historical deletion or replacement posts.')
     else:
         print('News deletion disabled; current-token permission audit and policy activation still required.')

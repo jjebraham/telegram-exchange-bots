@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rank distinct fresh news events; publish quota-limited batches in fixed slots."""
+"""Publish one distinct rolling-24h news story per hourly slot, ten/category/day."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +23,9 @@ from economy_news_picker import (FEEDS, Item, Story, collect, economy_relevant,
 from economy_news_translation import load_translation_env, resolve_google, translate
 from instagram_crypto_news import NewsError, canonical_url, database, publish, save_story, sync_telegram
 
-VERSION = 'ranked-news-v3-batches'
+VERSION = 'ranked-news-v4-hourly'
+HOURLY_SLOTS = tuple(f'hour-{hour:02d}' for hour in range(10, 20))
+SLOT_GRACE_SECONDS = 25 * 60
 BASE_ASSESS_PROMPT = engine.ASSESS_PROMPT
 BASE_GROUP_PROMPT = engine.GROUP_PROMPT
 BASE_PUBLISHER = engine.publisher
@@ -115,8 +117,8 @@ class SourceUnavailable(NewsError):
 @contextmanager
 def locks(kind, *, preview=False, collection_only=False):
     import fcntl
-    # The hourly economy collector also runs at 21:30. It must not contend
-    # with the second crypto publication's cross-category selection lock.
+    # Hourly discovery has its own lock; Feed selection still serializes both
+    # categories so cross-category publication history cannot race.
     primary = kind + '.collection.lock' if collection_only else kind + '.preview.lock' if preview else 'selection.lock'
     paths = [STATE / primary]
     if not preview and not collection_only:
@@ -401,12 +403,37 @@ def day_bounds(now):
     return start.date().isoformat(), start.timestamp(), (start + timedelta(days=1)).timestamp()
 
 
-def consumed(con, now):
+def consumed(con, now, exclude_story_id=None):
     day, start, end = day_bounds(now)
     # Include uncertain/in-flight stories so an ambiguous response cannot exceed the daily cap.
     return con.execute("""SELECT COUNT(*) FROM instagram_news_publications WHERE status!='failed'
-        AND ((started_at>=? AND started_at<?) OR (finished_at>=? AND finished_at<?))""",
-        (start, end, start, end)).fetchone()[0]
+        AND ((started_at>=? AND started_at<?) OR (finished_at>=? AND finished_at<?))
+        AND (? IS NULL OR story_id!=?)""",
+        (start, end, start, end, exclude_story_id, exclude_story_id)).fetchone()[0]
+
+
+def slot_bounds(kind, slot, now):
+    if slot not in HOURLY_SLOTS or kind not in SOURCES:
+        raise NewsError('An explicit reviewed hourly slot is required.')
+    local = datetime.fromtimestamp(now, engine.ISTANBUL)
+    scheduled = local.replace(hour=int(slot[-2:]), minute=0 if kind == 'crypto' else 30,
+                              second=0, microsecond=0).timestamp()
+    return scheduled, scheduled + SLOT_GRACE_SECONDS
+
+
+def slot_open(kind, slot, now):
+    start, end = slot_bounds(kind, slot, now)
+    return start <= now < end
+
+
+def slot_consumed(con, kind, slot, now, exclude_story_id=None):
+    start, _ = slot_bounds(kind, slot, now)
+    # Canonical publication rows survive deletion. Count in-flight/uncertain
+    # attempts too, including posts from the old launcher during handover.
+    end = start + 30 * 60
+    return con.execute("""SELECT COUNT(*) FROM instagram_news_publications WHERE status!='failed'
+        AND ((started_at>=? AND started_at<?) OR (finished_at>=? AND finished_at<?))
+        AND (? IS NULL OR story_id!=?)""", (start, end, start, end, exclude_story_id, exclude_story_id)).fetchone()[0]
 
 
 def init_slots(con):
@@ -550,24 +577,29 @@ def run(kind, slot, publish_mode, asset_root):
     now = time.time()
     print(f'{engine.local_time(now)} Start {kind} slot={slot}, publish={publish_mode}.', flush=True)
     from instagram_news_batch import plan, guard
-    batch_cap, quota_plan = plan(publish_mode)
-    target = batch_cap * (1 if slot == 'first' else 2)
-    if not batch_cap:
-        print('No spare publishing quota for news batches; existing rate/Story capacity is reserved.', flush=True)
+    if publish_mode and not slot_open(kind, slot, now):
+        print('Outside this hourly slot; no late catch-up or Feed post.', flush=True)
         return
-    print('News batch capacity:', json.dumps(quota_plan), flush=True)
+    daily_cap, quota_plan = plan(publish_mode)
+    if not daily_cap:
+        print('No spare publishing quota for hourly news; existing rate/Story capacity is reserved.', flush=True)
+        return
+    print('Hourly news capacity:', json.dumps(quota_plan), flush=True)
     with locks(kind, preview=not publish_mode), database(STATE / (kind + '.sqlite3')) as ranking:
         engine.init_trial(ranking)
         with engine.readonly(SOURCES[kind]) as production:
-            remaining = min(batch_cap, max(0, target - consumed(production, now)))
+            remaining = min(1, max(0, daily_cap - consumed(production, now)))
+            if publish_mode and slot_consumed(production, kind, slot, now):
+                print(f'{kind}: this hourly slot already has a publication or unresolved attempt.')
+                return
         if publish_mode and remaining == 0:
             print(f'{kind}: daily slot quota already satisfied; no additional post.')
             return
         if publish_mode:
             with database(SOURCES[kind]) as production:
                 init_slots(production)
-                previous = production.execute('SELECT status FROM news_v2_slots WHERE day=? AND slot=?', (day_bounds(now)[0], slot)).fetchone()
-                if previous and previous[0] != 'failed':
+                previous = production.execute('SELECT status,media_ids_json FROM news_v2_slots WHERE day=? AND slot=?', (day_bounds(now)[0], slot)).fetchone()
+                if previous and (previous[0] != 'failed' or json.loads(previous[1])):
                     print(f'{kind}: slot is complete or unresolved; no duplicate retry.')
                     return
         run_id = datetime.fromtimestamp(now, engine.ISTANBUL).strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
@@ -585,9 +617,9 @@ def run(kind, slot, publish_mode, asset_root):
             ranked, audit = rank_events(ranking, kind, now, checkpoint=persist)
             # Score order is preserved among stories with a different main lead.
             # Compare full source facts with today's posts and this run's picks.
-            audit['selection_policy'] = 'up_to_ten_distinct_fresh_stories_per_slot_subject_to_publishing_quota'
+            audit['selection_policy'] = 'one_best_remaining_distinct_rolling_24h_story_per_hour_ten_per_category_day'
             chosen = select_main_stories(ranking, ranked, kind,
-                remaining if publish_mode else batch_cap, now, audit, persist)
+                remaining if publish_mode else 1, now, audit, persist)
         except Exception as exc:
             progress = json.loads(report.read_text(encoding='utf-8'))
             progress.update(status='failed', error_type=type(exc).__name__,
@@ -606,7 +638,7 @@ def run(kind, slot, publish_mode, asset_root):
             persist()
             print('No unpublished verified fresh hard-news event is available; nothing posted.')
             return
-        requested = remaining if publish_mode else batch_cap
+        requested = remaining if publish_mode else 1
         if len(chosen) < requested:
             print(f'Only {len(chosen)} eligible distinct events available for {requested} requested posts.', flush=True)
         output = Path('/var/www/peerexo.com/public/instagram-rates') / ({'crypto': 'news', 'economy': 'economy'}[kind] if publish_mode else 'ranked-news-preview/' + kind)
@@ -631,6 +663,8 @@ def run(kind, slot, publish_mode, asset_root):
             day = day_bounds(time.time())[0]
             if day != day_bounds(now)[0]:
                 raise NewsError('Istanbul date changed during preparation; rerun selection.')
+            if not slot_open(kind, slot, time.time()):
+                raise NewsError('Hourly slot expired during preparation; no Feed post.')
             with production:
                 production.execute('''INSERT INTO news_v2_slots(day,slot,status,started_at,report_path)
                     VALUES (?,?,'publishing',?,?) ON CONFLICT(day,slot) DO UPDATE SET
@@ -641,9 +675,9 @@ def run(kind, slot, publish_mode, asset_root):
                 for row, (saved, paths, caption, manifest) in zip(chosen, prepared):
                     if day_bounds(time.time())[0] != day:
                         raise NewsError('Istanbul date changed between posts; rerun selection.')
-                    if consumed(production, time.time()) >= target:
+                    if consumed(production, time.time()) >= daily_cap or slot_consumed(production, kind, slot, time.time()):
                         break
-                    if len(audit['media_ids']) >= batch_cap:
+                    if len(audit['media_ids']) >= 1:
                         break
                     try:
                         audit['last_quota_check'] = guard()
@@ -674,10 +708,16 @@ def run(kind, slot, publish_mode, asset_root):
                             current = time.time()
                             if day_bounds(current)[0] != day or row['article_published_at'] < current - 86400:
                                 raise BeforePublish('Source expired or Istanbul date changed before final publication.')
+                            if (not slot_open(kind, slot, current) or
+                                consumed(production, current, current_id) >= daily_cap or
+                                slot_consumed(production, kind, slot, current, current_id)):
+                                raise BeforePublish('Hourly window, one-per-slot or ten-per-day limit reached before final publication.')
                             try:
                                 guard()
                             except Exception:
                                 raise BeforePublish('Final publishing quota/Story reservation check failed; no Feed publication request was made.') from None
+                            if not slot_open(kind, slot, time.time()) or row['article_published_at'] < time.time() - 86400:
+                                raise BeforePublish('Hourly window or source freshness expired during the final quota check.')
                             return ig._publish_container(container)
                     try:
                         media_id = publish(production, [story], paths, caption, CheckedPublisher(), manifest)
@@ -709,13 +749,15 @@ def run(kind, slot, publish_mode, asset_root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--kind', choices=('crypto', 'economy', 'both'), default='both')
-    parser.add_argument('--slot', choices=('first', 'second'), default='first')
+    parser.add_argument('--slot', choices=HOURLY_SLOTS)
     parser.add_argument('--publish', action='store_true')
     parser.add_argument('--collect-only', action='store_true')
     parser.add_argument('--publisher-root', type=Path, default=Path.home() / 'kiani-instagram-publisher')
     args = parser.parse_args()
     if args.publish and (args.kind == 'both' or args.collect_only):
         parser.error('Publishing requires one category and cannot combine collection-only.')
+    if args.publish and not args.slot:
+        parser.error('Publishing requires an explicit hourly slot.')
     load_translation_env(Path.home() / 'sub/.env')
     os.umask(0o077)
     for kind in ('economy', 'crypto') if args.kind == 'both' else (args.kind,):
@@ -723,7 +765,7 @@ def main():
             with locks(kind, collection_only=True), database(STATE / (kind + '.sqlite3')) as con:
                 print(json.dumps(collect(con, feeds=CRYPTO_FEEDS if kind == 'crypto' else FEEDS)))
         else:
-            run(kind, args.slot, args.publish, args.publisher_root)
+            run(kind, args.slot or HOURLY_SLOTS[0], args.publish, args.publisher_root)
     return 0
 
 
