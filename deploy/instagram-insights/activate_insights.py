@@ -185,7 +185,9 @@ case "$action" in
 esac
 ''' + 'exec ' + shlex.quote(str(python)) + ' -u ' + shlex.quote(str(app_root / 'instagram_post_insights.py')) + ' "--$action" "$@"\n'
             prior = json.loads(config_path.read_text()) if config_path.is_file() else {}
-            if prior.get('revision') not in {OLD_REVISION, args.revision} or not prior.get('news_batch_enabled') or not prior.get('news_retention_enabled'):
+            known_install = ((prior.get('revision') == OLD_REVISION and prior.get('news_batch_enabled') is True) or
+                             (prior.get('revision') == args.revision and prior.get('hourly_news_enabled') is True))
+            if not known_install or prior.get('news_retention_enabled') is not True:
                 raise RuntimeError('Expected the confirmed PR66 installation; review the installed configuration first.')
             old_analytics = home / 'kiani-instagram-insights-releases' / OLD_REVISION
             if data.fingerprint(old_analytics) != OLD_ANALYTICS_HASH:
@@ -196,7 +198,9 @@ esac
             metadata = dict(revision=args.revision, activated_at=time.time(), runtime_hash=data.fingerprint(root),
                 account_id=graph.account_id, api_version=graph.version, probe=probe, policy=app.POLICY,
                 news_schedule=dict(timezone='Europe/Istanbul', crypto='10:00-19:00 hourly', economy='10:30-19:30 hourly', per_slot=1, per_category_day=10),
-                news_batch_enabled=args.news_batch or prior.get('news_batch_enabled', False),
+                # The legacy worker rechecks this flag at its final publish
+                # boundary. Disable its burst mode even if an old job resumes.
+                news_batch_enabled=False, hourly_news_enabled=True,
                 news_retention_enabled=args.news_retention or data.setting(con, 'retention_enabled', False))
             changed = {launcher: (wrapper.encode(), 0o700), config_path: (json.dumps(metadata, indent=2).encode(), 0o600)}
             if args.news_batch:
@@ -285,7 +289,7 @@ esac
             con.close()
     print('Backup:', backup)
     print('Insights: every 15 minutes; checkpoints 2, 12 (news), 24, 48 and 72 hours. Missing data stays unknown.')
-    if metadata['news_batch_enabled']:
+    if metadata['hourly_news_enabled']:
         cap = min(10, max(0, (probe['publishing_quota']['total'] - 12) // 4))
         print(f'News: ONE per hourly slot, at most TEN per category/day; current quota planning cap {cap}/category/day.')
         print('Istanbul crypto: 10:00 through 19:00 hourly. Economy: 10:30 through 19:30 hourly.')

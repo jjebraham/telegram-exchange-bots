@@ -189,6 +189,11 @@ new cap on transition day, so that day may have fewer than ten new hourly posts.
 All unrelated Feed/Story jobs, original publication databases and deduplication
 history are preserved. Existing post decisions are never retroactively rewritten.
 New launchers use immutable releases; old releases remain recoverable.
+Activation sets a new `hourly_news_enabled` flag and turns the legacy
+`news_batch_enabled` flag off. Old workers check that legacy flag again at their
+final publication boundary, preventing a resumed old job from completing a burst.
+The compatibility activation switch `--news-batch` now installs hourly news;
+it does not enable the former per-slot batch mode.
 
 Private database: `~/.local/state/kiani-instagram-insights/insights.sqlite3`.
 Log: `~/kiani-instagram-insights-cron.log`.

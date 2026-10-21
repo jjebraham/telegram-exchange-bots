@@ -17,8 +17,8 @@ def activation():
     if path.is_symlink() or not path.is_file():
         raise InsightsError('News batch policy has not been activated.')
     data = json.loads(path.read_text(encoding='utf-8'))
-    if data.get('news_batch_enabled') is not True:
-        raise InsightsError('News batch policy has not been activated.')
+    if data.get('hourly_news_enabled') is not True:
+        raise InsightsError('Hourly news policy has not been activated.')
     schedule = data.get('news_schedule', {})
     if schedule.get('per_slot') != 1 or schedule.get('per_category_day') != PER_DAY or schedule.get('timezone') != 'Europe/Istanbul':
         raise InsightsError('The corrected hourly news schedule has not been activated.')
