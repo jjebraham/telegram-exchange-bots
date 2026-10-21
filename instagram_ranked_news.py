@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rank distinct fresh news events and publish up to two stories per category/day."""
+"""Rank distinct fresh news events; publish quota-limited batches in fixed slots."""
 from __future__ import annotations
 
 import argparse
@@ -23,13 +23,13 @@ from economy_news_picker import (FEEDS, Item, Story, collect, economy_relevant,
 from economy_news_translation import load_translation_env, resolve_google, translate
 from instagram_crypto_news import NewsError, canonical_url, database, publish, save_story, sync_telegram
 
-VERSION = 'ranked-news-v2'
+VERSION = 'ranked-news-v3-batches'
 BASE_ASSESS_PROMPT = engine.ASSESS_PROMPT
 BASE_GROUP_PROMPT = engine.GROUP_PROMPT
 BASE_PUBLISHER = engine.publisher
 SOURCE_TARGET = 12
 SOURCE_GROUP_BUDGET = 80
-MAIN_STORY_CHECK_LIMIT = 12
+MAIN_STORY_CHECK_LIMIT = 40
 STATE = Path.home() / '.local/state/kiani-instagram-news-ranking'
 SOURCES = {
     'crypto': Path.home() / '.local/state/kiani-instagram-news/news.sqlite3',
@@ -62,7 +62,7 @@ OUTLET_ALIASES = {
     'abc news - breaking news, latest news and videos': 'abc news us',
     'abc news & headlines – australian broadcasting corporation': 'abc news australia',
 }
-RUNTIME_FILES = ('instagram_ranked_news.py', 'crypto_news_trial.py',
+RUNTIME_FILES = ('instagram_ranked_news.py', 'crypto_news_trial.py', 'instagram_news_batch.py', 'instagram_insights_data.py',
     'selector_trial_runtime/economy_news_picker.py',
     'selector_trial_runtime/economy_news_translation.py',
     'selector_trial_runtime/instagram_crypto_news.py',
@@ -146,7 +146,7 @@ def histories(now):
             blocked.add(canonical_url(row['source_url']))
             if row['status'] != 'published' or (row['finished_at'] or 0) >= now - 14 * 86400:
                 context.append(dict(row, id=kind + ':' + row['id']))
-    if len(context) > 160:
+    if len(context) > 1200:
         raise NewsError('Recent/unresolved publication history exceeds the assessment limit; review it explicitly.')
     return blocked, context
 
@@ -303,7 +303,7 @@ def rank_events(con, kind, now, checkpoint=None):
                     'urls': [i.link for i in g.items], 'has_approved_source': g.lead.id in readable_ids}
                    for g in groups],
         shortlist_ids=[], shortlist_passes=[], excluded=[], minimum_score=None,
-        selection_policy='top_two_different_main_stories_per_category_and_istanbul_day',
+        selection_policy='quota_bounded_distinct_fresh_stories_in_scheduled_slots',
         source_target=SOURCE_TARGET, source_group_budget=SOURCE_GROUP_BUDGET)
     audit['excluded'] = [dict(id=g.lead.id, title=g.lead.title,
         reason='Discovery group has no approved eligible source.') for g in groups if g.lead.id not in readable_ids]
@@ -353,7 +353,8 @@ def rank_events(con, kind, now, checkpoint=None):
     if checkpoint:
         checkpoint(audit)
     try:
-        event_groups = engine.event_groups(con, eligible, history, diagnostics=audit['grouping_diagnostics'])
+        from instagram_news_batch import event_groups as batch_event_groups
+        event_groups = batch_event_groups(con, engine, eligible, history, audit, checkpoint)
     finally:
         if checkpoint:
             checkpoint(audit)
@@ -402,7 +403,7 @@ def day_bounds(now):
 
 def consumed(con, now):
     day, start, end = day_bounds(now)
-    # Include uncertain/in-flight stories so an ambiguous response cannot create a third post.
+    # Include uncertain/in-flight stories so an ambiguous response cannot exceed the daily cap.
     return con.execute("""SELECT COUNT(*) FROM instagram_news_publications WHERE status!='failed'
         AND ((started_at>=? AND started_at<?) OR (finished_at>=? AND finished_at<?))""",
         (start, end, start, end)).fetchone()[0]
@@ -449,7 +450,7 @@ def select_main_stories(con, ranked, kind, limit, now, audit, checkpoint):
         for row in history if row['id'].startswith(kind + ':') and
         (row['status'] != 'published' or start <= (row['finished_at'] or 0) < end)]
     references.sort(key=lambda row: row['id'])
-    if len(references) > 24:
+    if len(references) > 40:
         raise NewsError('Too many same-day/unresolved main-story references; inspect publication history.')
     selected = []
     audit.update(status='selecting_main_stories', main_story_checks=[],
@@ -548,11 +549,17 @@ def prepare(con, row, kind, output, asset_root):
 def run(kind, slot, publish_mode, asset_root):
     now = time.time()
     print(f'{engine.local_time(now)} Start {kind} slot={slot}, publish={publish_mode}.', flush=True)
-    target = 1 if slot == 'first' else 2
+    from instagram_news_batch import plan, guard
+    batch_cap, quota_plan = plan(publish_mode)
+    target = batch_cap * (1 if slot == 'first' else 2)
+    if not batch_cap:
+        print('No spare publishing quota for news batches; existing rate/Story capacity is reserved.', flush=True)
+        return
+    print('News batch capacity:', json.dumps(quota_plan), flush=True)
     with locks(kind, preview=not publish_mode), database(STATE / (kind + '.sqlite3')) as ranking:
         engine.init_trial(ranking)
         with engine.readonly(SOURCES[kind]) as production:
-            remaining = max(0, target - consumed(production, now))
+            remaining = min(batch_cap, max(0, target - consumed(production, now)))
         if publish_mode and remaining == 0:
             print(f'{kind}: daily slot quota already satisfied; no additional post.')
             return
@@ -569,7 +576,7 @@ def run(kind, slot, publish_mode, asset_root):
         report = folder / 'ranking.json'
         audit = dict(version=VERSION, kind=kind, selected_at=now, status='selecting',
                      runtime_fingerprint=runtime_fingerprint(), slot=slot,
-                     chosen_ids=[], preview_urls=[], media_ids=[])
+                     chosen_ids=[], preview_urls=[], media_ids=[], quota_plan=quota_plan)
         def persist(progress=None):
             report.write_text(json.dumps(dict(audit, **(progress or {})), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         persist()
@@ -578,9 +585,9 @@ def run(kind, slot, publish_mode, asset_root):
             ranked, audit = rank_events(ranking, kind, now, checkpoint=persist)
             # Score order is preserved among stories with a different main lead.
             # Compare full source facts with today's posts and this run's picks.
-            audit['selection_policy'] = 'top_two_different_main_stories_per_category_and_istanbul_day'
+            audit['selection_policy'] = 'up_to_ten_distinct_fresh_stories_per_slot_subject_to_publishing_quota'
             chosen = select_main_stories(ranking, ranked, kind,
-                remaining if publish_mode else 2, now, audit, persist)
+                remaining if publish_mode else batch_cap, now, audit, persist)
         except Exception as exc:
             progress = json.loads(report.read_text(encoding='utf-8'))
             progress.update(status='failed', error_type=type(exc).__name__,
@@ -599,7 +606,7 @@ def run(kind, slot, publish_mode, asset_root):
             persist()
             print('No unpublished verified fresh hard-news event is available; nothing posted.')
             return
-        requested = remaining if publish_mode else 2
+        requested = remaining if publish_mode else batch_cap
         if len(chosen) < requested:
             print(f'Only {len(chosen)} eligible distinct events available for {requested} requested posts.', flush=True)
         output = Path('/var/www/peerexo.com/public/instagram-rates') / ({'crypto': 'news', 'economy': 'economy'}[kind] if publish_mode else 'ranked-news-preview/' + kind)
@@ -636,6 +643,15 @@ def run(kind, slot, publish_mode, asset_root):
                         raise NewsError('Istanbul date changed between posts; rerun selection.')
                     if consumed(production, time.time()) >= target:
                         break
+                    if len(audit['media_ids']) >= batch_cap:
+                        break
+                    try:
+                        audit['last_quota_check'] = guard()
+                    except Exception as exc:
+                        audit['quota_deferred'] = type(exc).__name__
+                        print('Extra news deferred: publishing quota/source reservations could not be verified.', flush=True)
+                        persist()
+                        break
                     if row['article_published_at'] < time.time() - 86400:
                         raise NewsError('A selected source expired before publishing; rerun ranking.')
                     current_id = save_story(production, saved)
@@ -658,6 +674,10 @@ def run(kind, slot, publish_mode, asset_root):
                             current = time.time()
                             if day_bounds(current)[0] != day or row['article_published_at'] < current - 86400:
                                 raise BeforePublish('Source expired or Istanbul date changed before final publication.')
+                            try:
+                                guard()
+                            except Exception:
+                                raise BeforePublish('Final publishing quota/Story reservation check failed; no Feed publication request was made.') from None
                             return ig._publish_container(container)
                     try:
                         media_id = publish(production, [story], paths, caption, CheckedPublisher(), manifest)

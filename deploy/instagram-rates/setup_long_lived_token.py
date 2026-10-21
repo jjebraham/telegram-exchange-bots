@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
 
@@ -31,8 +31,28 @@ class SetupError(RuntimeError):
     pass
 
 
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+urlopen = build_opener(NoRedirect()).open
+
+
+def granted_scopes(data: dict) -> set[str]:
+    scopes = data.get("scopes")
+    if not isinstance(scopes, list) or not scopes or not all(
+        isinstance(scope, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,80}", scope)
+        for scope in scopes
+    ):
+        raise SetupError("Token debugger did not return valid granted scope names")
+    return set(scopes)
+
+
 class MetaClient:
     def __init__(self, version: str, app_id: str, secret: str):
+        if not re.fullmatch(r"v\d+\.\d+", version) or not app_id.isdigit():
+            raise SetupError("Invalid Meta API version or App ID")
         self.base = f"https://graph.facebook.com/{version}"
         self.app_id = app_id
         self.secret = secret
@@ -177,7 +197,13 @@ def main() -> int:
     parser.add_argument("--env-file", type=Path, default=Path.home() / ".kiani-instagram.env")
     parser.add_argument("--page-id", default="1287244881149876")
     parser.add_argument("--instagram-id", default="17841411127622820")
+    parser.add_argument("--require-scope", action="append", default=[],
+                        help="Require this grant on the new Page token before saving (repeatable).")
+    parser.add_argument("--preserve-current-scopes", action="store_true",
+                        help="Verify the existing token and preserve every currently granted scope.")
     args = parser.parse_args()
+    if any(not re.fullmatch(r"[a-z][a-z0-9_]{0,80}", scope) for scope in args.require_scope):
+        parser.error("Required scopes must be permission names.")
     path = args.env_file.expanduser().absolute()
     if path.is_symlink() or not path.is_file():
         raise SetupError("Provide the existing regular publisher environment file")
@@ -198,6 +224,14 @@ def main() -> int:
     if not secret:
         raise SetupError("Meta App Secret is required")
     client = MetaClient(version, app_id, secret)
+    required_scopes = {"instagram_content_publish", *args.require_scope}
+    if args.preserve_current_scopes:
+        current = client.remember(env_value(original, "INSTAGRAM_ACCESS_TOKEN"))
+        current_data = client.inspect(current, "PAGE")
+        if current_data.get("profile_id") and str(current_data["profile_id"]) != args.page_id:
+            raise SetupError("Current Page token belongs to a different Page; environment unchanged")
+        required_scopes.update(granted_scopes(current_data))
+        print("Required grants (existing plus requested):", ", ".join(sorted(required_scopes)))
     fresh = client.remember(getpass.getpass("Fresh Graph API Explorer USER token: "))
     client.inspect(fresh, "USER")
 
@@ -221,8 +255,9 @@ def main() -> int:
     expires = timestamp(data, "expires_at")
     if expires != 0:
         raise SetupError(f"Page token has a fixed expiry ({local_date(expires)}); environment unchanged")
-    if "instagram_content_publish" not in data.get("scopes", []):
-        raise SetupError("Page token lacks instagram_content_publish permission")
+    missing = sorted(required_scopes - granted_scopes(data))
+    if missing:
+        raise SetupError("New Page token lacks required scopes: " + ", ".join(missing) + "; environment unchanged")
     access_expiry = int(data.get("data_access_expires_at", 0) or 0)
     if access_expiry and access_expiry <= time.time():
         raise SetupError("Page token's data access has already expired")
@@ -232,6 +267,7 @@ def main() -> int:
 
     backup = save_token(path, original, page_token)
     print(f"Saved validated PAGE token for @{identity.get('username')} to {path}")
+    print("Verified required grants:", ", ".join(sorted(required_scopes)))
     print("Token expiry: no fixed expiry reported (expires_at=0).")
     if access_expiry:
         print(f"Data-access expiry: {local_date(access_expiry)}; reauthorization may be needed then.")
@@ -242,6 +278,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
+        os.umask(0o077)
         raise SystemExit(main())
     except (SetupError, OSError, ValueError) as exc:
         print(f"ERROR: {exc}")
@@ -249,4 +286,3 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, EOFError):
         print("Setup cancelled; no credential update completed.")
         raise SystemExit(1)
-
