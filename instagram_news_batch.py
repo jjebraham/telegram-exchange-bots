@@ -1,4 +1,4 @@
-"""Bound news batches by the real rolling quota, including delayed Stories."""
+"""Bound hourly news by a ten-per-category daily cap and live Story quota."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,8 @@ import time
 
 from instagram_insights_data import Graph, InsightsError, STATE, inventory, read_db, story_config
 
-PER_SLOT = 10
+PER_SLOT = 1
+PER_DAY = 10
 CORE_RESERVE = 12  # Six Feed/Story pairs cover daily non-news + overlapping weekly calendars.
 
 
@@ -16,14 +17,17 @@ def activation():
     if path.is_symlink() or not path.is_file():
         raise InsightsError('News batch policy has not been activated.')
     data = json.loads(path.read_text(encoding='utf-8'))
-    if data.get('news_batch_enabled') is not True:
-        raise InsightsError('News batch policy has not been activated.')
+    if data.get('hourly_news_enabled') is not True:
+        raise InsightsError('Hourly news policy has not been activated.')
+    schedule = data.get('news_schedule', {})
+    if schedule.get('per_slot') != 1 or schedule.get('per_category_day') != PER_DAY or schedule.get('timezone') != 'Europe/Istanbul':
+        raise InsightsError('The corrected hourly news schedule has not been activated.')
     return data
 
 
 def plan(publishing):
     if not publishing:
-        return PER_SLOT, dict(mode='preview', requested_per_slot=PER_SLOT)
+        return PER_DAY, dict(mode='preview', requested_per_slot=PER_SLOT, requested_per_category_day=PER_DAY)
     graph = Graph()
     config = activation()
     if config.get('account_id') != graph.account_id:
@@ -31,10 +35,10 @@ def plan(publishing):
     quota = graph.publishing_quota()
     if graph.pressure:
         raise InsightsError('Meta usage pressure requires deferring extra news.')
-    # Four news slots, each requiring both a Feed and a Story. Do not assume
+    # Two categories, each requiring both a Feed and a Story. Do not assume
     # quota_total=100, or assume deleting a post refunds any publishing quota.
-    cap = min(PER_SLOT, max(0, (quota['total'] - CORE_RESERVE) // (4 * 2)))
-    return cap, dict(quota, requested_per_slot=PER_SLOT, fair_per_slot_cap=cap,
+    cap = min(PER_DAY, max(0, (quota['total'] - CORE_RESERVE) // (2 * 2)))
+    return cap, dict(quota, requested_per_slot=PER_SLOT, requested_per_category_day=PER_DAY, fair_per_category_day_cap=cap,
                      core_reserve=CORE_RESERVE, feed_story_cost=2)
 
 
