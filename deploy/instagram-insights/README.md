@@ -56,6 +56,25 @@ and preserve all existing publishing grants. Never paste tokens or App Secrets
 into chat. Audit storage contains only a token fingerprint, account/app IDs,
 scope names, verification time and expiry.
 
+If the audit reports missing scopes, request them for the **same app** in Meta's
+Graph API Explorer and generate a fresh **User** token, retaining all existing
+Pages and Instagram grants and selecting the same linked Page/account. Do not
+paste any token or App Secret into chat. If a permission is unavailable in the
+app's interface, resolve that app's permission/access requirements before renewal.
+
+`--renew-token` runs the existing token setup flow with mandatory scope
+preservation. It inspects the current Page token with the same app, requires
+every existing grant plus `instagram_basic`, `instagram_manage_insights` and
+`instagram_manage_contents` on the replacement Page token, checks account/Page
+identity and expiry, then backs up and atomically updates only the saved token.
+Missing scopes or an identity/expiry error leave the environment unchanged.
+Redirects are refused. App credentials and the fresh User token are prompted
+locally; the App Secret and intermediate tokens are not stored. This mode does
+not activate schedules, publish or delete. A subsequent `--audit-permissions`
+must record proof for the new token, and a separate default probe must confirm
+actual Views/reach access before activation. Each new bootstrap invocation
+reloads the saved environment, avoiding reuse of the previous in-memory token.
+
 Primary Meta sources:
 
 - [Media read, insights and deletion operations](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/igmedia.py)

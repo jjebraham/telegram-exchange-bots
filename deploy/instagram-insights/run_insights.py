@@ -27,6 +27,7 @@ def main():
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument('--activate', action='store_true')
     actions.add_argument('--audit-permissions', action='store_true')
+    actions.add_argument('--renew-token', action='store_true')
     actions.add_argument('--preview-news', action='store_true')
     parser.add_argument('--news-batch', action='store_true')
     parser.add_argument('--news-retention', action='store_true')
@@ -38,7 +39,7 @@ def main():
         parser.error('Use --declare-organic only with the initial read-only probe.')
     if (args.news_batch or args.news_retention) and not args.activate:
         parser.error('News policy activation switches require --activate.')
-    if args.declare_organic and (args.audit_permissions or args.preview_news):
+    if args.declare_organic and (args.audit_permissions or args.preview_news or args.renew_token):
         parser.error('Use --declare-organic only with the initial read-only probe.')
     os.umask(0o077)
     home = Path.home()
@@ -77,6 +78,10 @@ def main():
             command.append('--news-retention')
     elif args.audit_permissions:
         command = [str(python), '-u', str(root / 'deploy/instagram-insights/audit_permissions.py')]
+    elif args.renew_token:
+        command = [str(python), '-u', str(root / 'deploy/instagram-rates/setup_long_lived_token.py'),
+                   '--preserve-current-scopes', '--require-scope', 'instagram_basic',
+                   '--require-scope', 'instagram_manage_insights', '--require-scope', 'instagram_manage_contents']
     elif args.preview_news:
         command = [str(python), '-u', str(root / 'instagram_ranked_news.py'), '--kind', 'both']
     else:
@@ -86,6 +91,7 @@ def main():
     print(f'Extracted/verified {len(FILES)} files ({total / 1024:.1f} KiB); no repository checkout.', flush=True)
     print('Activating the requested, verified analytics/news policies.' if args.activate else
           'Permission audit only; no content changes.' if args.audit_permissions else
+          'Token renewal only: preserve existing grants and verify the two new permissions before saving. No publishing or deletion.' if args.renew_token else
           'News preview only; no Instagram content changes.' if args.preview_news else
           'Read-only Meta insights/quota probe. Existing posts and schedules are not modified.', flush=True)
     # The script is static; secrets are sourced without echoing and passed in the
