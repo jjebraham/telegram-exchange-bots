@@ -77,8 +77,11 @@ new publication requires schema 3 and exactly six slides with gainers first.
 - Respect the existing root-owned Akamai activation and informational-display
   flags. Its separately approved display policy permits one fresh source (or
   two under the older flag); a single-source caption explicitly says the rate
-  is approximate and awaits a second source. The upstream FIVE-source transaction
-  quorum remains unchanged; a sub-quorum snapshot stays `ok=false`.
+  is approximate and awaits a second source. Read the original upstream
+  `minimum_sources`: support the deployed two-source policy with **both bids and
+  asks agreeing within 2%**, plus the reviewed legacy five-source policy. Verify
+  the corresponding `ok`/median envelope rather than hardcoding a five-source
+  quorum. This reader never changes the collector's policy or `ok` value.
 - Revalidate schema/transport, distinct approved venues, open markets, positive
   liquidity, uncrossed bid/ask pairs, the existing 2% spread and 8% median limits,
   original exchange timestamps or HTTP-cache-plus-observed-book-change evidence.

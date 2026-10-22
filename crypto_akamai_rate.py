@@ -92,16 +92,17 @@ def validate_evidence(evidence, *, now, collecting=False):
     if not -5 <= (now - generated).total_seconds() <= (35 if collecting else MAX_AGE):
         raise AkamaiError('Akamai collector snapshot is stale or dated in the future.')
     quotes = evidence.get('quotes')
-    if (not isinstance(quotes, list) or not evidence['display_minimum'] <= len(quotes) <= 7
-            or type(evidence.get('source_count')) is not int or evidence['source_count'] != len(quotes)
-            or evidence.get('minimum_sources') != 5):
-        raise AkamaiError('Akamai source count or upstream transaction policy differs.')
-    # The upstream transaction quorum stays FIVE. Informational posts follow the
-    # separately enabled display policy; do not turn an ok=false feed into ok=true.
-    if (len(quotes) >= 5 and evidence.get('ok') is not True
-            or len(quotes) < 5 and (evidence.get('ok') is not False or evidence.get('median_buy_toman') is not None)):
-        raise AkamaiError('Akamai transaction-quorum envelope is inconsistent.')
-    seen, asks, proofs, observed = set(), [], [], []
+    if not isinstance(quotes, list) or not evidence['display_minimum'] <= len(quotes) <= 7:
+        raise AkamaiError('Akamai feed has too few or too many quotes for the enabled display policy.')
+    if type(evidence.get('source_count')) is not int or evidence['source_count'] != len(quotes):
+        raise AkamaiError('Akamai source count does not match the exchange quote list.')
+    upstream_minimum = evidence.get('minimum_sources')
+    if type(upstream_minimum) is not int or upstream_minimum not in {2, 5}:
+        raise AkamaiError('Unsupported Akamai upstream policy; expected the reviewed two- or five-source format.')
+    # Both deployed collector revisions are known: legacy five-source quorum,
+    # and the newer TWO-source quorum requiring bid AND ask agreement within 2%.
+    # Preserve the upstream policy/envelope; never promote ok=false to ok=true.
+    seen, asks, bids, proofs, observed = set(), [], [], [], []
     for quote in quotes:
         if not isinstance(quote, dict):
             raise AkamaiError('Invalid Akamai exchange quote.')
@@ -137,15 +138,23 @@ def validate_evidence(evidence, *, now, collecting=False):
                     or any(not -5 <= (now - value).total_seconds() <= MAX_AGE for value in (state, trade))
                     or proof > min(state, trade) + timedelta(milliseconds=1)):
                 raise AkamaiError('Bitpin original trade/market-state evidence is stale or missing.')
-        asks.append(ask); proofs.append(proof); observed.append(observation)
+        asks.append(ask); bids.append(bid); proofs.append(proof); observed.append(observation)
     asks.sort()
     with localcontext() as context:
         context.prec = 60
         middle = len(asks) // 2
         median = asks[middle] if len(asks) % 2 else (asks[middle-1] + asks[middle]) / 2
+        sides_agree = (len(quotes) >= 2 and all(max(values) <= min(values) * Decimal('1.02')
+                                              for values in (asks, bids)))
+    expected_ok = len(quotes) >= upstream_minimum and (upstream_minimum == 5 or sides_agree)
+    if (evidence.get('ok') is not expected_ok
+            or not expected_ok and evidence.get('median_buy_toman') is not None):
+        raise AkamaiError('Akamai transaction-quorum envelope disagrees with its source count/agreement policy.')
+    if upstream_minimum == 2 and len(quotes) >= 2 and not sides_agree:
+        raise AkamaiError('Akamai exchange bids or asks disagree by more than the current 2% policy.')
     if any(not median * Decimal('0.92') <= ask <= median * Decimal('1.08') for ask in asks):
         raise AkamaiError('Akamai source prices exceed the existing median tolerance.')
-    if len(quotes) >= 5 and number(evidence.get('median_buy_toman')) != median:
+    if expected_ok and number(evidence.get('median_buy_toman')) != median:
         raise AkamaiError('Akamai original unadjusted median differs from its source quotes.')
     expiry = stamp(evidence.get('valid_until_utc'))
     if not now < expiry <= min(proofs) + timedelta(seconds=MAX_AGE, milliseconds=1):
