@@ -175,6 +175,7 @@ def main():
             raise
     print('Backup:', backup)
     print('Installed gainers revision:', args.revision)
+    print('Market USDT: existing Akamai feed; unadjusted median ask; original source proofs/expiry preserved.')
     print('Feed: daily 16:00 Europe/Istanbul; six slides: gainers first, then five top 50 price slides.')
     print('Gainers: up to ten positive 24h USD changes among the global top 100; volume > USD 50,000; CoinPaprika.')
     print('Story: first-slide gainers preview, 30 minutes after successful Feed publication.')

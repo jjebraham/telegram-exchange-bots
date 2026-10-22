@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from crypto_akamai_rate import AkamaiError, SOURCE as AKAMAI_SOURCE, read_quote, validate_evidence
+
 TICKERS_URL = 'https://api.coinpaprika.com/v1/tickers?quotes=USD'
 STABLE_URL = 'https://api.coinpaprika.com/v1/tags/stablecoin?additional_fields=coins'
 WRAPPED_URL = 'https://api.coinpaprika.com/v1/tags/wrapped-token?additional_fields=coins'
@@ -99,7 +101,7 @@ def check_sources():
         else:
             print(f'OK: {provider_label(url)} ({time.monotonic() - started:.1f}s)', flush=True)
     try:
-        quote = fetch_market_quote(attempts=1, timeout=8)
+        quote = fetch_market_quote()
     except PricesError as exc:
         failed = True
         print(f'FAILED: {exc}', flush=True)
@@ -229,17 +231,18 @@ def parse_market_quote(payload, provider, *, sample=False):
                 rate_observed_at=now.isoformat(), rate_updated_at=updated, rate_evidence=evidence)
 
 
-def fetch_market_quote(*, attempts=2, timeout=12):
-    # Fail over quickly when Wallex is unreachable from the publishing server.
-    # Exir has a documented public USDT/IRT ticker, already quoted in Toman.
-    for provider, url in (('Wallex', MARKET_URL), ('Exir', EXIR_URL), ('Nobitex', NOBITEX_URL)):
-        try:
-            payload = fetch_json(url, attempts=1 if provider == 'Wallex' else attempts,
-                                 timeout=min(timeout, 8) if provider == 'Wallex' else timeout)
-            return parse_market_quote(payload, provider)
-        except PricesError as exc:
-            print(f'Market source unavailable: {exc}', flush=True)
-    raise PricesError('No valid live market USDT/Toman quote is available; no post created.')
+def fetch_market_quote():
+    # The existing restricted-SSH Akamai collector already reaches these venues.
+    # Consume its local, unadjusted market evidence; do not retry blocked APIs
+    # from Google or use customer quotes with Kiani pricing adjustments.
+    try:
+        quote = read_quote()
+    except AkamaiError as exc:
+        raise PricesError(str(exc) + ' No post created.') from None
+    print(f"Akamai market feed: {quote['rate_evidence']['source_count']} fresh exchanges; "
+          f"median ask {quote['raw_usdt_toman']} Toman; original expiry "
+          f"{quote['rate_evidence']['valid_until_utc']}", flush=True)
+    return quote
 
 
 def excluded(coin, stable_ids, wrapped_ids):
@@ -434,6 +437,16 @@ def validate_snapshot(snapshot, *, publishing=False):
     rate = number(snapshot.get('usdt_toman'), 'USDT/Toman market price', positive=True)
     if rate != round_market_rate(snapshot.get('raw_usdt_toman')):
         raise PricesError('USDT/Toman rate must match the market price rounded to the nearest 100 Toman.')
+    if snapshot.get('rate_url') == AKAMAI_SOURCE:
+        try:
+            original = validate_evidence(snapshot.get('rate_evidence'),
+                now=now if publishing else timestamp(snapshot['generated_at']))
+        except AkamaiError as exc:
+            raise PricesError(str(exc)) from None
+        if any(snapshot.get(key) != value for key, value in original.items()):
+            raise PricesError('Akamai market median, sources, units or original freshness evidence changed.')
+    elif publishing:
+        raise PricesError('New publications require the existing Akamai market feed; direct exchange fallback is disabled.')
     if snapshot.get('rate_url') == NOBITEX_URL or str(snapshot.get('rate_source', '')).startswith('Nobitex '):
         evidence = snapshot.get('rate_evidence')
         if (not isinstance(evidence, dict) or evidence.get('symbol') != 'USDTIRT' or evidence.get('unit') != 'rial' or

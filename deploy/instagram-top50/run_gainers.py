@@ -13,7 +13,7 @@ import sqlite3
 import subprocess
 import sys
 
-RUNTIME = ('instagram_top50_prices.py', 'crypto_top50_data.py', 'instagram_top50_renderer.py')
+RUNTIME = ('instagram_top50_prices.py', 'crypto_top50_data.py', 'instagram_top50_renderer.py', 'crypto_akamai_rate.py')
 FILES = RUNTIME + ('deploy/instagram-top50/upgrade_gainers.py',
     'deploy/instagram-top50/run_gainers.py', 'deploy/instagram-top50/activate_top50_cron.py',
     'deploy/instagram-top50/NOTICE', 'deploy/instagram-top50/README.md')

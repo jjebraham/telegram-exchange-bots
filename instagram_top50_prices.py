@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from crypto_top50_data import PricesError, collect, validate_snapshot
 from instagram_top50_renderer import caption, render
 
-RUNTIME_FILES = ('instagram_top50_prices.py', 'crypto_top50_data.py', 'instagram_top50_renderer.py')
+RUNTIME_FILES = ('instagram_top50_prices.py', 'crypto_top50_data.py', 'instagram_top50_renderer.py', 'crypto_akamai_rate.py')
 SHARED_FILES = ('instagram_daily_rates.py', 'assets/instagram/kiani-logo.svg',
                 'fonts/Vazirmatn-Regular.ttf', 'fonts/Vazirmatn-Bold.ttf')
 DEFAULT_DB = Path.home() / '.local/state/kiani-instagram-top50/top50.sqlite3'

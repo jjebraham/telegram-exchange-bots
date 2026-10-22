@@ -34,7 +34,7 @@ The installed rates, economy news and crypto news jobs keep their schedules.
 ## Upgrade the existing deployed publisher
 
 Use the pinned `deploy/instagram-top50/run_gainers.py` bootstrap. Default mode
-extracts eight small files without a full checkout and renders a six-slide live
+extracts nine small files without a full checkout and renders a six-slide live
 preview. There is no Meta API contact. It prints the preview links.
 
 `--activate` verifies the installed PR55 runtime/launcher, exact existing daily
@@ -65,25 +65,32 @@ new publication requires schema 3 and exactly six slides with gainers first.
   several major coins. Dollar/euro and gold-pegged coins are excluded. Liquid
   staking governance tokens are not excluded just because of a sector tag.
   New identities remain dynamic; the top 50 is not a fixed list from the PDF.
-- **Market USDT rate:** the public Wallex `USDTTMN` pair's `stats.lastPrice`,
-  then the public Exir `usdt-irt` ticker's `last`, then Nobitex's most recent
-  actual `USDTIRT` trade when earlier sources are unavailable, invalid or stale.
-  Wallex/Exir values are already **Toman per USDT** and are not divided by ten.
-  Nobitex's API values are **Rial per USDT**, explicitly converted by dividing
-  by ten according to its official API documentation. Requests retain TLS validation.
-  Wallex gets one attempt with an eight-second timeout, followed by up to two
-  twelve-second Exir attempts, then up to two twelve-second Nobitex attempts.
-  If none supplies a valid quote, the job stops.
-  No adjusted customer buy/sell quote or cached fallback rate is used.
-  The saved snapshot and Persian caption identify the source actually used.
-  Exir's current `time` field and documented `timestamp` field are both supported;
-  at least one original, timezone-aware provider time is required. If both are
-  present, they must identify the same instant. The five-minute freshness check
-  is unchanged; retrieval time never substitutes for a missing Exir source time.
-  Nobitex uses the original Unix-millisecond timestamp from the most recent
-  positive-volume trade, not an order-book refresh or request timestamp. Original
-  Rial price, volume, pair and timestamp are saved and revalidated at final publish.
-  Stale/future errors now include the original source clock and age for diagnosis.
+- **Market USDT rate:** reuse the existing Akamai collector's local snapshot at
+  `~/.local/state/kiani-akamai-rates/snapshot.json`. Iranian exchange API calls
+  already run through its restricted SSH transport; this Instagram job makes no
+  direct exchange requests from Google. CoinPaprika USD collection is unchanged.
+- Use the **median unadjusted market ask** (`buy_toman`) from the qualified
+  exchanges, already normalized to Toman by the existing collector. Do not use
+  Kiani customer buy/sell prices, adjustment factors, last-trade substitutes or
+  a second Rial/Toman conversion. The caption identifies the contributing venues,
+  describes an order-book ask median, and lists their public source websites.
+- Respect the existing root-owned Akamai activation and informational-display
+  flags. Its separately approved display policy permits one fresh source (or
+  two under the older flag); a single-source caption explicitly says the rate
+  is approximate and awaits a second source. The upstream FIVE-source transaction
+  quorum remains unchanged; a sub-quorum snapshot stays `ok=false`.
+- Revalidate schema/transport, distinct approved venues, open markets, positive
+  liquidity, uncrossed bid/ask pairs, the existing 2% spread and 8% median limits,
+  original exchange timestamps or HTTP-cache-plus-observed-book-change evidence.
+  Bitpin additionally needs its original market-state and recent-trade proofs.
+- At collection the worker snapshot must be <=35 seconds old; original source
+  proofs must be <=90 seconds old and its original `valid_until_utc` unexpired.
+  Save only the required market evidence, omitting transport diagnostics/errors.
+  Recompute the median and verify all source fields before rendering/publication.
+  Before final publishing, original proofs/expiry must STILL be valid. Never
+  renew their ages from a local file read, newer worker generation or HTTP receipt.
+  Missing/unsafe/expired feed data blocks publication; there is no direct-source
+  fallback, stale cached rate or change to the collector, SSH keys or services.
 - The market USDT/Toman quote is **rounded to the nearest 100 Toman**, with half
   steps rounded up: 266,999 → 267,000; 268,346 → 268,300; 271,100 → 271,100.
   The rounded rate appears on every slide and is also used for conversions.
@@ -91,13 +98,11 @@ new publication requires schema 3 and exactly six slides with gainers first.
 - **Toman = full-precision USD × rounded market USDT/Toman.** Decimal arithmetic
   preserves the full USD source price until final display rounding. Small
   positive prices keep enough significant digits to avoid showing zero.
-- All slides share the same rate and snapshot. Ticker update timestamps may be
-  at most 20 minutes old; the observed market quote may be at most five minutes
-  old at publication. Exir's returned ticker timestamp is also checked against
-  the five-minute limit, including immediately before publication. Wallex's
-  response does not provide a timestamp for the particular last trade, so that
-  source can only be checked by the age of the API observation. The last trade
-  can differ from a bid/ask quote. Missing 24-hour changes show a dash.
+- All slides share the same rate and snapshot. CoinPaprika ticker timestamps
+  may be at most 20 minutes old. Akamai market proofs retain their stricter
+  original 90-second expiry, including immediately before final publication.
+  Missing 24-hour changes show a dash. Legacy last-trade parsers remain only for
+  inspecting old saved snapshots; new publication requires Akamai provenance.
 - A failed classification request, stale leading price, invalid conversion or
   incomplete set prevents publication. No partial carousel is published.
 
@@ -204,9 +209,9 @@ Run a read-only check with the same Python interpreter as the live publisher:
 "$HOME/kiani-instagram-venv/bin/python" "$WORK/crypto_top50_data.py" --check-sources
 ```
 
-This checks the two classification endpoints, USD tickers and the live
-USDT/Toman source chain without publishing, changing the database or activating
-cron. A Wallex failure is reported, but the check succeeds if Exir returns a
-valid fresh quote (or Nobitex does) and the three CoinPaprika endpoints respond successfully.
+This checks the two classification endpoints, USD tickers and the existing
+local Akamai feed without publishing, changing the database or activating cron.
+It does not make direct Iranian exchange requests. It reports the actual
+contributing source count, unadjusted median ask and original feed expiry.
 Keep `set -e` inside the displayed subshell block: running it directly in an
 interactive SSH shell causes a failed command to close that shell.
