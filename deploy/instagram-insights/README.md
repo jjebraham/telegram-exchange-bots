@@ -9,8 +9,8 @@
   reranks the rolling last 24 hours and selects the best remaining distinct
   unpublished main story. Deleted, unresolved and in-flight publications still
   count toward the daily cap. There are no missed-slot catch-up batches.
-- At the **two-hour assessment**, keep news with **100 Views or more**; below
-  100 may be removed after verification. Views, not unique Viewers, is the measure.
+- At the **two-hour assessment**, keep news with **200 Views or more**; below
+  200 may be removed after verification. Views, not unique Viewers, is the measure.
 - Only crypto/economy **Feed news** is eligible. Exchange rates, Iran gold,
   top 50 prices, calendars and all Stories are excluded from deletion.
 - **No replacement post is triggered by deletion.** All publishing uses the
@@ -20,11 +20,36 @@ The rule is an owner-selected experiment. Low exposure is not proof of dislike;
 this code does not claim that deleting weak posts increases subsequent reach or
 followers. Profile visits, follows and other engagement are recorded separately.
 The original 72-hour relative-baseline proposal is retained only as supplementary
-analysis; it does not override the owner's explicit two-hour/100-view policy.
-This is a conservative starting threshold selected by the owner, not a validated
+analysis; it does not override the owner's explicit two-hour/200-view policy.
+This is a stricter threshold selected by the owner, not a validated
 predictor of eventual reach. A fresh API response does not guarantee that all
 platform activity has already appeared in the metric. Missing or inconsistent
 statistics keep the post, and two separate low readings are required.
+
+## Upgrade the existing hourly installation to 200 views
+
+The owner raised the threshold from 100 to 200 on 22 October 2026. Run the
+pinned `run_insights.py` default read-only probe, then `--upgrade-retention`.
+This narrow upgrade requires the confirmed PR67 hourly installation and exact
+three-file analytics fingerprint. It verifies the current account, unchanged
+token's existing permission proof, exact-runtime successful insights probe,
+organic declaration and enabled, unpaused retention before switching anything.
+
+It installs only the new analytics runtime, switches its existing launcher and
+updates the retention policy to version 4. It preserves the original enrollment
+cutoff: already enrolled pending posts and future assessments use 200, including
+a pending first low observation from the earlier rule when it is still valid
+inside the two-hour window. Completed kept/deleted/held/missed/review decisions
+and their original policy evidence are not reopened. Historical excluded posts
+stay excluded. Exactly 200 views is kept.
+
+The two low readings >=10 minutes apart, age 2:00-2:30 assessment window, final
+fresh owner/Feed/Views verification, missing-data protection and uncertain-DELETE
+pause are unchanged. Non-news/Stories remain protected and no replacements are
+created. Source databases, schedules, news runtimes, credentials and Story
+configuration are not rewritten. Backup, shared collector lock, concurrent-edit
+checks, idempotence and rollback are included. Installation performs no Instagram
+publication or deletion. A paused earlier deletion is never cleared by upgrade.
 
 ## Read-only access probe first
 
@@ -145,10 +170,10 @@ in the analytics database. All of these must pass before DELETE:
 2. The owner has declared organic exposure, the post is not manually protected,
    and the two-hour assessment window is still open.
 3. Current token fingerprint/scopes/expiry match the verified permission proof.
-4. Fresh views/reach are valid and consistent; views are below 100 in two
+4. Fresh views/reach are valid and consistent; views are below 200 in two
    observations at least 10 minutes apart within the assessment window.
 5. An immediate metadata read confirms the exact media ID, account owner, Feed
-   type and publication timestamp. A **second fresh Views read** remains below100.
+   type and publication timestamp. A **second fresh Views read** remains below200.
 6. The final request state is committed before sending DELETE. Only an explicit
    `success:true` response marks deletion complete.
 

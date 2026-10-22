@@ -18,6 +18,7 @@ FILES = ('instagram_insights_data.py', 'instagram_post_insights.py',
          'deploy/instagram-rates/setup_long_lived_token.py', 'deploy/instagram-insights/audit_permissions.py',
          'deploy/instagram-insights/run_insights.py',
          'deploy/instagram-insights/activate_insights.py', 'deploy/instagram-insights/README.md')
+FILES += ('deploy/instagram-insights/upgrade_retention.py',)
 
 
 def main():
@@ -26,6 +27,7 @@ def main():
     parser.add_argument('--revision', required=True)
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument('--activate', action='store_true')
+    actions.add_argument('--upgrade-retention', action='store_true')
     actions.add_argument('--audit-permissions', action='store_true')
     actions.add_argument('--renew-token', action='store_true')
     actions.add_argument('--preview-news', action='store_true')
@@ -39,7 +41,7 @@ def main():
         parser.error('Use --declare-organic only with the initial read-only probe.')
     if (args.news_batch or args.news_retention) and not args.activate:
         parser.error('News policy activation switches require --activate.')
-    if args.declare_organic and (args.audit_permissions or args.preview_news or args.renew_token):
+    if args.declare_organic and (args.audit_permissions or args.preview_news or args.renew_token or args.upgrade_retention):
         parser.error('Use --declare-organic only with the initial read-only probe.')
     os.umask(0o077)
     home = Path.home()
@@ -69,7 +71,10 @@ def main():
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not path.exists():
             path.write_bytes(data)
-    if args.activate:
+    if args.upgrade_retention:
+        command = [str(python), '-u', str(root / 'deploy/instagram-insights/upgrade_retention.py'),
+                   '--runtime', str(root), '--revision', args.revision]
+    elif args.activate:
         command = [str(python), '-u', str(root / 'deploy/instagram-insights/activate_insights.py'),
                    '--runtime', str(root), '--revision', args.revision]
         if args.news_batch:
@@ -89,7 +94,8 @@ def main():
         if args.declare_organic:
             command.append('--declare-organic')
     print(f'Extracted/verified {len(FILES)} files ({total / 1024:.1f} KiB); no repository checkout.', flush=True)
-    print('Activating the requested, verified analytics/news policies.' if args.activate else
+    print('Upgrading only the news view threshold; existing schedules preserved.' if args.upgrade_retention else
+          'Activating the requested, verified analytics/news policies.' if args.activate else
           'Permission audit only; no content changes.' if args.audit_permissions else
           'Token renewal only: preserve existing grants and verify the two new permissions before saving. No publishing or deletion.' if args.renew_token else
           'News preview only; no Instagram content changes.' if args.preview_news else
