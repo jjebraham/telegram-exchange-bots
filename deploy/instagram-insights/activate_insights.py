@@ -295,7 +295,7 @@ esac
         print('Istanbul crypto: 10:00 through 19:00 hourly. Economy: 10:30 through 19:30 hourly.')
         print('Hourly collection moved to minute 15; existing publications count toward today\'s cap. No missed-slot catch-up.')
     if metadata['news_retention_enabled']:
-        print('NEW crypto/economy Feed only: keep >=100 Views at TWO hours; below 100 may be deleted after fresh rechecks.')
+        print(f'NEW crypto/economy Feed only: keep >={app.MINIMUM} Views at TWO hours; below {app.MINIMUM} may be deleted after fresh rechecks.')
         print('Two-hour assessment window: 2:00-2:30 after actual publication; two low readings at least ten minutes apart.')
         print('Rate/gold/top 50/calendars protected. Missing metrics => keep. No historical deletion or replacement posts.')
     else:

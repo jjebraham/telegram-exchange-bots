@@ -1,4 +1,4 @@
-"""Owner-authorized two-hour/100-view policy, restricted to new automated news.
+"""Owner-authorized two-hour/200-view policy, restricted to new automated news.
 
 Deletion is disabled until activation verifies real insights access and the
 current token's management permission. No replacement publishing exists here.
@@ -16,7 +16,8 @@ from instagram_insights_data import (GraphError, InsightsError, METRICS, count, 
     moment, read_db, set_setting, setting)
 
 NEWS = {'crypto', 'economy'}
-AGE, GRACE, MINIMUM = 2 * 3600, 30 * 60, 100
+AGE, GRACE, MINIMUM = 2 * 3600, 30 * 60, 200
+POLICY_VERSION = 4
 NEWS_SOURCES = {
     'crypto': Path.home() / '.local/state/kiani-instagram-news/news.sqlite3',
     'economy': Path.home() / '.local/state/kiani-instagram-economy/economy.sqlite3',
@@ -25,7 +26,7 @@ NEWS_SOURCES = {
 
 def policy_matches(con):
     policy = setting(con, 'retention_policy', {})
-    return (isinstance(policy, dict) and policy.get('version') == 3 and
+    return (isinstance(policy, dict) and policy.get('version') == POLICY_VERSION and
         policy.get('assessment_hours') == AGE // 3600 and
         policy.get('keep_at_or_above_views') == MINIMUM and
         policy.get('assessment_grace_minutes') == GRACE // 60)
@@ -70,7 +71,7 @@ def note(con, media_id, status, *, views=None, sample_id=None, error=None, evide
             finished_at=excluded.finished_at,error_type=excluded.error_type,evidence_json=excluded.evidence_json''',
             (media_id, status, time.time(), views, sample_id,
              time.time() if status in {'kept', 'deleted', 'held', 'needs_review', 'missed'} else None,
-             error, json.dumps(dict(evidence or {}, policy_version=3, assessment_hours=AGE // 3600,
+             error, json.dumps(dict(evidence or {}, policy_version=POLICY_VERSION, assessment_hours=AGE // 3600,
                  keep_at_or_above_views=MINIMUM))))
 
 
@@ -86,7 +87,7 @@ def delete_news(con, graph, config, post, registry, fresh_views, first_sample_id
         not post['published_at'] + AGE <= time.time() < post['published_at'] + AGE + GRACE):
         raise InsightsError('News post is outside the authorized deletion conditions.')
     if count(fresh_views) is None or fresh_views >= MINIMUM:
-        raise InsightsError('A fresh, explicit view count below 100 is required.')
+        raise InsightsError(f'A fresh, explicit view count below {MINIMUM} is required.')
     first = con.execute('SELECT * FROM samples WHERE id=? AND media_id=?', (first_sample_id, post['media_id'])).fetchone()
     if not first:
         raise InsightsError('The earlier low-view observation is missing.')
@@ -115,7 +116,7 @@ def delete_news(con, graph, config, post, registry, fresh_views, first_sample_id
         raise InsightsError('Final deletion window or request budget expired; keep the post.')
     identifier(post['media_id'])
     evidence = dict(kind=post['kind'], owner=graph.account_id, views=views,
-        checked_at=final['observed_at'], rule='news only; below 100 at two hours',
+        checked_at=final['observed_at'], rule=f'news only; below {MINIMUM} at two hours',
         api_version=graph.version, replacements=False)
     evidence['first_sample_id'] = first_sample_id
     # Commit before the irreversible request. A crash/timeout can never cause a

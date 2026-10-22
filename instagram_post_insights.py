@@ -23,14 +23,14 @@ from zoneinfo import ZoneInfo
 from instagram_insights_data import (Graph, GraphError, InsightsError, KINDS, METRICS,
     RUNTIME, STATE, STORY_CONFIG, bind_account, count, database, fingerprint, identifier, inventory,
     register, set_setting, setting, story_config)
-from instagram_news_retention import AGE, MINIMUM, policy_matches
+from instagram_news_retention import AGE, MINIMUM, POLICY_VERSION, policy_matches
 
 TEHRAN = ZoneInfo('Asia/Tehran')
 CHECKPOINTS = (2, 12, 24, 48, 72)
 LABELS = dict(rates='Exchange rates', economy='Economy news', crypto='Crypto news',
     top50='Top 50 crypto', iran_gold='Iran gold', calendar='Economic calendar', crypto_calendar='Crypto calendar')
-POLICY = dict(version=3, news_categories=['crypto', 'economy'], assessment_hours=2,
-    keep_at_or_above_views=100, assessment_grace_minutes=30, delete_replacements=False,
+POLICY = dict(version=POLICY_VERSION, news_categories=['crypto', 'economy'], assessment_hours=2,
+    keep_at_or_above_views=MINIMUM, assessment_grace_minutes=30, delete_replacements=False,
     rate_deletion=False, historical_deletion=False, automatic_ranking_changes=False)
 
 
@@ -239,8 +239,8 @@ def decide(con, post, now):
     if views is None:
         return 'insufficient_data', dict(detail, reason='Views are missing, not zero; keep the post.')
     if views >= MINIMUM:
-        return 'news_keep', dict(detail, reason='At least 100 views at the two-hour check.', views=views)
-    return 'below_100_at_2h', dict(detail, reason='Below the owner-selected threshold. Deletion still requires activation, fresh rechecks and verified permissions.', views=views)
+        return 'news_keep', dict(detail, reason=f'At least {MINIMUM} views at the two-hour check.', views=views)
+    return f'below_{MINIMUM}_at_2h', dict(detail, reason='Below the owner-selected threshold. Deletion still requires activation, fresh rechecks and verified permissions.', views=views)
 
 
 def report(con, state):
@@ -320,7 +320,7 @@ select{padding:10px;border:1px solid #bed6c9;border-radius:8px;margin-bottom:18p
 <h1>Kiani · Instagram performance</h1><p>Private analytics report. Updated: UPDATE · Tehran.</p><p>News retention: <strong>RETENTION_STATE</strong></p>
 <p>Views, reach and engagement are cumulative observations at the displayed age. Compare posts using the same age checkpoint and category.
 An em dash means unavailable—not zero. Paid/unknown exposure is excluded from organic comparisons.</p>
-<p><strong>News policy: keep at least 100 views; below 100 at the two-hour assessment is eligible for deletion only when the policy is activated.</strong>
+<p><strong>News policy: keep at least VIEW_THRESHOLD views; below VIEW_THRESHOLD at the two-hour assessment is eligible for deletion only when the policy is activated.</strong>
 Rate, gold, top 50 and calendar posts are protected. Missing views mean keep. No automatic replacement posts are created.
 Additional 72-hour comparisons are advisory analytics; they do not override the owner's news threshold.</p>
 <select id="kind" aria-label="Filter category"><option value="">All categories</option>OPTIONS</select>
@@ -331,7 +331,7 @@ The report does not imply low performance when the API returns no usable data.</
     state_label = ('Paused for review' if setting(con, 'retention_paused') else
                    'Active for new news only' if setting(con, 'retention_enabled', False) and policy_matches(con) else
                    'Pending policy migration' if setting(con, 'retention_enabled', False) else 'Disabled')
-    page = page.replace('RETENTION_STATE', state_label).replace('UPDATE', datetime.fromtimestamp(now, TEHRAN).strftime('%d %b %Y %H:%M')).replace('OPTIONS', options).replace('HEADERS', ''.join('<th>' + html.escape(x) + '</th>' for x in headers)).replace('ROWS', ''.join(rows))
+    page = page.replace('VIEW_THRESHOLD', str(MINIMUM)).replace('RETENTION_STATE', state_label).replace('UPDATE', datetime.fromtimestamp(now, TEHRAN).strftime('%d %b %Y %H:%M')).replace('OPTIONS', options).replace('HEADERS', ''.join('<th>' + html.escape(x) + '</th>' for x in headers)).replace('ROWS', ''.join(rows))
     atomic(reports / 'latest.html', page.encode())
     totals = {status: sum(x['review_status'] == status for x in output) for status in sorted({x['review_status'] for x in output})}
     print('Tracked Feed posts:', len(output), '| Review states:', json.dumps(totals), flush=True)
