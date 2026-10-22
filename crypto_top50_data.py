@@ -18,6 +18,7 @@ STABLE_URL = 'https://api.coinpaprika.com/v1/tags/stablecoin?additional_fields=c
 WRAPPED_URL = 'https://api.coinpaprika.com/v1/tags/wrapped-token?additional_fields=coins'
 MARKET_URL = 'https://api.wallex.ir/v1/markets'
 EXIR_URL = 'https://api.exir.io/v2/ticker?symbol=usdt-irt'
+NOBITEX_URL = 'https://apiv2.nobitex.ir/v2/trades/USDTIRT'
 PRICE_MAX_AGE = 1200  # CoinPaprika's free tickers normally update about every five minutes.
 RATE_MAX_AGE = 300
 UA = 'KianiExchange-InstagramPrices/1.0'
@@ -72,7 +73,8 @@ def fetch_json(url, *, attempts=3, timeout=25):
     """Bound response size and retries; credentials are not required by these APIs."""
     for attempt in range(attempts):
         try:
-            request = Request(url, headers={'User-Agent': UA, 'Accept': 'application/json'})
+            request = Request(url, headers={'User-Agent': UA, 'Accept': 'application/json',
+                                           'Cache-Control': 'no-cache'})
             with urlopen(request, timeout=timeout) as response:
                 data = response.read(8_000_001)
             if len(data) > 8_000_000:
@@ -142,14 +144,46 @@ def timestamp(value):
 
 
 def fresh(value, now, max_age, label):
-    age = (now - timestamp(value)).total_seconds()
+    source_time = timestamp(value)
+    age = (now - source_time).total_seconds()
     if age < -300 or age > max_age:
-        raise PricesError(f'{label} is stale or dated in the future; no post created.')
+        raise PricesError(f'{label} is stale or dated in the future '
+                          f'(age {age:.0f}s; source UTC {source_time.isoformat()}; '
+                          f'observed UTC {now.isoformat()}); no post created.')
+
+
+def nobitex_trade(payload):
+    """Use the latest actual trade, not an order-book refresh or request timestamp."""
+    if not isinstance(payload, dict) or payload.get('status') != 'ok':
+        raise PricesError('Nobitex returned an unsuccessful trade response.')
+    trades = payload.get('trades')
+    if not isinstance(trades, list) or not trades or len(trades) > 1000:
+        raise PricesError('Nobitex returned no bounded recent-trade list.')
+    for trade in trades:
+        if (not isinstance(trade, dict) or isinstance(trade.get('time'), bool) or
+                not isinstance(trade.get('time'), int) or not 10**12 <= trade['time'] < 10**13):
+            raise PricesError('Nobitex trade has no original Unix-millisecond timestamp.')
+    latest = max(trades, key=lambda trade: trade['time'])
+    rial = number(latest.get('price'), 'Nobitex USDT/Rial trade price', positive=True)
+    volume = number(latest.get('volume'), 'Nobitex trade volume', positive=True)
+    if rial != rial.to_integral_value():
+        raise PricesError('Nobitex USDT/Rial trade price is not integral rial.')
+    milliseconds = latest['time']
+    updated = datetime.fromtimestamp(milliseconds // 1000, timezone.utc).replace(
+        microsecond=(milliseconds % 1000)*1000).isoformat()
+    # Nobitex's IRT market API prices are RIAL, as its official API docs specify.
+    # This is an exact unit conversion; do not infer the unit from price size.
+    with localcontext() as context:
+        context.prec = 60
+        toman = rial / Decimal(10)
+    evidence = dict(symbol='USDTIRT', unit='rial', price=str(rial), volume=str(volume), time=milliseconds)
+    return toman, updated, evidence
 
 
 def parse_market_quote(payload, provider, *, sample=False):
-    """Both supported pairs are Toman per USDT; neither uses customer quotes."""
+    """Public market quotes; normalize documented units without customer adjustments."""
     now = datetime.now(timezone.utc)
+    evidence = None
     if not isinstance(payload, dict):
         raise PricesError(f'{provider} returned an invalid market response.')
     try:
@@ -179,6 +213,12 @@ def parse_market_quote(payload, provider, *, sample=False):
                 fresh(updated, now, RATE_MAX_AGE, 'Exir USDT/IRT ticker')
             source, url, public_url = 'Exir USDT/IRT last trade', EXIR_URL, 'https://www.exir.io'
             caption = 'آخرین معامله بازار USDT/IRT در اکسیر'
+        elif provider == 'Nobitex':
+            raw, updated, evidence = nobitex_trade(payload)
+            if not sample:
+                fresh(updated, now, RATE_MAX_AGE, 'Nobitex USDT/Rial last trade')
+            source, url, public_url = 'Nobitex USDT/IRT last trade (Rial divided by 10)', NOBITEX_URL, 'https://nobitex.ir'
+            caption = 'آخرین معامله تتر در نوبیتکس؛ نرخ ریالی تقسیم بر ۱۰'
         else:
             raise PricesError('Unsupported market quote provider.')
     except (KeyError, TypeError):
@@ -186,13 +226,13 @@ def parse_market_quote(payload, provider, *, sample=False):
     raw_rate = number(raw, provider + ' USDT/Toman market price', positive=True)
     return dict(raw_usdt_toman=str(raw_rate), rate_source=source, rate_url=url,
                 rate_public_url=public_url, rate_caption_fa=caption,
-                rate_observed_at=now.isoformat(), rate_updated_at=updated)
+                rate_observed_at=now.isoformat(), rate_updated_at=updated, rate_evidence=evidence)
 
 
 def fetch_market_quote(*, attempts=2, timeout=12):
     # Fail over quickly when Wallex is unreachable from the publishing server.
     # Exir has a documented public USDT/IRT ticker, already quoted in Toman.
-    for provider, url in (('Wallex', MARKET_URL), ('Exir', EXIR_URL)):
+    for provider, url in (('Wallex', MARKET_URL), ('Exir', EXIR_URL), ('Nobitex', NOBITEX_URL)):
         try:
             payload = fetch_json(url, attempts=1 if provider == 'Wallex' else attempts,
                                  timeout=min(timeout, 8) if provider == 'Wallex' else timeout)
@@ -366,6 +406,7 @@ def build_snapshot(tickers, stable_tag, wrapped_tag, market=None, *, sample=Fals
                 rate_source=quote['rate_source'], rate_url=quote['rate_url'],
                 rate_public_url=quote['rate_public_url'], rate_caption_fa=quote['rate_caption_fa'],
                 rate_observed_at=quote['rate_observed_at'], rate_updated_at=quote['rate_updated_at'],
+                rate_evidence=quote.get('rate_evidence'),
                 coin_source='CoinPaprika', coin_url=TICKERS_URL,
                 exclusions='Stablecoins, asset-pegged coins, wrapped and staked duplicates', coins=coins,
                 gainers=gainers, gainers_policy=dict(GAINERS_POLICY), gainers_candidates=candidates,
@@ -393,6 +434,14 @@ def validate_snapshot(snapshot, *, publishing=False):
     rate = number(snapshot.get('usdt_toman'), 'USDT/Toman market price', positive=True)
     if rate != round_market_rate(snapshot.get('raw_usdt_toman')):
         raise PricesError('USDT/Toman rate must match the market price rounded to the nearest 100 Toman.')
+    if snapshot.get('rate_url') == NOBITEX_URL or str(snapshot.get('rate_source', '')).startswith('Nobitex '):
+        evidence = snapshot.get('rate_evidence')
+        if (not isinstance(evidence, dict) or evidence.get('symbol') != 'USDTIRT' or evidence.get('unit') != 'rial' or
+                snapshot.get('rate_url') != NOBITEX_URL):
+            raise PricesError('Nobitex original trade/unit evidence is missing or changed.')
+        raw, updated, _ = nobitex_trade(dict(status='ok', trades=[evidence]))
+        if raw != number(snapshot['raw_usdt_toman'], 'raw market rate') or timestamp(updated) != timestamp(snapshot['rate_updated_at']):
+            raise PricesError('Nobitex Rial/Toman conversion or original trade time changed.')
     if publishing:
         fresh(snapshot['rate_observed_at'], now, RATE_MAX_AGE, 'USDT/Toman quote')
         if snapshot.get('rate_updated_at') is not None:

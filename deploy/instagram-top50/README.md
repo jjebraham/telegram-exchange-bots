@@ -66,17 +66,24 @@ new publication requires schema 3 and exactly six slides with gainers first.
   staking governance tokens are not excluded just because of a sector tag.
   New identities remain dynamic; the top 50 is not a fixed list from the PDF.
 - **Market USDT rate:** the public Wallex `USDTTMN` pair's `stats.lastPrice`,
-  falling back to the public Exir `usdt-irt` ticker's `last` when Wallex is
-  unreachable or invalid. Both pairs are already denominated in **Toman per
-  USDT**; neither is divided by ten. Requests retain TLS certificate validation.
+  then the public Exir `usdt-irt` ticker's `last`, then Nobitex's most recent
+  actual `USDTIRT` trade when earlier sources are unavailable, invalid or stale.
+  Wallex/Exir values are already **Toman per USDT** and are not divided by ten.
+  Nobitex's API values are **Rial per USDT**, explicitly converted by dividing
+  by ten according to its official API documentation. Requests retain TLS validation.
   Wallex gets one attempt with an eight-second timeout, followed by up to two
-  twelve-second Exir attempts. If neither supplies a valid quote, the job stops.
+  twelve-second Exir attempts, then up to two twelve-second Nobitex attempts.
+  If none supplies a valid quote, the job stops.
   No adjusted customer buy/sell quote or cached fallback rate is used.
   The saved snapshot and Persian caption identify the source actually used.
   Exir's current `time` field and documented `timestamp` field are both supported;
   at least one original, timezone-aware provider time is required. If both are
   present, they must identify the same instant. The five-minute freshness check
   is unchanged; retrieval time never substitutes for a missing Exir source time.
+  Nobitex uses the original Unix-millisecond timestamp from the most recent
+  positive-volume trade, not an order-book refresh or request timestamp. Original
+  Rial price, volume, pair and timestamp are saved and revalidated at final publish.
+  Stale/future errors now include the original source clock and age for diagnosis.
 - The market USDT/Toman quote is **rounded to the nearest 100 Toman**, with half
   steps rounded up: 266,999 → 267,000; 268,346 → 268,300; 271,100 → 271,100.
   The rounded rate appears on every slide and is also used for conversions.
@@ -183,7 +190,9 @@ Data documentation:
 [CoinPaprika classifications](https://docs.coinpaprika.com/api-reference/tags/get-tag-by-id),
 [Wallex market API](https://docs.wallex.ir/#api-Market-getMarkets),
 [Exir ticker API](https://apidocs.exir.io/),
-[Exir's IRT/Toman denomination](https://www.exir.io/).
+[Exir's IRT/Toman denomination](https://www.exir.io/),
+[Nobitex recent trades](https://github.com/nobitex/docs-api/blob/master/source/includes/_market_data.md),
+[Nobitex Rial API units](https://github.com/nobitex/docs-api/blob/master/source/includes/_market_trade.md).
 
 ## Provider connection failures
 
@@ -198,6 +207,6 @@ Run a read-only check with the same Python interpreter as the live publisher:
 This checks the two classification endpoints, USD tickers and the live
 USDT/Toman source chain without publishing, changing the database or activating
 cron. A Wallex failure is reported, but the check succeeds if Exir returns a
-valid fresh quote and the three CoinPaprika endpoints respond successfully.
+valid fresh quote (or Nobitex does) and the three CoinPaprika endpoints respond successfully.
 Keep `set -e` inside the displayed subshell block: running it directly in an
 interactive SSH shell causes a failed command to close that shell.
