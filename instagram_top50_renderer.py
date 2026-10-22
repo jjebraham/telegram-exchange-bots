@@ -1,4 +1,4 @@
-"""Five code-rendered Kiani cards: ten USD/market-Toman prices per page."""
+"""Kiani gainers cover followed by five ten-coin USD/market-Toman price cards."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -140,14 +140,18 @@ def render(snapshot, output, asset_root):
         points = [tuple(map(float, pair.split(','))) for pair in node.attrib['points'].split()]
         ImageDraw.Draw(logo).polygon([(x * 256/lw, y * 256/lh) for x, y in points], fill=INK)
     logo = logo.resize((40, 41), Image.Resampling.LANCZOS)
+    all_coins = {c['id']: c for c in [*snapshot.get('gainers', []), *snapshot['coins']]}
     with ThreadPoolExecutor(max_workers=6) as pool:
-        icons = dict(zip((c['id'] for c in snapshot['coins']),
-                         pool.map(lambda c: coin_icon(c['id'], cache), snapshot['coins'])))
+        icons = dict(zip(all_coins, pool.map(lambda c: coin_icon(c['id'], cache), all_coins.values())))
     local = datetime.fromisoformat(snapshot['generated_at']).astimezone(ZoneInfo('Europe/Istanbul'))
     stamp = f'{local:%Y/%m/%d · %H:%M} استانبول'
     prefix = f"kiani-top50-{local:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:10]}"
     paths = []
-    for page in range(1, 6):
+    sections = [(False, page, snapshot['coins'][(page-1)*10:page*10]) for page in range(1, 6)]
+    if snapshot.get('schema') == 3:
+        sections.insert(0, (True, 0, snapshot['gainers']))
+    total = len(sections)
+    for page, (is_gainers, price_page, rows) in enumerate(sections, 1):
         image = Image.new('RGB', (1080, 1350), BACKGROUND)
         draw = ImageDraw.Draw(image)
         if snapshot.get('sample'):
@@ -155,23 +159,33 @@ def render(snapshot, output, asset_root):
             text(draw, 'نمونه برای بررسی طرح · نرخ لحظه‌ای نیست', (540, 27), 26,
                  fa=True, bold=True, fill='white')
         draw.rounded_rectangle((64, 76, 1016, 88), radius=6, fill='#D5E4DA')
-        draw.rounded_rectangle((1016 - round(952*page/5), 76, 1016, 88), radius=6, fill=GREEN)
+        draw.rounded_rectangle((1016 - round(952*page/total), 76, 1016, 88), radius=6, fill=GREEN)
         image.paste(logo, (976, 119), logo)
         text(draw, 'صرافی کیانی', (964, 142), 31, fa=True, bold=True, anchor='rm', width=230)
         text(draw, 'kiani.exchange', (64, 142), 33, bold=True, anchor='lm')
-        text(draw, '۵۰ ارز دیجیتال برتر', (540, 232), 64, fa=True, bold=True)
-        text(draw, f'قیمت به دلار و تومان · بدون استیبل‌کوین · بخش {page} از 5',
+        title = ('۱۰ ارز با بیشترین رشد' if len(rows) == 10 else f'{len(rows)} ارز با رشد مثبت') if is_gainers else '۵۰ ارز دیجیتال برتر'
+        if is_gainers and not rows:
+            title = 'رشد ارزها در ۲۴ ساعت'
+        text(draw, title, (540, 232), 64, fa=True, bold=True, width=952)
+        subtitle = ('۲۴ ساعت گذشته · از میان ۱۰۰ ارز برتر بازار' if is_gainers else
+                    f'قیمت به دلار و تومان · بدون استیبل‌کوین · بخش {price_page} از 5')
+        text(draw, subtitle,
              (540, 297), 27, fa=True, fill=MUTED, width=952)
         draw.rounded_rectangle((320, 326, 760, 370), radius=21, fill='#DDEBE2')
         text(draw, 'هر تتر = ' + price_text(snapshot['usdt_toman']) + ' تومان',
              (540, 348), 26, fa=True, bold=True, width=412)
         for label, x in (('۲۴ ساعت', 145), ('دلار', 311), ('تومان', 537), ('ارز', 805), ('#', 976)):
             text(draw, label, (x, 400), 25, fa=True, bold=True, fill=MUTED)
-        for index, coin in enumerate(snapshot['coins'][(page-1)*10:page*10]):
-            y = 461 + index*74
-            draw.rounded_rectangle((64, y-33, 1016, y+33), radius=16,
-                                   fill='white' if index % 2 == 0 else STRIPE)
-            text(draw, coin['position'], (977, y), 25, bold=True, fill=MUTED, width=48)
+        row_step = min(138, 592 / max(1, len(rows) - 1)) if is_gainers and len(rows) < 9 else 74
+        half_height = min(52, row_step / 2 - 7) if is_gainers else 33
+        first_y = 480 if is_gainers else 461
+        for index, coin in enumerate(rows):
+            y = round(first_y + index*row_step)
+            draw.rounded_rectangle((64, y-half_height, 1016, y+half_height), radius=16,
+                                   fill=('#D5E9DA' if index < 3 else 'white') if is_gainers else
+                                        ('white' if index % 2 == 0 else STRIPE))
+            text(draw, coin['position'], (977, y), 25, bold=True,
+                 fill=GREEN if is_gainers else MUTED, width=48)
             icon = icons[coin['id']]
             if icon is not None:
                 image.paste(icon, (899, y-23), icon)
@@ -202,13 +216,26 @@ def render(snapshot, output, asset_root):
             elif coin['change_24h'] is not None:
                 draw.ellipse((81, y-3, 87, y+3), fill=MUTED)
             text(draw, change, (158, y), 24, fill=color, width=112)
+            if is_gainers and half_height >= 45:
+                width = float(Decimal(coin['change_24h']) / Decimal(rows[0]['change_24h'])) * 545
+                draw.rounded_rectangle((100, y+32, 100+max(3, width), y+37), radius=2, fill=GREEN)
+        if is_gainers and len(rows) < 10:
+            message = ('هیچ ارز واجد شرایطی رشد مثبت نداشت' if not rows else
+                       'امروز کمتر از ۱۰ ارز واجد شرایط رشد مثبت داشتند')
+            message_y = max(620, min(1140, first_y + max(0, len(rows)-1)*row_step + half_height + 52))
+            text(draw, message, (540, message_y), 30,
+                 fa=True, bold=True, fill=MUTED, width=920)
         draw.line((64, 1195, 1016, 1195), fill='#D5E4DA', width=2)
-        text(draw, 'نرخ‌ها صرفاً جهت اطلاع‌رسانی است · منبع: CoinPaprika',
+        note = ('حجم ۲۴ساعته بالای ۵۰ هزار دلار · منبع: CoinPaprika' if is_gainers else
+                'نرخ‌ها صرفاً جهت اطلاع‌رسانی است · منبع: CoinPaprika')
+        text(draw, note,
              (540, 1224), 23, fa=True, fill=MUTED, width=952)
-        text(draw, stamp, (540, 1263 if page < 5 else 1255), 24, fa=True, fill=MUTED)
-        text(draw, f'{page} / 5', (64, 1308), 25, anchor='lm', fill=MUTED)
-        if page < 5:
-            text(draw, 'صرافی کیانی · ورق بزنید', (540, 1308), 28, fa=True, bold=True, fill=GREEN)
+        text(draw, stamp,
+             (540, 1263 if page < total else 1255), 24, fa=True, fill=MUTED, width=952)
+        text(draw, f'{page} / {total}', (64, 1308), 25, anchor='lm', fill=MUTED)
+        if page < total:
+            text(draw, 'برای قیمت ۵۰ ارز ورق بزنید' if is_gainers else 'صرافی کیانی · ورق بزنید',
+                 (540, 1308), 28, fa=True, bold=True, fill=GREEN)
         else:
             text(draw, 'ربات نرخ لحظه‌ای در تلگرام', (540, 1284), 23, fa=True, fill=GREEN)
             text(draw, 'Telegram · https://t.me/kianiexchangebot', (590, 1320), 25,
@@ -221,9 +248,14 @@ def render(snapshot, output, asset_root):
 
 def caption(snapshot):
     local = datetime.fromisoformat(snapshot['generated_at']).astimezone(ZoneInfo('Europe/Istanbul'))
-    return ('صرافی کیانی | قیمت ۵۰ ارز دیجیتال برتر\n\n'
-            '۵ اسلاید؛ قیمت به دلار و تومان و تغییر ۲۴ ساعته قیمت دلاری.\n'
-            'رتبه‌بندی بر اساس ارزش بازار، بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n\n'
+    intro = ('صرافی کیانی | برترین رشدهای ۲۴ ساعت + قیمت ۵۰ ارز دیجیتال\n\n'
+             '۶ اسلاید: ابتدا حداکثر ۱۰ ارز با رشد مثبت، سپس قیمت ۵۰ ارز در ۵ اسلاید.\n'
+             'رشدها بر اساس درصد تغییر قیمت دلاری در ۲۴ ساعت گذشته، میان ۱۰۰ ارز اول از نظر ارزش بازار پیش از حذف استیبل‌کوین‌ها.\n'
+             'فقط داده تازه و حجم معاملات ۲۴ساعته بالاتر از ۵۰ هزار دلار؛ بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n'
+             'اگر تعداد رشدهای مثبت کمتر از ۱۰ باشد، فقط همان‌ها نمایش داده می‌شوند.\n\n'
+             if snapshot.get('schema') == 3 else 'صرافی کیانی | قیمت ۵۰ ارز دیجیتال برتر\n\n۵ اسلاید؛ قیمت به دلار و تومان و تغییر ۲۴ ساعته قیمت دلاری.\n')
+    return (intro +
+            'فهرست ۵۰ ارز بر اساس ارزش بازار، بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n\n'
             'قیمت تومان = قیمت دلاری هر ارز × نرخ بازار تتر\n'
             f"هر تتر = {price_text(snapshot['usdt_toman'])} تومان\n"
             f"نرخ تتر: {snapshot.get('rate_caption_fa', 'آخرین معامله بازار USDTTMN در والکس')}.\n"

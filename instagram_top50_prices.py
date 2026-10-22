@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or publish today's five-slide top 50 price carousel, once per Istanbul day."""
+"""Daily gainers cover plus five top 50 price slides, once per Istanbul day."""
 from __future__ import annotations
 
 import argparse
@@ -106,8 +106,8 @@ def publish(con, snapshot, manifest, asset_root, public_base):
     sys.modules[spec.name] = helper
     spec.loader.exec_module(helper)
     urls = [public_base.rstrip('/') + '/' + quote(Path(p).name) for p in manifest['images']]
-    if len(urls) != 5:
-        raise PricesError('Exactly five public slides are required.')
+    if len(urls) != 6:
+        raise PricesError('Exactly six public slides are required: gainers first, then five price slides.')
     for url in urls:
         helper.verify_public_image(url)
     validate_snapshot(snapshot, publishing=True)
@@ -142,7 +142,7 @@ def publish(con, snapshot, manifest, asset_root, public_base):
         with con:
             con.execute("UPDATE top50_publications SET status='published',media_id=?,finished_at=? WHERE day=?",
                         (media_id, time.time(), day))
-        print(f'Published Kiani top 50 cryptocurrency carousel (5 slides, media id: {media_id})')
+        print(f'Published Kiani top 50 cryptocurrency carousel (6 slides, gainers first, media id: {media_id})')
         return media_id
     except BaseException as exc:
         with con:
@@ -185,6 +185,8 @@ def main():
                         sample=bool(snapshot.get('sample')),
                         top50_runtime_fingerprint=fingerprint(Path(__file__).resolve().parent, RUNTIME_FILES),
                         shared_assets_fingerprint=fingerprint(root, SHARED_FILES))
+        if snapshot.get('schema') == 3:
+            manifest['sections'] = ['gainers'] + ['top50'] * 5
         day = datetime.fromisoformat(snapshot['generated_at']).astimezone(ZoneInfo('Europe/Istanbul')).date().isoformat()
         with con:
             con.execute('INSERT INTO top50_snapshots VALUES (?,?,?,?,?)',
@@ -194,7 +196,10 @@ def main():
         manifest_path.write_text(json.dumps(dict(manifest, snapshot=snapshot), ensure_ascii=False, indent=2), encoding='utf-8')
         print(f"USDT market rate: {snapshot['usdt_toman']} Toman | {snapshot['rate_source']}")
         for index, path in enumerate(paths, 1):
-            print(f'Top 50 slide {index}/5: {path}')
+            print(f'Top 50 slide {index}/{len(paths)}: {path}')
+        if snapshot.get('schema') == 3:
+            print('24h gainers from top 100:', json.dumps([dict(symbol=c['symbol'],
+                change_24h=c['change_24h'], market_position=c['market_position']) for c in snapshot['gainers']]), flush=True)
         print(manifest['caption'])
         if args.publish:
             publish(con, snapshot, manifest, root, args.public_base)

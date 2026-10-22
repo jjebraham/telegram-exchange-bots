@@ -1,8 +1,56 @@
 # Kiani top 50 cryptocurrency prices
 
 One Instagram Feed carousel daily at **16:00 Europe/Istanbul (13:00 UTC)**.
-There are five 1080 × 1350 JPEG slides, with ten coins on each slide.
+There are six 1080 × 1350 JPEG slides: a 24-hour gainers cover followed by
+the existing five price slides, with ten of the top 50 coins on each price slide.
 The installed rates, economy news and crypto news jobs keep their schedules.
+
+## Gainers cover
+
+- The owner selected the **top 100 by market capitalization**, not just the 50
+  coins in the price tables. Define that universe globally BEFORE excluding
+  stablecoins and wrapped/staked duplicates, using CoinPaprika USD market caps.
+- Rank eligible coins by full-precision **positive 24-hour USD price change**,
+  descending. Market cap descending and coin ID break ties deterministically.
+  Require USD trading volume over the same 24 hours to be **greater than 50,000**.
+  Apply the existing exact-identity classification exclusions and freshness rules.
+- Show at most ten. If fewer than ten qualify, display the actual count; never
+  call a losing/unchanged coin a gainer. If none qualify, the cover says so and
+  the usual 50-price slides remain. Missing/stale/malformed candidate data is
+  excluded with a reason; an incomplete top-100 market-cap universe blocks the run.
+- USD prices, Toman conversions and percentage changes come from the same
+  snapshot as the five price slides. All conversions use the same market USDT
+  rate rounded to the nearest 100 Toman, preserving full USD source precision.
+- Save the 100-member source evidence, classifications, policy, exclusions and
+  selected ranking. Recompute that ranking before rendering/publication and
+  recheck selected quote/rate freshness immediately before final publication.
+- This uses the existing **CoinPaprika** feed. CoinMarketCap's gainers page is
+  the feature reference, not an additional data source or a promise of identical
+  rankings. Both source name and the 24-hour window are labelled on the slide.
+- The existing delayed Story uses the first image, so it will preview gainers
+  30 minutes after a successful Feed. No new Story job or second Feed is added.
+  Top 50 remains protected from the news-retention deletion policy.
+
+## Upgrade the existing deployed publisher
+
+Use the pinned `deploy/instagram-top50/run_gainers.py` bootstrap. Default mode
+extracts eight small files without a full checkout and renders a six-slide live
+preview. There is no Meta API contact. It prints the preview links.
+
+`--activate` verifies the installed PR55 runtime/launcher, exact existing daily
+16:00 Istanbul cron entry, Story source and matching six-slide preview from the
+new runtime/assets within 24 hours. A separate fresh source-only validation is
+required at activation. It installs an immutable versioned runtime and switches
+only the top 50 launcher to that runtime, with private backup and guarded rollback.
+An identical repeat is accepted; unexpected installed edits refuse activation.
+
+The crontab, Story registration and original publication database are not
+rewritten. Existing successful posts still count toward the daily duplicate
+guard. No immediate publication, catch-up or historical Story occurs during
+installation. No automated unit tests run as part of the upgrade.
+
+The previous schema-2 saved snapshots remain previewable with the sample banner;
+new publication requires schema 3 and exactly six slides with gainers first.
 
 ## Prices and selection
 
@@ -48,7 +96,7 @@ The renderer loads the existing Kiani logo and Vazirmatn fonts from
 `--publisher-root`. Known identities can use pinned CC0 cryptocurrency icons;
 other coins or failed icon downloads get a colored abbreviation. Unknown
 Persian names use the provider's name rather than inventing a translation.
-Slide five names the Telegram platform and prints
+The final slide names the Telegram platform and prints
 `https://t.me/kianiexchangebot`.
 
 An independent SQLite database stores the full source snapshot, conversion
@@ -75,13 +123,16 @@ mkdir -p /var/www/peerexo.com/public/instagram-rates/top50
   --publisher-root "$HOME/kiani-instagram-publisher"
 ```
 
-It collects fresh prices and saves five slides without publishing. To publish
+It collects fresh prices and saves six slides without publishing. To publish
 a fresh manual carousel, run the same command with `--publish`. Keep the default
 database so schedule activation can find the successful manual publication.
 The public directory must serve JPEGs at
 `https://peerexo.com/instagram-rates/top50/`.
 
-## Activate after reviewing the manual carousel
+## Legacy first-install helpers
+
+For an already scheduled account, use `run_gainers.py` above. The original
+first-install/manual-publication helpers below are retained for reference.
 
 Run `activate_top50_cron.py` from the exact reviewed commit using:
 

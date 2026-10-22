@@ -1,4 +1,4 @@
-"""One auditable USD/market-Toman snapshot for a five-page Instagram carousel."""
+"""One auditable USD/market-Toman snapshot, including a 24-hour gainers cover."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -21,6 +21,10 @@ EXIR_URL = 'https://api.exir.io/v2/ticker?symbol=usdt-irt'
 PRICE_MAX_AGE = 1200  # CoinPaprika's free tickers normally update about every five minutes.
 RATE_MAX_AGE = 300
 UA = 'KianiExchange-InstagramPrices/1.0'
+GAINERS_POLICY = dict(universe='top 100 by USD market capitalization before exclusions',
+                      universe_size=100, limit=10, window_hours=24,
+                      minimum_volume_usd='50000', volume_comparison='strictly greater',
+                      positive_changes_only=True, source='CoinPaprika')
 
 # The tag endpoint omits several established stablecoins and core wrapped assets.
 # Explicit IDs prevent that omission from putting these duplicates into the top 50.
@@ -252,6 +256,83 @@ def select_coins(tickers, stable_ids, wrapped_ids, rate, now, *, sample=False):
     return chosen
 
 
+def market_top100(tickers):
+    """Choose the global market-cap universe BEFORE removing pegged/duplicate coins."""
+    if not isinstance(tickers, list):
+        raise PricesError('CoinPaprika did not return a ticker list.')
+    ranked, identities = [], set()
+    for coin in tickers:
+        if not isinstance(coin, dict):
+            raise PricesError('Invalid ticker entry in the gainers universe.')
+        rank = coin.get('rank')
+        if not isinstance(rank, int) or isinstance(rank, bool) or rank <= 0:
+            continue
+        if not all(isinstance(coin.get(k), str) and coin[k].strip() for k in ('id', 'name', 'symbol')):
+            raise PricesError('A ranked coin has no identity.')
+        if coin['id'] in identities:
+            raise PricesError('Duplicate coin identity in the gainers universe.')
+        identities.add(coin['id'])
+        cap = number(coin.get('quotes', {}).get('USD', {}).get('market_cap', 0), 'market capitalization')
+        if cap <= 0:
+            if rank <= 100:
+                raise PricesError('A leading coin has no market cap; top 100 universe is incomplete.')
+            continue
+        ranked.append((cap, coin))
+    ranked.sort(key=lambda pair: (-pair[0], pair[1]['rank'], pair[1]['id']))
+    if len(ranked) < 100:
+        raise PricesError('Fewer than 100 ranked coins; the gainers universe is incomplete.')
+    return [coin for _, coin in ranked[:100]]
+
+
+def gainer_candidates(tickers):
+    """Keep original fields for all 100 members, including excluded/non-winning coins."""
+    def saved(value):
+        return str(value) if isinstance(value, Decimal) else value
+    return [dict(id=coin['id'], name=coin['name'], symbol=coin['symbol'], rank=coin['rank'],
+                 last_updated=coin.get('last_updated'), quotes={'USD': {
+                     field: saved(coin['quotes']['USD'].get(field)) for field in
+                     ('market_cap', 'price', 'volume_24h', 'percent_change_24h')}})
+            for coin in market_top100(tickers)]
+
+
+def select_gainers(candidates, stable_ids, wrapped_ids, rate, now, *, sample=False):
+    chosen, omitted = [], []
+    for market_position, coin in enumerate(market_top100(candidates), 1):
+        reason = None
+        if excluded(coin, stable_ids, wrapped_ids):
+            reason = 'Stable/pegged coin or wrapped/staked duplicate.'
+        else:
+            try:
+                quote = coin['quotes']['USD']
+                usd = number(quote.get('price'), coin['id'] + ' USD price', positive=True)
+                volume = number(quote.get('volume_24h'), '24-hour USD trading volume', positive=True)
+                change = number(quote.get('percent_change_24h'), '24-hour USD price change')
+                updated = coin.get('last_updated')
+                timestamp(updated)
+                if not sample:
+                    fresh(updated, now, PRICE_MAX_AGE, coin['symbol'] + ' gainers quote')
+                if volume <= Decimal(GAINERS_POLICY['minimum_volume_usd']):
+                    reason = '24-hour USD trading volume is not above 50000.'
+                elif change <= 0:
+                    reason = 'No positive 24-hour USD price change.'
+                else:
+                    with localcontext() as context:
+                        context.prec = 60
+                        toman = usd * rate
+                    chosen.append(dict(id=coin['id'], name=coin['name'].strip(), symbol=coin['symbol'],
+                        provider_rank=coin['rank'], market_position=market_position,
+                        usd=str(usd), toman=str(toman), market_cap_usd=str(number(quote['market_cap'], 'market cap', positive=True)),
+                        volume_24h_usd=str(volume), change_24h=str(change), updated_at=updated))
+            except PricesError as exc:
+                reason = str(exc)
+        if reason:
+            omitted.append(dict(id=coin['id'], reason=reason))
+    chosen.sort(key=lambda coin: (-Decimal(coin['change_24h']), -Decimal(coin['market_cap_usd']), coin['id']))
+    eligible_count = len(chosen)
+    chosen = [dict(position=index, **coin) for index, coin in enumerate(chosen[:10], 1)]
+    return chosen, omitted, eligible_count
+
+
 def build_snapshot(tickers, stable_tag, wrapped_tag, market=None, *, sample=False, market_quote=None):
     now = datetime.now(timezone.utc)
     for tag, label in ((stable_tag, 'stablecoin'), (wrapped_tag, 'wrapped-token')):
@@ -263,14 +344,23 @@ def build_snapshot(tickers, stable_tag, wrapped_tag, market=None, *, sample=Fals
     raw_rate = number(quote['raw_usdt_toman'], 'raw USDT/Toman market price', positive=True)
     rate = round_market_rate(raw_rate)
     coins = select_coins(tickers, set(stable_tag['coins']), set(wrapped_tag['coins']), rate, now, sample=sample)
-    return dict(schema=2, sample=sample, generated_at=now.isoformat(),
+    candidates = gainer_candidates(tickers)
+    ids = {coin['id'] for coin in candidates}
+    classifications = dict(stablecoin=sorted(ids & set(stable_tag['coins'])),
+                           wrapped_token=sorted(ids & set(wrapped_tag['coins'])))
+    gainers, omitted, eligible_count = select_gainers(candidates, set(classifications['stablecoin']),
+        set(classifications['wrapped_token']), rate, now, sample=sample)
+    return dict(schema=3, sample=sample, generated_at=now.isoformat(),
                 usdt_toman=str(rate), raw_usdt_toman=str(raw_rate),
                 usdt_rounding='nearest 100 Toman, half up',
                 rate_source=quote['rate_source'], rate_url=quote['rate_url'],
                 rate_public_url=quote['rate_public_url'], rate_caption_fa=quote['rate_caption_fa'],
                 rate_observed_at=quote['rate_observed_at'], rate_updated_at=quote['rate_updated_at'],
                 coin_source='CoinPaprika', coin_url=TICKERS_URL,
-                exclusions='Stablecoins, asset-pegged coins, wrapped and staked duplicates', coins=coins)
+                exclusions='Stablecoins, asset-pegged coins, wrapped and staked duplicates', coins=coins,
+                gainers=gainers, gainers_policy=dict(GAINERS_POLICY), gainers_candidates=candidates,
+                gainers_classifications=classifications, gainers_excluded=omitted,
+                gainers_eligible_count=eligible_count)
 
 
 def collect():
@@ -283,8 +373,10 @@ def collect():
 
 
 def validate_snapshot(snapshot, *, publishing=False):
-    if snapshot.get('schema') != 2 or len(snapshot.get('coins', [])) != 50:
+    if snapshot.get('schema') not in {2, 3} or len(snapshot.get('coins', [])) != 50:
         raise PricesError('Expected one snapshot containing exactly 50 coins.')
+    if publishing and snapshot.get('schema') != 3:
+        raise PricesError('New publications require a verified gainers cover plus 50 prices.')
     if publishing and snapshot.get('sample'):
         raise PricesError('A reference/sample snapshot cannot be published.')
     now = datetime.now(timezone.utc)
@@ -309,6 +401,24 @@ def validate_snapshot(snapshot, *, publishing=False):
             raise PricesError('Toman conversion does not match the full-precision USD price.')
         if publishing:
             fresh(coin['updated_at'], now, PRICE_MAX_AGE, coin['symbol'] + ' price')
+    if snapshot.get('schema') == 3:
+        if snapshot.get('gainers_policy') != GAINERS_POLICY or len(snapshot.get('gainers_candidates', [])) != 100:
+            raise PricesError('The gainers selection policy or top 100 evidence changed.')
+        classifications = snapshot.get('gainers_classifications', {})
+        ids = {coin['id'] for coin in snapshot['gainers_candidates']}
+        if (set(classifications) != {'stablecoin', 'wrapped_token'} or
+                any(not isinstance(values, list) or any(not isinstance(x, str) or x not in ids for x in values)
+                    or len(values) != len(set(values)) for values in classifications.values())):
+            raise PricesError('Invalid gainers classification evidence.')
+        expected, omitted, eligible_count = select_gainers(snapshot['gainers_candidates'],
+            set(classifications['stablecoin']), set(classifications['wrapped_token']), rate,
+            timestamp(snapshot['generated_at']), sample=bool(snapshot.get('sample')))
+        if (snapshot.get('gainers') != expected or snapshot.get('gainers_excluded') != omitted or
+                snapshot.get('gainers_eligible_count') != eligible_count):
+            raise PricesError('Gainers order, prices or eligible universe do not match the original evidence.')
+        if publishing:
+            for coin in expected:
+                fresh(coin['updated_at'], now, PRICE_MAX_AGE, coin['symbol'] + ' gainers price')
 
 
 if __name__ == '__main__':
