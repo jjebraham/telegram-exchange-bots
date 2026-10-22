@@ -10,10 +10,9 @@ import shutil
 import subprocess
 import sys
 
-FILES = ('iran_gold_data.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
+FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
          'economic_calendar_data.py', 'instagram_economic_calendar_renderer.py',
-         'tests/test_instagram_iran_gold.py', 'instagram_delayed_stories.py',
-         'instagram_story_renderer.py', 'deploy/instagram-iran-gold/activate_gold.py',
+         'tests/test_instagram_iran_gold.py', 'deploy/instagram-iran-gold/upgrade_sources.py',
          'deploy/instagram-iran-gold/run_gold.py', 'deploy/instagram-iran-gold/README.md')
 
 
@@ -49,10 +48,10 @@ def main():
         if not p.exists():
             p.write_bytes(data)
     python = home / 'kiani-instagram-venv/bin/python'
-    command = [str(python), '-u', str(root / 'deploy/instagram-iran-gold/activate_gold.py'),
+    command = [str(python), '-u', str(root / 'deploy/instagram-iran-gold/upgrade_sources.py'),
                '--runtime', str(root), '--revision', args.revision] if args.activate else [str(python), '-u', str(root / 'instagram_iran_gold.py')]
     print(f'Extracted/verified {len(FILES)} files ({total / 1024:.1f} KiB); no repository checkout.', flush=True)
-    print('Activating guarded daily gold publisher.' if args.activate else 'Source preflight: fresh TGJU/DolarChand collection; unsafe data is blocked. No Meta API contact.', flush=True)
+    print('Upgrading guarded daily gold sources.' if args.activate else 'Source preflight: TGJU / DolarChand / Alanchand; two agreeing current providers per price required. No Meta API contact.', flush=True)
     return subprocess.run(command, cwd=root, env=dict(os.environ, PYTHONIOENCODING='utf-8', TZ='Asia/Tehran')).returncode
 
 

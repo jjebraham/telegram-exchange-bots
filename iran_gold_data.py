@@ -1,4 +1,4 @@
-"""Two-feed, dated Iran gold quotes. Unknown or stale data never becomes a post."""
+"""Dated Iran gold quotes and shared guards; unknown data never becomes a post."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import json
 import re
+import time as runtime_time
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -56,7 +57,8 @@ def validate_url(url):
     slugs = {x[2] for x in ASSETS}
     valid = (p.hostname == 'www.tgju.org' and p.path in {'/profile/' + x for x in slugs} or
              p.hostname == 'api.tgju.org' and p.path in {'/v1/market/indicator/summary-table-data/' + x for x in slugs} or
-             p.hostname == 'dolarchand.com' and p.path == '/en/gold-silver')
+             p.hostname == 'dolarchand.com' and p.path == '/en/gold-silver' or
+             p.hostname == 'alanchand.com' and p.path == '/gold-price')
     if p.scheme != 'https' or not valid or p.username or p.password or p.port not in (None, 443):
         raise GoldError('Unreviewed gold source URL.')
 
@@ -72,11 +74,23 @@ def fetch(url):
     request = Request(url, headers={'User-Agent': 'KianiExchange-GoldVerifier/1.0',
                                   'Accept': 'text/html,application/json',
                                   'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache'})
-    with build_opener(Redirect()).open(request, timeout=20) as response:
+    deadline = runtime_time.monotonic() + 35
+    with build_opener(Redirect()).open(request, timeout=15) as response:
         validate_url(response.url)
         if urlsplit(response.url).path != urlsplit(url).path:
             raise GoldError('Source redirected to a different instrument.')
-        body = response.read(2_000_001)
+        chunks, size = [], 0
+        # read1 performs at most one underlying read. A single large read can
+        # otherwise keep resetting the socket timeout on a drip-fed response.
+        while size <= 2_000_000:
+            if runtime_time.monotonic() >= deadline:
+                raise GoldError('Gold source response exceeded its time budget.', 'source_timeout')
+            chunk = response.read1(min(64 * 1024, 2_000_001 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        body = b''.join(chunks)
     if not body or len(body) > 2_000_000:
         raise GoldError('Empty or oversized gold source.')
     return body.decode('utf-8'), hashlib.sha256(body).hexdigest()
@@ -280,34 +294,8 @@ def assess(primary, secondary, now, baseline=None):
 
 
 def collect(baseline=None):
-    now, health, primary, secondary = datetime.now(UTC), {}, {}, None
-    def one(key):
-        try:
-            return key, dolar(now) if key == 'dolarchand' else tgju_one(key, now), None
-        except Exception as exc:
-            return key, None, dict(code=getattr(exc, 'code', 'source'), error_type=type(exc).__name__,
-                                   http_status=exc.code if isinstance(exc, HTTPError) else None,
-                                   detail=str(exc) if isinstance(exc, GoldError) else None)
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        for key, value, error in pool.map(one, [*SPEC, 'dolarchand']):
-            health[key] = dict(status='blocked' if error else 'ok', **(error or {}))
-            if key == 'dolarchand':
-                secondary = value
-            elif value:
-                primary[key] = value
-    snapshot = dict(generated_at=datetime.now(UTC).isoformat(), timezone='Asia/Tehran',
-                    health=health, primary=primary, secondary=secondary, rows=[])
-    if any(x['status'] != 'ok' for x in health.values()):
-        stale_only = all(x['status'] == 'ok' or x['code'] == 'stale' for x in health.values())
-        snapshot.update(status='blocked', reason='Sources are stale/date-only; no current board.' if stale_only else 'Gold source verification failed.',
-                        code='stale' if stale_only else 'source')
-        return snapshot
-    try:
-        snapshot['rows'] = assess(primary, secondary, datetime.now(UTC), baseline)
-        snapshot.update(status='verified', reason='Both feeds and all seven instruments passed.', code='verified')
-    except GoldError as exc:
-        snapshot.update(status='blocked', reason=str(exc), code=exc.code)
-    return snapshot
+    from iran_gold_quorum import collect as collect_quorum
+    return collect_quorum(baseline)
 
 
 def validate(snapshot, *, publishing=False, now=None, baseline=None):
@@ -317,8 +305,16 @@ def validate(snapshot, *, publishing=False, now=None, baseline=None):
     generated = stamp(snapshot['generated_at'])
     if not -5 <= (now - generated).total_seconds() <= MAX_COLLECTION_AGE:
         raise GoldError('Gold collection expired; fetch again.', 'stale')
-    expected = assess(snapshot['primary'], snapshot['secondary'], now, baseline)
-    if len(snapshot['rows']) != 7 or any(any(a[k] != b[k] for k in ('id', 'name', 'price', 'agreement_pct'))
+    keys = ('id', 'name', 'price', 'agreement_pct')
+    if snapshot.get('schema_version') == 2:
+        from iran_gold_quorum import assess as assess_quorum
+        expected = assess_quorum(snapshot['providers'], now, baseline)
+        keys += ('sources', 'selected_source')
+    else:
+        # Legacy private snapshots remain readable, with the original two-feed
+        # checks. New collections always use version 2 and provider consensus.
+        expected = assess(snapshot['primary'], snapshot['secondary'], now, baseline)
+    if len(snapshot['rows']) != 7 or any(any(a[k] != b[k] for k in keys)
                                         for a, b in zip(expected, snapshot['rows'])):
         raise GoldError('Displayed gold board differs from its verified source values.')
     if publishing:

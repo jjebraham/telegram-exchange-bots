@@ -13,6 +13,16 @@ from instagram_economic_calendar_renderer import labels, DIGITS, INK, GREEN, MUT
 from iran_gold_data import TEHRAN
 
 
+def source_details(snapshot):
+    if snapshot.get('schema_version') == 2:
+        from iran_gold_quorum import PROVIDERS, accepted_quotes, accepted_sources
+        sources = accepted_sources(snapshot)
+        return (accepted_quotes(snapshot), ' + '.join(PROVIDERS[x][0] for x in sources),
+                [PROVIDERS[x][1] for x in sources])
+    return ([*snapshot['primary'].values(), *snapshot['secondary'].values()],
+            'TGJU + DolarChand', ['https://www.tgju.org/gold-chart', 'https://dolarchand.com/en/gold-silver'])
+
+
 def render(snapshot, output, asset_root, *, preview=False):
     if snapshot.get('layout_sample') and not preview:
         raise ValueError('Layout samples cannot produce publication images.')
@@ -77,12 +87,13 @@ def render(snapshot, output, asset_root, *, preview=False):
                 draw.text((x, y + 34), f'{parsed:+.2f}%', font=font(27, True), fill=color, anchor='mm')
     draw.rounded_rectangle((50, 1110, 1030, 1168), 18, fill='white')
     fa(draw, '— یعنی سابقه معتبر برای مقایسه موجود نیست', (540, 1139), 24, anchor='mm', fill=MUTED, width=940)
-    oldest = min(datetime.fromisoformat(x['updated_at']) for x in [*snapshot['primary'].values(), *snapshot['secondary'].values()]).astimezone(TEHRAN)
+    quotes, source_names, _ = source_details(snapshot)
+    oldest = min(datetime.fromisoformat(x['updated_at']) for x in quotes).astimezone(TEHRAN)
     clock = oldest.strftime('%H:%M').translate(DIGITS)
     fa(draw, 'قدیمی‌ترین نرخ منبع: ' + clock + ' تهران', (540, 1205), 25, anchor='mm', fill=MUTED)
     fa(draw, 'قیمت‌ها صرفاً جهت اطلاع‌رسانی است.', (540, 1245), 25, anchor='mm', fill=MUTED)
     draw.line((64, 1280, 1016, 1280), fill='#D5E4DA', width=2)
-    draw.text((64, 1310), 'Sources: TGJU + DolarChand', font=font(22), fill=MUTED, anchor='lm')
+    draw.text((64, 1310), 'Sources: ' + source_names, font=font(22), fill=MUTED, anchor='lm')
     draw.text((1016, 1310), 'kiani.exchange', font=font(24, True), fill=GREEN, anchor='rm')
     prefix = 'kiani-iran-gold-' + datetime.fromisoformat(snapshot['generated_at']).astimezone(TEHRAN).strftime('%Y%m%d-%H%M%S-')
     path = output / (prefix + uuid.uuid4().hex[:8] + '.jpg')
@@ -93,14 +104,17 @@ def render(snapshot, output, asset_root, *, preview=False):
 
 def caption(snapshot, asset_root):
     fa_date, en_date, clock = labels(datetime.fromisoformat(snapshot['generated_at']), asset_root)
-    lines = ['صرافی کیانی | طلا و سکه ایران', fa_date + '\n' + en_date,
-             'قیمت بازار به تومان؛ نرخ مبنا TGJU پس از تطبیق با DolarChand.']
+    quotes, source_names, source_urls = source_details(snapshot)
+    policy = ('قیمت بازار به تومان؛ هر قیمت با دست‌کم دو منبع هم‌خوان تطبیق داده شده است. '
+              'نرخ نمایش‌داده‌شده از یکی از منابع تأییدشده انتخاب می‌شود؛ منابع نامعتبر حذف می‌شوند.'
+              if snapshot.get('schema_version') == 2 else 'قیمت بازار به تومان؛ نرخ مبنا TGJU پس از تطبیق با DolarChand.')
+    lines = ['صرافی کیانی | طلا و سکه ایران', fa_date + '\n' + en_date, policy]
     for row in snapshot['rows']:
         changes = ['—' if row[k] is None else f'{Decimal(row[k]):+.2f}%' for k in ('day', 'month')]
         lines.append(f"{row['name']}: {int(Decimal(row['price'])):,}\n۲۴ ساعت / ۳۰ روز: {' / '.join(changes)}")
-    oldest = min(datetime.fromisoformat(x['updated_at']) for x in [*snapshot['primary'].values(), *snapshot['secondary'].values()]).astimezone(TEHRAN)
+    oldest = min(datetime.fromisoformat(x['updated_at']) for x in quotes).astimezone(TEHRAN)
     lines.extend(['زمان بررسی: ' + clock + ' تهران\nقدیمی‌ترین نرخ منبع: ' + oldest.strftime('%H:%M') + ' تهران',
                   '— یعنی سابقه تأییدشده برای مقایسه نداریم. تغییرات از پست‌های موفق قبلی، نزدیک به ۲۴ ساعت و ۳۰ روز، محاسبه می‌شوند.',
-                  'قیمت‌ها صرفاً جهت اطلاع‌رسانی است.\nhttps://www.tgju.org/gold-chart\nhttps://dolarchand.com/en/gold-silver',
+                  'قیمت‌ها صرفاً جهت اطلاع‌رسانی است.\nمنابع: ' + source_names + '\n' + '\n'.join(source_urls),
                   'kiani.exchange'])
     return '\n\n'.join(lines)
