@@ -24,7 +24,7 @@ from instagram_economic_calendar_renderer import labels
 STATE = Path.home() / '.local/state/kiani-instagram-iran-gold'
 PUBLIC = Path('/var/www/peerexo.com/public/instagram-rates')
 BASE = 'https://peerexo.com/instagram-rates'
-FILES = ('iran_gold_data.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
+FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
          'economic_calendar_data.py', 'instagram_economic_calendar_renderer.py', 'tests/test_instagram_iran_gold.py')
 ASSETS = ('assets/instagram/kiani-logo.svg', 'fonts/Vazirmatn-Regular.ttf', 'fonts/Vazirmatn-Bold.ttf')
 
@@ -226,6 +226,10 @@ def main():
             report = dict(snapshot=snapshot, manifest=manifest)
             (folder / 'audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
             print('Gold source checks:', json.dumps(snapshot['health'], ensure_ascii=False), flush=True)
+            if snapshot.get('schema_version') == 2 and snapshot['status'] == 'verified':
+                print('Gold consensus:', json.dumps({row['id']: dict(sources=row['sources'],
+                    selected=row['selected_source'], price=row['price'], agreement_pct=row['agreement_pct'],
+                    excluded=row['rejected_sources']) for row in snapshot['rows']}, ensure_ascii=False), flush=True)
             if not args.publish:
                 with con:
                     con.execute('INSERT INTO gold_previews VALUES (?,?,?,?,?,?)',

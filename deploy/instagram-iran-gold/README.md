@@ -1,103 +1,91 @@
-# Iran gold and coin daily board
+# Daily Iran gold board: multiple source consensus
 
-User-approved schedule: **10:00 Asia/Tehran daily (06:30 UTC)**. One 1080x1350
-Feed image; the existing worker sends a Story preview 30 minutes after Feed
-success. No late catch-up and no post when a check fails. Saturday's separate
-economic calendar may also publish at10:00; that existing job is retained.
+Daily Feed: **10:00 Asia/Tehran (06:30 UTC)**. One board with seven prices;
+a Story follows a successful Feed 30 minutes later. The source upgrade preserves
+that schedule, the existing Story registration and the publication database.
 
-## Mandatory current-price checks
+## Providers and evidence
 
-Every run collects all seven instruments from two separate source feeds:
-TGJU and DolarChand. There is no AI-created price, manual fallback, stale-cache
-fallback, partial board, or fallback to the approved example numbers.
+The runtime polls three separate publishers, not three URLs for one publisher:
 
-1. Fetch TGJU's dedicated profile for each exact instrument. Require explicit
-   rial currency and correct volume unit, the current-quote table and its
-   source quote clock. Fetch its public dated summary record as well. Current
-   price must match the latest dated record exactly; its Gregorian and Persian
-   source dates must agree and equal the current Tehran date. Bind the quote
-   clock to that dated record using Asia/Tehran. A page fetch time, server clock,
-   or date-only old price never qualifies as a current quote timestamp.
-2. Fetch DolarChand's gold page. Check its server-rendered ISO snapshot time
-   against its visible time, and structured buy/sell prices against all seven
-   visible instrument rows. Require its explicit toman declaration. This is
-   the provider's snapshot timestamp, not a claim about each individual trade.
-   The two feeds are treated as separate verifiers; the integration cannot
-   establish whether every upstream contributor is independent.
-3. Each source quote/snapshot must be from the current Tehran day and no more
-   than30minutes old; allow at most60seconds of future clock skew. Both feeds
-   must contain all seven exact assets. The complete collection expires after
-   3minutes and is checked again immediately before the final Meta publish call.
-4. Convert TGJU rial to toman exactly by dividing by10, with integral toman
-   output; check currency/volume units, positive finite prices and conservative
-   per-asset bounds calibrated for the October2026 price scale (each range spans
-   less than a factor10). Both-feed x10 and /10 mistakes are rejected even on the
-   first publication. These bounds need explicit review if the market moves
-   outside them. No multiplying/dividing by10 to make a disagreement fit.
-5. Reject crossed or >1% wide DolarChand bid/ask pairs. Compare TGJU market price
-   with DolarChand midpoint: full spread/mean must be<=1% for coins and<=0.5% for
-   18K/mesghal. Publish the checked TGJU price, not an invented average.
-6. Check whole coins > half > quarter > gram coin, and bazaar-mesghal/18K-gram
-   price ratio in4.28–4.38. This is a unit/coherence check: Iranian bazaar mesghal
-   uses fineness705; 18K gram uses750. It does not claim mesghal physically
-   weighs4.33grams. Reference: https://www.tgju.org/gold-chart
-7. A >7% move from the last successfully published board blocks the whole post
-   for manual review, even if the move might be legitimate. No automatic
-   threshold widening or rebasing. First publication still requires all other
-   checks and conservative bounds.
+- **TGJU:** dedicated instrument profiles, explicit rial/volume units, quote
+  clocks, and dated summary records with matching Persian/Gregorian dates.
+- **DolarChand:** visible toman buy/sell values must match structured quotes;
+  its original ISO board timestamp must match the displayed board clock.
+- **Alanchand:** the original Persian date, weekday and board update clock;
+  exact named instrument rows in the market-price column; visible toman prices
+  must equal the structured IRR offers divided by ten. The intrinsic-value and
+  bubble columns are excluded. Offer expiry verifies timezone/date only and
+  never serves as the update timestamp.
 
-These checks reduce publication errors; agreement between websites is not an
-absolute guarantee of market correctness. If sources are stale or unavailable
-at10:00, the intended outcome is **no post that day**. Closed-market days may be
-skipped normally. Prices are informational market quotes, not Kiani buy/sell offers.
+The last two publish board snapshot timestamps, not individual trade times.
+Provider agreement reduces errors but cannot prove their upstream contributors
+are independent or guarantee that any price is executable. Known TGJU mirrors
+are not additional votes. Providers without verifiable timestamps/units were
+not added just to increase the source count.
 
-## Changes and history
+## Per-price consensus
 
-Use a separate private SQLite database:
-`~/.local/state/kiani-instagram-iran-gold/gold.sqlite3`.
-The existing Telegram source code, history and jobs are not modified.
-Only successful Instagram gold publications advance the baseline/history.
-The24h comparison requires a previous publication within1hour of24h; the1month
-comparison is defined as30days with at most3hours difference. Missing verified
-history displays `—`, not0% or numbers copied from an example. Expect missing
-monthly changes until sufficient publication history exists. Source website
-daily/monthly percentages are not reused without this history.
+For **each of seven instruments**, require at least two usable current providers.
+A stale/unavailable third provider no longer vetoes the other two. A failed TGJU
+instrument is isolated; its other valid instruments can still contribute.
 
-Private source audit records source dates, clocks, units, content hashes,
-disagreements and rejection reasons. Failed current quotes never create a public
-publication image or alter publication history. The footer displays the oldest
-source time and explicitly labels Tehran. Vazirmatn, Kiani logo, Persian/Gregorian
-dates and deterministic Pillow rendering match the approved template. No new
-translation/image API is used by the scheduled job.
+1. Original source timestamps must belong to the current Tehran day and be no
+   older than 30 minutes, with at most 60 seconds of future skew. Retrieval time
+   never refreshes an old source timestamp. The whole collection expires after
+   three minutes and is revalidated immediately before final publication.
+2. Normalize rial/toman exactly, without guessing units or multiplying values
+   to make them agree. Require positive finite numbers and existing conservative
+   per-instrument bounds. DolarChand bid/ask must not cross or exceed 1% width.
+3. Build pairwise agreeing clusters: full range divided by midpoint <=1% for
+   coins and <=0.5% for 18K gram / bazaar mesghal. Select the unique largest
+   cluster with at least two providers. Equal-size competing clusters block
+   the board; a transitive chain of disagreements is not a consensus.
+4. Choose the actual supporting quote nearest the cluster median, breaking
+   exact ties by provider name. Do not average incompatible quotes or invent a
+   market quote. Fractional midpoint quotes round half-up to integral toman.
+5. Validate source-board and final-board coin ordering and gold fineness/volume
+   ratios. Bazaar mesghal / 18K gram must remain in 4.28–4.38. A >7% move against
+   the last successful board still requires manual review; there is no automatic
+   rebasing or widening of limits.
 
-## Publication and deployment
+All seven instruments are mandatory. A missing/ambiguous consensus for even one
+skips the entire post. This improves availability when one provider fails; it
+cannot guarantee a post if the market has no two fresh agreeing sources at 10:00.
+No stale fallback, partial board, sample prices or late catch-up is introduced.
 
-One daily unique publication record plus a lock prevent duplicates. Uncertain
-final API requests remain `needs_review` and are never blindly retried. Only
-10:00–10:15 Tehran allows the final publish step. No broad retry schedule.
+Private audits and logs retain each provider's health, original timestamp, units,
+content hashes, supporters and rejected quotes. The footer/caption list the
+actual contributing publishers and the oldest accepted source time. Failed or
+outlier quotes do not determine that displayed time.
 
-The pinned `run_gold.py` extracts eleven small files, with no full checkout or
-new venv. Default mode performs a live source preflight and renders a preview
-only if every check passes; there is no Meta API contact. If only freshness
-checks fail, it records an explicit blocked preflight and prints the reasons.
-Schema, missing-source, disagreement and other failures return a nonzero status.
+## History and publication
 
-`--activate` reruns the offline guard tests and requires a recent preflight from
-the same runtime/assets. A preflight blocked solely for stale/date-only source
-quotes may install the guarded schedule: it cannot authorize any future prices
-or bypass runtime checks. This allows installation outside market hours without
-presenting old quotes as current. All other preflight failures refuse activation.
-Normal verified preflights must still be fresh at activation.
+State remains `~/.local/state/kiani-instagram-iran-gold/gold.sqlite3`.
+Only successful Feed publications advance price history. Missing valid 24-hour
+or 30-day publication comparisons show an em dash. The daily duplicate guard,
+publication lock, uncertain-publish review state and final 10:00–10:15 Tehran
+window are retained. Gold remains protected from news-retention deletion.
+No translation, AI image or price-generation API is introduced.
 
-The installer requires UTC cron and the previously deployed PR64 Story files,
-backs up launcher/config/worker/crontab and adds only the optional `iran_gold`
-Story source/label. All existing daily and weekly jobs, databases and queued
-Stories remain. Installation publishes nothing immediately. Public images use
-`instagram-rates/iran-gold/`; verified previews use`iran-gold-preview/`.
+## Guarded upgrade from confirmed PR65
+
+`run_gold.py` extracts ten small files from the pinned revision, without a full
+checkout or new virtual environment. Default mode performs public source reads
+and renders only a fully verified board. It does not contact Meta or change jobs.
+
+`--activate` calls `upgrade_sources.py`. It requires the confirmed gold launcher,
+installed source hashes, existing UTC gold cron, Story registration, a verified
+preview from the exact runtime/assets within 24 hours, and a NEW fully valid live
+consensus at activation. A stale or disagreeing preflight cannot authorize the
+upgrade. It parses source syntax without automatically executing unit tests.
+
+Only the versioned gold runtime, gold launcher and gold activation metadata are
+written. Crontab and Story configuration are checked for concurrent changes and
+never rewritten. A private backup and guarded rollback cover the launcher and
+metadata. Original publication rows and all other publishers are preserved.
+Installation publishes nothing immediately.
+
 Log: `~/kiani-instagram-iran-gold-cron.log`.
-
-The offline suite exercises valid boards, both source parsers, stale/future
-dates, missing assets, crossed pairs, rial/toman errors, inconsistent units and
-ratios, source disagreement, large jumps, fabricated comparisons, duplicate
-guards, expired collections and the Tehran posting window. Synthetic test data
-is never accepted by the production publishing path.
+Audits: `~/.local/state/kiani-instagram-iran-gold/runs/`.
+Images: `instagram-rates/iran-gold/`; previews: `iran-gold-preview/`.
