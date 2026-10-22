@@ -73,6 +73,10 @@ new publication requires schema 3 and exactly six slides with gainers first.
   twelve-second Exir attempts. If neither supplies a valid quote, the job stops.
   No adjusted customer buy/sell quote or cached fallback rate is used.
   The saved snapshot and Persian caption identify the source actually used.
+  Exir's current `time` field and documented `timestamp` field are both supported;
+  at least one original, timezone-aware provider time is required. If both are
+  present, they must identify the same instant. The five-minute freshness check
+  is unchanged; retrieval time never substitutes for a missing Exir source time.
 - The market USDT/Toman quote is **rounded to the nearest 100 Toman**, with half
   steps rounded up: 266,999 → 267,000; 268,346 → 268,300; 271,100 → 271,100.
   The rounded rate appears on every slide and is also used for conversions.

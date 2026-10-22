@@ -163,7 +163,17 @@ def parse_market_quote(payload, provider, *, sample=False):
         elif provider == 'Exir':
             if payload.get('symbol', 'usdt-irt') != 'usdt-irt':
                 raise PricesError('Exir returned the wrong market pair.')
-            raw, updated = payload['last'], payload['timestamp']
+            raw = payload['last']
+            # Exir documents `timestamp` for /ticker, but its current live
+            # response also uses the `time` field documented for /tickers.
+            # Both are ORIGINAL provider times; retrieval time is not a fallback.
+            source_times = [payload[key] for key in ('timestamp', 'time') if key in payload]
+            if not source_times:
+                raise PricesError('Exir ticker has neither an original timestamp nor time field.')
+            parsed_times = [timestamp(value) for value in source_times]
+            if any(value != parsed_times[0] for value in parsed_times[1:]):
+                raise PricesError('Exir ticker timestamp and time fields disagree.')
+            updated = source_times[0]
             timestamp(updated)
             if not sample:
                 fresh(updated, now, RATE_MAX_AGE, 'Exir USDT/IRT ticker')
