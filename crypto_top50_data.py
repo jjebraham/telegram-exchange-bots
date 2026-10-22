@@ -1,4 +1,4 @@
-"""One auditable USD/market-Toman snapshot for a five-page Instagram carousel."""
+"""One auditable USD/market-Toman snapshot, including a 24-hour gainers cover."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -13,14 +13,21 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from crypto_akamai_rate import AkamaiError, SOURCE as AKAMAI_SOURCE, read_quote, validate_evidence
+
 TICKERS_URL = 'https://api.coinpaprika.com/v1/tickers?quotes=USD'
 STABLE_URL = 'https://api.coinpaprika.com/v1/tags/stablecoin?additional_fields=coins'
 WRAPPED_URL = 'https://api.coinpaprika.com/v1/tags/wrapped-token?additional_fields=coins'
 MARKET_URL = 'https://api.wallex.ir/v1/markets'
 EXIR_URL = 'https://api.exir.io/v2/ticker?symbol=usdt-irt'
+NOBITEX_URL = 'https://apiv2.nobitex.ir/v2/trades/USDTIRT'
 PRICE_MAX_AGE = 1200  # CoinPaprika's free tickers normally update about every five minutes.
 RATE_MAX_AGE = 300
 UA = 'KianiExchange-InstagramPrices/1.0'
+GAINERS_POLICY = dict(universe='top 100 by USD market capitalization before exclusions',
+                      universe_size=100, limit=10, window_hours=24,
+                      minimum_volume_usd='50000', volume_comparison='strictly greater',
+                      positive_changes_only=True, source='CoinPaprika')
 
 # The tag endpoint omits several established stablecoins and core wrapped assets.
 # Explicit IDs prevent that omission from putting these duplicates into the top 50.
@@ -68,7 +75,8 @@ def fetch_json(url, *, attempts=3, timeout=25):
     """Bound response size and retries; credentials are not required by these APIs."""
     for attempt in range(attempts):
         try:
-            request = Request(url, headers={'User-Agent': UA, 'Accept': 'application/json'})
+            request = Request(url, headers={'User-Agent': UA, 'Accept': 'application/json',
+                                           'Cache-Control': 'no-cache'})
             with urlopen(request, timeout=timeout) as response:
                 data = response.read(8_000_001)
             if len(data) > 8_000_000:
@@ -93,7 +101,7 @@ def check_sources():
         else:
             print(f'OK: {provider_label(url)} ({time.monotonic() - started:.1f}s)', flush=True)
     try:
-        quote = fetch_market_quote(attempts=1, timeout=8)
+        quote = fetch_market_quote()
     except PricesError as exc:
         failed = True
         print(f'FAILED: {exc}', flush=True)
@@ -138,14 +146,46 @@ def timestamp(value):
 
 
 def fresh(value, now, max_age, label):
-    age = (now - timestamp(value)).total_seconds()
+    source_time = timestamp(value)
+    age = (now - source_time).total_seconds()
     if age < -300 or age > max_age:
-        raise PricesError(f'{label} is stale or dated in the future; no post created.')
+        raise PricesError(f'{label} is stale or dated in the future '
+                          f'(age {age:.0f}s; source UTC {source_time.isoformat()}; '
+                          f'observed UTC {now.isoformat()}); no post created.')
+
+
+def nobitex_trade(payload):
+    """Use the latest actual trade, not an order-book refresh or request timestamp."""
+    if not isinstance(payload, dict) or payload.get('status') != 'ok':
+        raise PricesError('Nobitex returned an unsuccessful trade response.')
+    trades = payload.get('trades')
+    if not isinstance(trades, list) or not trades or len(trades) > 1000:
+        raise PricesError('Nobitex returned no bounded recent-trade list.')
+    for trade in trades:
+        if (not isinstance(trade, dict) or isinstance(trade.get('time'), bool) or
+                not isinstance(trade.get('time'), int) or not 10**12 <= trade['time'] < 10**13):
+            raise PricesError('Nobitex trade has no original Unix-millisecond timestamp.')
+    latest = max(trades, key=lambda trade: trade['time'])
+    rial = number(latest.get('price'), 'Nobitex USDT/Rial trade price', positive=True)
+    volume = number(latest.get('volume'), 'Nobitex trade volume', positive=True)
+    if rial != rial.to_integral_value():
+        raise PricesError('Nobitex USDT/Rial trade price is not integral rial.')
+    milliseconds = latest['time']
+    updated = datetime.fromtimestamp(milliseconds // 1000, timezone.utc).replace(
+        microsecond=(milliseconds % 1000)*1000).isoformat()
+    # Nobitex's IRT market API prices are RIAL, as its official API docs specify.
+    # This is an exact unit conversion; do not infer the unit from price size.
+    with localcontext() as context:
+        context.prec = 60
+        toman = rial / Decimal(10)
+    evidence = dict(symbol='USDTIRT', unit='rial', price=str(rial), volume=str(volume), time=milliseconds)
+    return toman, updated, evidence
 
 
 def parse_market_quote(payload, provider, *, sample=False):
-    """Both supported pairs are Toman per USDT; neither uses customer quotes."""
+    """Public market quotes; normalize documented units without customer adjustments."""
     now = datetime.now(timezone.utc)
+    evidence = None
     if not isinstance(payload, dict):
         raise PricesError(f'{provider} returned an invalid market response.')
     try:
@@ -159,12 +199,28 @@ def parse_market_quote(payload, provider, *, sample=False):
         elif provider == 'Exir':
             if payload.get('symbol', 'usdt-irt') != 'usdt-irt':
                 raise PricesError('Exir returned the wrong market pair.')
-            raw, updated = payload['last'], payload['timestamp']
+            raw = payload['last']
+            # Exir documents `timestamp` for /ticker, but its current live
+            # response also uses the `time` field documented for /tickers.
+            # Both are ORIGINAL provider times; retrieval time is not a fallback.
+            source_times = [payload[key] for key in ('timestamp', 'time') if key in payload]
+            if not source_times:
+                raise PricesError('Exir ticker has neither an original timestamp nor time field.')
+            parsed_times = [timestamp(value) for value in source_times]
+            if any(value != parsed_times[0] for value in parsed_times[1:]):
+                raise PricesError('Exir ticker timestamp and time fields disagree.')
+            updated = source_times[0]
             timestamp(updated)
             if not sample:
                 fresh(updated, now, RATE_MAX_AGE, 'Exir USDT/IRT ticker')
             source, url, public_url = 'Exir USDT/IRT last trade', EXIR_URL, 'https://www.exir.io'
             caption = 'آخرین معامله بازار USDT/IRT در اکسیر'
+        elif provider == 'Nobitex':
+            raw, updated, evidence = nobitex_trade(payload)
+            if not sample:
+                fresh(updated, now, RATE_MAX_AGE, 'Nobitex USDT/Rial last trade')
+            source, url, public_url = 'Nobitex USDT/IRT last trade (Rial divided by 10)', NOBITEX_URL, 'https://nobitex.ir'
+            caption = 'آخرین معامله تتر در نوبیتکس؛ نرخ ریالی تقسیم بر ۱۰'
         else:
             raise PricesError('Unsupported market quote provider.')
     except (KeyError, TypeError):
@@ -172,20 +228,21 @@ def parse_market_quote(payload, provider, *, sample=False):
     raw_rate = number(raw, provider + ' USDT/Toman market price', positive=True)
     return dict(raw_usdt_toman=str(raw_rate), rate_source=source, rate_url=url,
                 rate_public_url=public_url, rate_caption_fa=caption,
-                rate_observed_at=now.isoformat(), rate_updated_at=updated)
+                rate_observed_at=now.isoformat(), rate_updated_at=updated, rate_evidence=evidence)
 
 
-def fetch_market_quote(*, attempts=2, timeout=12):
-    # Fail over quickly when Wallex is unreachable from the publishing server.
-    # Exir has a documented public USDT/IRT ticker, already quoted in Toman.
-    for provider, url in (('Wallex', MARKET_URL), ('Exir', EXIR_URL)):
-        try:
-            payload = fetch_json(url, attempts=1 if provider == 'Wallex' else attempts,
-                                 timeout=min(timeout, 8) if provider == 'Wallex' else timeout)
-            return parse_market_quote(payload, provider)
-        except PricesError as exc:
-            print(f'Market source unavailable: {exc}', flush=True)
-    raise PricesError('No valid live market USDT/Toman quote is available; no post created.')
+def fetch_market_quote():
+    # The existing restricted-SSH Akamai collector already reaches these venues.
+    # Consume its local, unadjusted market evidence; do not retry blocked APIs
+    # from Google or use customer quotes with Kiani pricing adjustments.
+    try:
+        quote = read_quote()
+    except AkamaiError as exc:
+        raise PricesError(str(exc) + ' No post created.') from None
+    print(f"Akamai market feed: {quote['rate_evidence']['source_count']} fresh exchanges; "
+          f"median ask {quote['raw_usdt_toman']} Toman; original expiry "
+          f"{quote['rate_evidence']['valid_until_utc']}", flush=True)
+    return quote
 
 
 def excluded(coin, stable_ids, wrapped_ids):
@@ -252,6 +309,83 @@ def select_coins(tickers, stable_ids, wrapped_ids, rate, now, *, sample=False):
     return chosen
 
 
+def market_top100(tickers):
+    """Choose the global market-cap universe BEFORE removing pegged/duplicate coins."""
+    if not isinstance(tickers, list):
+        raise PricesError('CoinPaprika did not return a ticker list.')
+    ranked, identities = [], set()
+    for coin in tickers:
+        if not isinstance(coin, dict):
+            raise PricesError('Invalid ticker entry in the gainers universe.')
+        rank = coin.get('rank')
+        if not isinstance(rank, int) or isinstance(rank, bool) or rank <= 0:
+            continue
+        if not all(isinstance(coin.get(k), str) and coin[k].strip() for k in ('id', 'name', 'symbol')):
+            raise PricesError('A ranked coin has no identity.')
+        if coin['id'] in identities:
+            raise PricesError('Duplicate coin identity in the gainers universe.')
+        identities.add(coin['id'])
+        cap = number(coin.get('quotes', {}).get('USD', {}).get('market_cap', 0), 'market capitalization')
+        if cap <= 0:
+            if rank <= 100:
+                raise PricesError('A leading coin has no market cap; top 100 universe is incomplete.')
+            continue
+        ranked.append((cap, coin))
+    ranked.sort(key=lambda pair: (-pair[0], pair[1]['rank'], pair[1]['id']))
+    if len(ranked) < 100:
+        raise PricesError('Fewer than 100 ranked coins; the gainers universe is incomplete.')
+    return [coin for _, coin in ranked[:100]]
+
+
+def gainer_candidates(tickers):
+    """Keep original fields for all 100 members, including excluded/non-winning coins."""
+    def saved(value):
+        return str(value) if isinstance(value, Decimal) else value
+    return [dict(id=coin['id'], name=coin['name'], symbol=coin['symbol'], rank=coin['rank'],
+                 last_updated=coin.get('last_updated'), quotes={'USD': {
+                     field: saved(coin['quotes']['USD'].get(field)) for field in
+                     ('market_cap', 'price', 'volume_24h', 'percent_change_24h')}})
+            for coin in market_top100(tickers)]
+
+
+def select_gainers(candidates, stable_ids, wrapped_ids, rate, now, *, sample=False):
+    chosen, omitted = [], []
+    for market_position, coin in enumerate(market_top100(candidates), 1):
+        reason = None
+        if excluded(coin, stable_ids, wrapped_ids):
+            reason = 'Stable/pegged coin or wrapped/staked duplicate.'
+        else:
+            try:
+                quote = coin['quotes']['USD']
+                usd = number(quote.get('price'), coin['id'] + ' USD price', positive=True)
+                volume = number(quote.get('volume_24h'), '24-hour USD trading volume', positive=True)
+                change = number(quote.get('percent_change_24h'), '24-hour USD price change')
+                updated = coin.get('last_updated')
+                timestamp(updated)
+                if not sample:
+                    fresh(updated, now, PRICE_MAX_AGE, coin['symbol'] + ' gainers quote')
+                if volume <= Decimal(GAINERS_POLICY['minimum_volume_usd']):
+                    reason = '24-hour USD trading volume is not above 50000.'
+                elif change <= 0:
+                    reason = 'No positive 24-hour USD price change.'
+                else:
+                    with localcontext() as context:
+                        context.prec = 60
+                        toman = usd * rate
+                    chosen.append(dict(id=coin['id'], name=coin['name'].strip(), symbol=coin['symbol'],
+                        provider_rank=coin['rank'], market_position=market_position,
+                        usd=str(usd), toman=str(toman), market_cap_usd=str(number(quote['market_cap'], 'market cap', positive=True)),
+                        volume_24h_usd=str(volume), change_24h=str(change), updated_at=updated))
+            except PricesError as exc:
+                reason = str(exc)
+        if reason:
+            omitted.append(dict(id=coin['id'], reason=reason))
+    chosen.sort(key=lambda coin: (-Decimal(coin['change_24h']), -Decimal(coin['market_cap_usd']), coin['id']))
+    eligible_count = len(chosen)
+    chosen = [dict(position=index, **coin) for index, coin in enumerate(chosen[:10], 1)]
+    return chosen, omitted, eligible_count
+
+
 def build_snapshot(tickers, stable_tag, wrapped_tag, market=None, *, sample=False, market_quote=None):
     now = datetime.now(timezone.utc)
     for tag, label in ((stable_tag, 'stablecoin'), (wrapped_tag, 'wrapped-token')):
@@ -263,14 +397,24 @@ def build_snapshot(tickers, stable_tag, wrapped_tag, market=None, *, sample=Fals
     raw_rate = number(quote['raw_usdt_toman'], 'raw USDT/Toman market price', positive=True)
     rate = round_market_rate(raw_rate)
     coins = select_coins(tickers, set(stable_tag['coins']), set(wrapped_tag['coins']), rate, now, sample=sample)
-    return dict(schema=2, sample=sample, generated_at=now.isoformat(),
+    candidates = gainer_candidates(tickers)
+    ids = {coin['id'] for coin in candidates}
+    classifications = dict(stablecoin=sorted(ids & set(stable_tag['coins'])),
+                           wrapped_token=sorted(ids & set(wrapped_tag['coins'])))
+    gainers, omitted, eligible_count = select_gainers(candidates, set(classifications['stablecoin']),
+        set(classifications['wrapped_token']), rate, now, sample=sample)
+    return dict(schema=3, sample=sample, generated_at=now.isoformat(),
                 usdt_toman=str(rate), raw_usdt_toman=str(raw_rate),
                 usdt_rounding='nearest 100 Toman, half up',
                 rate_source=quote['rate_source'], rate_url=quote['rate_url'],
                 rate_public_url=quote['rate_public_url'], rate_caption_fa=quote['rate_caption_fa'],
                 rate_observed_at=quote['rate_observed_at'], rate_updated_at=quote['rate_updated_at'],
+                rate_evidence=quote.get('rate_evidence'),
                 coin_source='CoinPaprika', coin_url=TICKERS_URL,
-                exclusions='Stablecoins, asset-pegged coins, wrapped and staked duplicates', coins=coins)
+                exclusions='Stablecoins, asset-pegged coins, wrapped and staked duplicates', coins=coins,
+                gainers=gainers, gainers_policy=dict(GAINERS_POLICY), gainers_candidates=candidates,
+                gainers_classifications=classifications, gainers_excluded=omitted,
+                gainers_eligible_count=eligible_count)
 
 
 def collect():
@@ -283,14 +427,34 @@ def collect():
 
 
 def validate_snapshot(snapshot, *, publishing=False):
-    if snapshot.get('schema') != 2 or len(snapshot.get('coins', [])) != 50:
+    if snapshot.get('schema') not in {2, 3} or len(snapshot.get('coins', [])) != 50:
         raise PricesError('Expected one snapshot containing exactly 50 coins.')
+    if publishing and snapshot.get('schema') != 3:
+        raise PricesError('New publications require a verified gainers cover plus 50 prices.')
     if publishing and snapshot.get('sample'):
         raise PricesError('A reference/sample snapshot cannot be published.')
     now = datetime.now(timezone.utc)
     rate = number(snapshot.get('usdt_toman'), 'USDT/Toman market price', positive=True)
     if rate != round_market_rate(snapshot.get('raw_usdt_toman')):
         raise PricesError('USDT/Toman rate must match the market price rounded to the nearest 100 Toman.')
+    if snapshot.get('rate_url') == AKAMAI_SOURCE:
+        try:
+            original = validate_evidence(snapshot.get('rate_evidence'),
+                now=now if publishing else timestamp(snapshot['generated_at']))
+        except AkamaiError as exc:
+            raise PricesError(str(exc)) from None
+        if any(snapshot.get(key) != value for key, value in original.items()):
+            raise PricesError('Akamai market median, sources, units or original freshness evidence changed.')
+    elif publishing:
+        raise PricesError('New publications require the existing Akamai market feed; direct exchange fallback is disabled.')
+    if snapshot.get('rate_url') == NOBITEX_URL or str(snapshot.get('rate_source', '')).startswith('Nobitex '):
+        evidence = snapshot.get('rate_evidence')
+        if (not isinstance(evidence, dict) or evidence.get('symbol') != 'USDTIRT' or evidence.get('unit') != 'rial' or
+                snapshot.get('rate_url') != NOBITEX_URL):
+            raise PricesError('Nobitex original trade/unit evidence is missing or changed.')
+        raw, updated, _ = nobitex_trade(dict(status='ok', trades=[evidence]))
+        if raw != number(snapshot['raw_usdt_toman'], 'raw market rate') or timestamp(updated) != timestamp(snapshot['rate_updated_at']):
+            raise PricesError('Nobitex Rial/Toman conversion or original trade time changed.')
     if publishing:
         fresh(snapshot['rate_observed_at'], now, RATE_MAX_AGE, 'USDT/Toman quote')
         if snapshot.get('rate_updated_at') is not None:
@@ -309,6 +473,24 @@ def validate_snapshot(snapshot, *, publishing=False):
             raise PricesError('Toman conversion does not match the full-precision USD price.')
         if publishing:
             fresh(coin['updated_at'], now, PRICE_MAX_AGE, coin['symbol'] + ' price')
+    if snapshot.get('schema') == 3:
+        if snapshot.get('gainers_policy') != GAINERS_POLICY or len(snapshot.get('gainers_candidates', [])) != 100:
+            raise PricesError('The gainers selection policy or top 100 evidence changed.')
+        classifications = snapshot.get('gainers_classifications', {})
+        ids = {coin['id'] for coin in snapshot['gainers_candidates']}
+        if (set(classifications) != {'stablecoin', 'wrapped_token'} or
+                any(not isinstance(values, list) or any(not isinstance(x, str) or x not in ids for x in values)
+                    or len(values) != len(set(values)) for values in classifications.values())):
+            raise PricesError('Invalid gainers classification evidence.')
+        expected, omitted, eligible_count = select_gainers(snapshot['gainers_candidates'],
+            set(classifications['stablecoin']), set(classifications['wrapped_token']), rate,
+            timestamp(snapshot['generated_at']), sample=bool(snapshot.get('sample')))
+        if (snapshot.get('gainers') != expected or snapshot.get('gainers_excluded') != omitted or
+                snapshot.get('gainers_eligible_count') != eligible_count):
+            raise PricesError('Gainers order, prices or eligible universe do not match the original evidence.')
+        if publishing:
+            for coin in expected:
+                fresh(coin['updated_at'], now, PRICE_MAX_AGE, coin['symbol'] + ' gainers price')
 
 
 if __name__ == '__main__':
