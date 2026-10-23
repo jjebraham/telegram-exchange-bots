@@ -1,4 +1,41 @@
-# Iran gold: Servix supplementary verification
+# Iran gold: approved coin/gold template
+
+## Current template upgrade
+
+Use `run_template.py` for the approved design over the confirmed PR72 Servix
+deployment. It renders a new live preview, checks the existing daily schedule,
+and installs an immutable release after verifying its preview and fresh prices.
+No full repository checkout or new virtual environment is created.
+
+The banner uses `قیمت بازار (تومان)`, matching `سکه` / `طلا` section bars,
+the owner's transparent coin icons on the first five rows and gold-bar icons on
+the last two. The comparison-history sentence is removed. The public footer and
+caption say `بازار تهران`; all original provider names, quotes, times, consensus
+and rejected evidence remain in the private source audit. Prices and comparisons
+are rendered deterministically; the AI-generated design preview is never posted.
+
+`--activate` preserves the existing daily **10:00 Asia/Tehran** job and delayed
+Story worker. Runtime, supplied icons and fonts must match the verified preview.
+Original credentials, Servix key, source rules and all existing publication rows
+remain intact. The installer checks PR72 hashes and backs up its launcher and
+activation metadata before replacing them. It does not rewrite crontab.
+
+The owner's additional manual design test uses `--test-post-on 2026-10-23` after
+activation. It must match the current Tehran day, collects prices again, and
+revalidates all seven before preparation and final publication. A stable
+`YYYY-MM-DD:gold-layout-v2` publication key permits just one successful template
+test on that date even if the daily board is already published. Rerunning cannot
+create another successful copy. An uncertain daily or test publication blocks
+automatic retry. The existing daily row and comparison history are never replaced;
+the test does not become a comparison baseline. It is recorded as `iran_gold` in
+the same publication registry, so existing insights protection and delayed Story
+discovery apply. The manual flag is never added to cron.
+
+The command must succeed on Selenium before installation or publication can be
+claimed complete. A blocked source result still skips publication; do not post
+the old sample image or relax safeguards to obtain a successful test.
+
+## Existing supplementary source policy
 
 Daily Feed remains **10:00 Asia/Tehran (06:30 UTC)**, with its existing delayed
 Story 30 minutes after successful publication. All seven prices remain mandatory.
@@ -54,10 +91,10 @@ publisher nearest the cluster median. Do not manufacture a price. A >7% move
 from the last successful board still requires review.
 
 Collections expire after three minutes and are revalidated before container
-creation and final publication. Footer/caption attribute contributing services.
+creation and final publication. Private source audits retain contributing services.
 Underlying upstream independence and executable liquidity are not asserted.
 
-## Install and test
+## Original PR72 source installation (historical)
 
 The pinned runner extracts twelve small files, runs the authorized offline tests,
 optionally configures the key, and collects/renders a verified live preview.
