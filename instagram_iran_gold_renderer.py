@@ -12,6 +12,24 @@ from PIL import Image, ImageDraw, ImageFont
 from instagram_economic_calendar_renderer import labels, DIGITS, INK, GREEN, MUTED, BG
 from iran_gold_data import TEHRAN
 
+TEMPLATE_VERSION = 'gold-layout-v2'
+ICON_FILES = ('assets/instagram/gold-coin.png', 'assets/instagram/gold-bars.png')
+
+
+def row_y(index):
+    return 540 + index * 76 + (48 if index >= 5 else 0)
+
+
+def icons():
+    """Load the owner's supplied transparent icons from this pinned release."""
+    result = []
+    for name in ICON_FILES:
+        with Image.open(Path(__file__).resolve().parent / name) as raw:
+            if raw.mode != 'RGBA' or raw.size != (512, 512) or raw.getpixel((0, 0))[3] != 0:
+                raise ValueError('Expected the reviewed transparent gold icon.')
+            result.append(raw.resize((52, 52), Image.Resampling.LANCZOS))
+    return result
+
 
 def source_details(snapshot):
     if snapshot.get('schema_version') == 2:
@@ -44,6 +62,7 @@ def render(snapshot, output, asset_root, *, preview=False):
         draw.text(xy, value, font=font(size, bold), fill=fill, anchor=anchor)
     image = Image.new('RGB', (1080, 1350), BG)
     draw = ImageDraw.Draw(image)
+    coin_icon, gold_icon = icons()
     root = ET.parse(asset_root / 'assets/instagram/kiani-logo.svg').getroot()
     _, _, lw, lh = map(float, root.attrib['viewBox'].split())
     logo = Image.new('RGBA', (300, 310)); pen = ImageDraw.Draw(logo)
@@ -64,17 +83,19 @@ def render(snapshot, output, asset_root, *, preview=False):
     fa_date, en_date, _ = labels(datetime.fromisoformat(snapshot['generated_at']), asset_root)
     fa(draw, fa_date, (540, 313), 27, anchor='mm', fill=MUTED)
     draw.text((540, 350), en_date, font=font(23), fill=MUTED, anchor='mm')
-    fa(draw, 'قیمت بازار • تومان', (540, 394), 29, anchor='mm', fill=MUTED)
+    fa(draw, 'قیمت بازار (تومان)', (540, 394), 29, anchor='mm', fill=MUTED)
     draw.rounded_rectangle((50, 430, 1030, 485), 18, fill='#DDECE4')
     for text, x, width in [('نوع', 1005, 220), ('قیمت (تومان)', 630, 265), ('۲۴ ساعت', 345, 150), ('۱ ماه', 145, 155)]:
         fa(draw, text, (x, 458), 25, True, anchor='mm' if text != 'نوع' else 'rm', width=width)
     for i, row in enumerate(snapshot['rows']):
-        y = 496 + i * 76 + (48 if i >= 5 else 0)
-        if i == 5:
+        y = row_y(i)
+        if i in (0, 5):
             draw.rounded_rectangle((50, y - 46, 1030, y - 9), 18, fill='#F5EDD8')
-            fa(draw, 'طلا', (540, y - 27), 28, True, '#A87322', 'mm')
+            fa(draw, 'سکه' if i == 0 else 'طلا', (540, y - 27), 28, True, '#A87322', 'mm')
         draw.rounded_rectangle((50, y, 1030, y + 68), 20, fill='white' if i % 2 == 0 else '#E4EFE7')
-        fa(draw, row['name'], (1006, y + 34), 30, True, width=249)
+        icon = coin_icon if i < 5 else gold_icon
+        image.paste(icon, (964, y + 8), icon)
+        fa(draw, row['name'], (951, y + 34), 30, True, width=190)
         fa(draw, f"{int(Decimal(row['price'])):,}", (630, y + 34), 34, True, anchor='mm', width=300)
         for key, x in [('day', 345), ('month', 145)]:
             value = row[key]
@@ -85,15 +106,13 @@ def render(snapshot, output, asset_root, *, preview=False):
                 color = GREEN if parsed >= 0 else '#BD534D'
                 # Isolate financial signs/percentages as LTR; prices and date use Persian digits.
                 draw.text((x, y + 34), f'{parsed:+.2f}%', font=font(27, True), fill=color, anchor='mm')
-    draw.rounded_rectangle((50, 1110, 1030, 1168), 18, fill='white')
-    fa(draw, '— یعنی سابقه معتبر برای مقایسه موجود نیست', (540, 1139), 24, anchor='mm', fill=MUTED, width=940)
-    quotes, source_names, _ = source_details(snapshot)
+    quotes, _, _ = source_details(snapshot)
     oldest = min(datetime.fromisoformat(x['updated_at']) for x in quotes).astimezone(TEHRAN)
     clock = oldest.strftime('%H:%M').translate(DIGITS)
     fa(draw, 'قدیمی‌ترین نرخ منبع: ' + clock + ' تهران', (540, 1205), 25, anchor='mm', fill=MUTED)
     fa(draw, 'قیمت‌ها صرفاً جهت اطلاع‌رسانی است.', (540, 1245), 25, anchor='mm', fill=MUTED)
     draw.line((64, 1280, 1016, 1280), fill='#D5E4DA', width=2)
-    draw.text((64, 1310), 'Sources: ' + source_names, font=font(22), fill=MUTED, anchor='lm')
+    fa(draw, 'بازار تهران', (64, 1310), 24, anchor='lm', fill=MUTED)
     draw.text((1016, 1310), 'kiani.exchange', font=font(24, True), fill=GREEN, anchor='rm')
     prefix = 'kiani-iran-gold-' + datetime.fromisoformat(snapshot['generated_at']).astimezone(TEHRAN).strftime('%Y%m%d-%H%M%S-')
     path = output / (prefix + uuid.uuid4().hex[:8] + '.jpg')
@@ -104,7 +123,7 @@ def render(snapshot, output, asset_root, *, preview=False):
 
 def caption(snapshot, asset_root):
     fa_date, en_date, clock = labels(datetime.fromisoformat(snapshot['generated_at']), asset_root)
-    quotes, source_names, source_urls = source_details(snapshot)
+    quotes, _, _ = source_details(snapshot)
     policy = ('قیمت بازار به تومان؛ هر قیمت با دست‌کم دو منبع هم‌خوان تطبیق داده شده است. '
               'نرخ نمایش‌داده‌شده از یکی از منابع تأییدشده انتخاب می‌شود؛ منابع نامعتبر حذف می‌شوند.'
               if snapshot.get('schema_version') == 2 else 'قیمت بازار به تومان؛ نرخ مبنا TGJU پس از تطبیق با DolarChand.')
@@ -114,7 +133,6 @@ def caption(snapshot, asset_root):
         lines.append(f"{row['name']}: {int(Decimal(row['price'])):,}\n۲۴ ساعت / ۳۰ روز: {' / '.join(changes)}")
     oldest = min(datetime.fromisoformat(x['updated_at']) for x in quotes).astimezone(TEHRAN)
     lines.extend(['زمان بررسی: ' + clock + ' تهران\nقدیمی‌ترین نرخ منبع: ' + oldest.strftime('%H:%M') + ' تهران',
-                  '— یعنی سابقه تأییدشده برای مقایسه نداریم. تغییرات از پست‌های موفق قبلی، نزدیک به ۲۴ ساعت و ۳۰ روز، محاسبه می‌شوند.',
-                  'قیمت‌ها صرفاً جهت اطلاع‌رسانی است.\nمنابع: ' + source_names + '\n' + '\n'.join(source_urls),
+                  'قیمت‌ها صرفاً جهت اطلاع‌رسانی است.\nبازار تهران',
                   'kiani.exchange'])
     return '\n\n'.join(lines)
