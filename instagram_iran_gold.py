@@ -20,6 +20,8 @@ import uuid
 from iran_gold_data import GoldError, TEHRAN, UTC, SPEC, collect, percent, stamp, validate
 from instagram_iran_gold_renderer import ICON_FILES, TEMPLATE_VERSION, caption, render
 from instagram_economic_calendar_renderer import labels
+import global_metals_data as global_metals
+import instagram_global_metals_renderer as metals_renderer
 
 STATE = Path.home() / '.local/state/kiani-instagram-iran-gold'
 PUBLIC = Path('/var/www/peerexo.com/public/instagram-rates')
@@ -28,7 +30,8 @@ FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'iran_gold_servix.py', 'ins
          'economic_calendar_data.py', 'instagram_economic_calendar_renderer.py', 'tests/test_instagram_iran_gold.py',
          'tests/test_iran_gold_servix.py', 'tests/test_iran_gold_template.py',
          'deploy/instagram-iran-gold/activate_servix.py',
-         'deploy/instagram-iran-gold/activate_template.py') + ICON_FILES
+         'deploy/instagram-iran-gold/activate_template.py', 'global_metals_data.py',
+         'instagram_global_metals_renderer.py', 'deploy/instagram-iran-gold/activate_metals.py') + ICON_FILES
 ASSETS = ('assets/instagram/kiani-logo.svg', 'fonts/Vazirmatn-Regular.ttf', 'fonts/Vazirmatn-Bold.ttf')
 
 
@@ -65,6 +68,8 @@ def database(path):
             id TEXT PRIMARY KEY, created_at REAL NOT NULL, runtime_hash TEXT NOT NULL,
             assets_hash TEXT NOT NULL, snapshot_json TEXT NOT NULL, manifest_json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS gold_history (
+            day TEXT PRIMARY KEY, observed_at TEXT NOT NULL, prices_json TEXT NOT NULL, media_id TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS global_metals_history (
             day TEXT PRIMARY KEY, observed_at TEXT NOT NULL, prices_json TEXT NOT NULL, media_id TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS instagram_news_publications (
             day TEXT PRIMARY KEY, status TEXT NOT NULL, started_at REAL NOT NULL,
@@ -105,6 +110,35 @@ def check_changes(con, snapshot):
         raise GoldError('Displayed changes do not match verified publication history.')
 
 
+def metals_comparison(con, moment, hours):
+    candidates = []
+    for r in con.execute('SELECT * FROM global_metals_history ORDER BY day DESC LIMIT 15'):
+        gap = abs((moment-stamp(r['observed_at'])).total_seconds()/3600-hours)
+        values = json.loads(r['prices_json'])
+        if gap <= 1 and set(values) == {'gold','silver'}:
+            candidates.append((gap,r['day'],values))
+    return min(candidates,key=lambda x:(x[0],x[1]))[2] if candidates else {}
+
+
+def add_metals_changes(con, snapshot):
+    now = stamp(snapshot['generated_at'])
+    day, week = metals_comparison(con,now,24), metals_comparison(con,now,168)
+    for r in snapshot['rows']:
+        r.update(day=percent(r['price'],day.get(r['id'])), week=percent(r['price'],week.get(r['id'])))
+
+
+def check_metals(con, snapshot):
+    metal = snapshot.get('global_metals', {})
+    if metal.get('status') != 'verified':
+        return False
+    global_metals.validate(metal)
+    expected = json.loads(json.dumps(metal))
+    add_metals_changes(con,expected)
+    if any(a[k] != b[k] for a,b in zip(expected['rows'],metal['rows']) for k in ('day','week')):
+        raise GoldError('Global-metals comparisons differ from verified publication history.')
+    return True
+
+
 def already(con, day):
     row = con.execute('SELECT status,media_id FROM instagram_news_publications WHERE day=?', (day,)).fetchone()
     if row and row['status'] == 'published':
@@ -141,6 +175,7 @@ def publish(con, snapshot, manifest, assets, *, authorized_day=None, template_te
         raise GoldError('A template test requires an explicit day and the reviewed template version.')
     validate(snapshot, publishing=True, baseline=last_prices(con), authorized_day=authorized_day)
     check_changes(con, snapshot)
+    has_metals = check_metals(con,snapshot)
     day = stamp(snapshot['generated_at']).astimezone(TEHRAN).date().isoformat()
     key = publication_key(con, day, template_test)
     if already(con, key):
@@ -148,9 +183,12 @@ def publish(con, snapshot, manifest, assets, *, authorized_day=None, template_te
     if not os.getenv('INSTAGRAM_USER_ID') or not os.getenv('INSTAGRAM_ACCESS_TOKEN'):
         raise GoldError('Existing private Instagram configuration is not loaded.')
     graph = helper(assets)
-    if len(manifest['image_urls']) != 1:
-        raise GoldError('Expected exactly one gold price board.')
-    graph.verify_public_image(manifest['image_urls'][0])
+    if len(manifest['image_urls']) != (2 if has_metals else 1):
+        raise GoldError('Gold image count differs from the verified global-metals state.')
+    if has_metals and manifest.get('global_metals_version') != global_metals.VERSION:
+        raise GoldError('Global-metals carousel version differs from the reviewed runtime.')
+    for url in manifest['image_urls']:
+        graph.verify_public_image(url)
     with con:
         con.execute('''INSERT INTO instagram_news_publications(day,status,started_at,manifest_json)
             VALUES (?,'preparing',?,?) ON CONFLICT(day) DO UPDATE SET status='preparing',
@@ -158,7 +196,17 @@ def publish(con, snapshot, manifest, assets, *, authorized_day=None, template_te
             manifest_json=excluded.manifest_json,error_type=NULL''', (key, time.time(), json.dumps(manifest, ensure_ascii=False)))
     final_started = False
     try:
-        parent = graph._create_container({'image_url': manifest['image_urls'][0], 'caption': manifest['caption']})
+        if has_metals:
+            children = []
+            for url in manifest['image_urls']:
+                child = graph._create_container({'image_url':url, 'is_carousel_item':'true'})
+                if not re.fullmatch(r'\d+',str(child)):
+                    raise GoldError('Invalid carousel child container ID.')
+                graph._wait_for_container(child)
+                children.append(str(child))
+            parent = graph._create_container({'media_type':'CAROUSEL','children':','.join(children),'caption':manifest['caption']})
+        else:
+            parent = graph._create_container({'image_url': manifest['image_urls'][0], 'caption': manifest['caption']})
         if not re.fullmatch(r'\d+', str(parent)):
             raise GoldError('Invalid Instagram container ID.')
         with con:
@@ -168,6 +216,8 @@ def publish(con, snapshot, manifest, assets, *, authorized_day=None, template_te
         # can turn a now-stale board into a post by reusing the collection timestamp.
         validate(snapshot, publishing=True, baseline=last_prices(con), authorized_day=authorized_day)
         check_changes(con, snapshot)
+        if check_metals(con,snapshot) != has_metals:
+            raise GoldError('Global-metals state changed during preparation.')
         with con:
             con.execute("UPDATE instagram_news_publications SET status='publishing' WHERE day=?", (key,))
         final_started = True
@@ -179,6 +229,10 @@ def publish(con, snapshot, manifest, assets, *, authorized_day=None, template_te
             if not template_test:
                 con.execute('INSERT INTO gold_history VALUES (?,?,?,?)',
                             (day, snapshot['generated_at'], json.dumps({r['id']: r['price'] for r in snapshot['rows']}), media))
+                if has_metals:
+                    metal = snapshot['global_metals']
+                    con.execute('INSERT INTO global_metals_history VALUES (?,?,?,?)',
+                        (day,metal['generated_at'],json.dumps({r['id']:r['price'] for r in metal['rows']}),media))
         print('Published Iran gold ' + ('template test' if template_test else 'board') + ' (media id: ' + str(media) + ').')
     except BaseException as exc:
         with con:
@@ -208,6 +262,7 @@ def main():
     actions.add_argument('--publish-now-on', metavar='YYYY-MM-DD')
     actions.add_argument('--template-test-on', metavar='YYYY-MM-DD')
     parser.add_argument('--require-servix', action='store_true')
+    parser.add_argument('--require-metals', action='store_true')
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--self-check', action='store_true')
     parser.add_argument('--asset-root', type=Path, default=Path.home() / 'kiani-instagram-publisher')
@@ -239,6 +294,7 @@ def main():
             folder = args.state / 'runs' / (now.strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
             folder.mkdir(parents=True, mode=0o700)
             snapshot = collect(last_prices(con))
+            snapshot['global_metals'] = global_metals.collect() if snapshot['status']=='verified' else {'status':'blocked','reason':'Iran board unavailable.'}
             manifest = {}
             if snapshot['status'] == 'verified':
                 validate(snapshot, baseline=last_prices(con))
@@ -248,18 +304,34 @@ def main():
                 output.mkdir(parents=True, exist_ok=True, mode=0o755); output.chmod(0o755)
                 images = render(snapshot, output, args.asset_root, preview=not publishing)
                 text = caption(snapshot, args.asset_root)
+                metal = snapshot['global_metals']
+                if metal.get('status') == 'verified':
+                    global_metals.validate(metal)
+                    add_metals_changes(con,metal)
+                    images += metals_renderer.render(metal,output,args.asset_root,preview=not publishing)
+                    text += '\n\n'+metals_renderer.caption(metal)
                 if len(text) > 2200:
                     raise GoldError('Gold caption exceeds Instagram capacity.')
                 manifest = dict(kind='iran_gold', images=images,
                     image_urls=[BASE + '/' + segment + '/' + Path(p).name for p in images],
                     caption=text, generated_at=snapshot['generated_at'], timezone='Asia/Tehran',
                     publication_mode='owner_requested_template_test' if args.template_test_on else 'owner_requested_once' if args.publish_now_on else 'scheduled' if publishing else 'preview',
-                    authorized_day=authorized_day, template_version=TEMPLATE_VERSION)
+                    authorized_day=authorized_day, template_version=TEMPLATE_VERSION,
+                    global_metals_version=global_metals.VERSION, global_metals_status=metal.get('status'))
                 for url in manifest['image_urls']:
                     print('Gold slide:', url, flush=True)
             report = dict(snapshot=snapshot, manifest=manifest)
             (folder / 'audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
             print('Gold source checks:', json.dumps(snapshot['health'], ensure_ascii=False), flush=True)
+            metal = snapshot['global_metals']
+            print('Global-metals source checks:',json.dumps(metal.get('health',{}),ensure_ascii=False),flush=True)
+            if metal.get('status') == 'verified':
+                print('Global-metals consensus:',json.dumps(metal['rows'],ensure_ascii=False),flush=True)
+            else:
+                print('Global-metals slide omitted:',metal.get('reason','Verification unavailable.'),flush=True)
+            if args.require_metals and metal.get('status') != 'verified':
+                print('Private audit:',folder/'audit.json',flush=True)
+                raise GoldError('This upgrade requires a newly verified two-slide preview; nothing activated.')
             if args.require_servix:
                 contributions = [r for r in snapshot.get('rows', []) if 'servix' in r.get('sources', [])]
                 if len(contributions) < 2:

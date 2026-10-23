@@ -1,4 +1,72 @@
-# Iran gold: approved coin/gold template
+# Iran gold and verified global metals carousel
+
+## Current two-slide upgrade
+
+Use `run_metals.py --activate` over the confirmed PR73 installation. It renders
+a required live two-slide preview, then verifies a NEW source collection before
+switching the gold launcher. It does not publish immediately. The existing
+10:00 Asia/Tehran cron job, credentials, Servix key, publication history and Story
+registration are preserved. Exact PR73 hashes, current launcher, active UTC cron,
+runtime/icons/fonts preview and concurrent edits are checked, with backups and
+guarded rollback. Nineteen small files; no full checkout or new environment.
+
+Slide 1 retains all seven verified Iranian gold/coin prices. Slide 2 uses the
+approved global-metals design: XAU/USD and XAG/USD per troy ounce, English dollar
+decimals/ratio, Persian and Gregorian dates, original source time in Tehran,
+and day/week changes from verified successful publication history. Until a
+matching observation exists near 24 hours or seven days earlier, that change
+is a dash. No copied demo percentages or inferred historical returns.
+
+### Quote contract and consensus
+
+- Servix exact codes GOLD_OUNCE_USD and SILVER_OUNCE_USD. Explicit USD unit,
+  exact label/instrument, healthy ACCEPTED quality, matching catalog/current
+  businessTime and value, ordered sides, exact midpoint and <=0.5% internal
+  spread. Existing private key is read without printing it. Fixed HTTPS URLs,
+  no redirects, bounded reads/timeouts, no raw error/header/key logging.
+- Alanchand visible dollar rows must equal structured USD prices. Reuse the
+  confirmed Persian/Gregorian/weekday/board-clock/offset checks. Offer expiry
+  never substitutes for the original board time.
+- DolarChand exact global ounce definitions plus explicit priceUsd field,
+  buy/sell midpoint and visible values, dated ISO snapshot matching its visible
+  clock. No rial/toman conversion is applied to global quotes.
+- A unique largest agreeing cluster is needed for EACH metal, with Servix
+  included and at least one public publisher. Range/midpoint gap <=0.5%; source
+  times within ten minutes, including both metals used for the ratio. Sources
+  must be from the current Tehran day and <=30 minutes old, future skew <=60s.
+  Servix's per-instrument businessTime is required as the freshness anchor:
+  refreshing public board timestamps alone cannot establish a new market tick.
+- Select an actual agreeing quote nearest the cluster median. Do not average
+  quotes into an invented price. Ratio uses the two actual selected unrounded
+  USD prices. Recompute and revalidate sources, ratio and changes before the
+  final publish request, including after carousel container preparation.
+- Two websites/services are not asserted to have independent upstream feeds.
+  Source observations, quality, hashes, exclusions and consensus remain private.
+
+If global metals are not verified, including stale quotes during closures, omit
+slide 2 and permit only the verified Iran board. An invalid Iran board still
+blocks the whole post. A source becoming invalid after a two-slide carousel is
+prepared blocks final publication. It never publishes a stale prepared slide.
+
+Two slides are staged as two carousel children and one CAROUSEL parent; exactly
+one successful Feed per Tehran day remains enforced. Uncertain final outcomes
+stay needs_review. Only successful scheduled metals posts enter the comparison
+history; manual design tests never become a baseline. Existing Story worker
+uses slide 1, thirty minutes after actual successful Feed publication. Gold and
+global metals remain outside the news-deletion categories.
+
+### Evidence and deployment status
+
+Owner-provided authenticated Servix observations at 2026-10-23T17:46:55Z were
+ACCEPTED and fresh for both instruments. Compared with separately collected
+Alanchand and DolarChand boards at 17:48Z: maximum gap 0.0850% gold and 0.0371%
+silver; source times were synchronized. These dated observations informed the
+adapter contract and layout; they are never reused as deployment/live prices.
+Selenium must collect new sources, render both slides and complete activation
+before the upgrade can be described as deployed. The command contacts no Meta
+publishing endpoint during preview or installation.
+
+The sections below describe the earlier PR73/PR72 releases.
 
 ## Current template upgrade
 
