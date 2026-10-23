@@ -17,6 +17,7 @@ PROVIDERS = {
     'tgju': ('TGJU', 'https://www.tgju.org/gold-chart'),
     'dolarchand': ('DolarChand', 'https://dolarchand.com/en/gold-silver'),
     'alanchand': ('Alanchand', ALAN),
+    'servix': ('Servix', 'https://servix.cc/api/gold'),
 }
 ALAN_NAMES = {
     'emami': 'سکه امامی (طرح جدید)', 'bahar': 'سکه بهار آزادی',
@@ -132,6 +133,9 @@ def quote_price(provider, asset, quote, now):
         expected_url = ALAN
         if quote['unit'] != 'toman' or number(quote['original_rial']) / 10 != price or price != price.to_integral_value():
             raise GoldError('Alanchand exact rial/toman conversion failed.')
+    elif provider == 'servix':
+        from iran_gold_servix import validate_quote
+        return validate_quote(asset, quote, now)
     else:
         raise GoldError('Unreviewed consensus provider.')
     if quote.get('source_url') != expected_url or not re.fullmatch('[0-9a-f]{64}', quote.get('page_hash', '')):
@@ -177,8 +181,22 @@ def assess(providers, now, baseline=None):
         def spread(ids):
             low, high = min(eligible[k] for k in ids), max(eligible[k] for k in ids)
             return (high - low) / ((high + low) / 2) * 100
-        clusters = [ids for size in range(2, len(eligible) + 1)
-                    for ids in combinations(sorted(eligible), size) if spread(ids) <= limit]
+        primaries = sorted(k for k in eligible if k != 'servix')
+        primary_clusters = [ids for size in range(2, len(primaries) + 1)
+                            for ids in combinations(primaries, size) if spread(ids) <= limit]
+        primary_winners = []
+        if primary_clusters:
+            primary_size = max(map(len, primary_clusters))
+            primary_winners = [ids for ids in primary_clusters if len(ids) == primary_size]
+        if len(primary_winners) == 1:
+            # A supplementary quote must not veto a valid original consensus.
+            chosen = primary_winners[0]
+            if 'servix' in eligible and spread((*chosen, 'servix')) <= limit:
+                chosen = tuple(sorted((*chosen, 'servix')))
+            clusters = [chosen]
+        else:
+            clusters = [ids for size in range(2, len(eligible) + 1)
+                        for ids in combinations(sorted(eligible), size) if spread(ids) <= limit]
         if not clusters:
             raise GoldError(f'No two current providers agree for {asset}; eligible={sorted(eligible)}; rejected={rejected}.', 'quorum')
         largest = max(map(len, clusters))
@@ -190,7 +208,10 @@ def assess(providers, now, baseline=None):
         # manufacturing an average market quote. Provider name breaks exact ties.
         prices = sorted(eligible[k] for k in accepted)
         median = (prices[(largest - 1) // 2] + prices[largest // 2]) / 2
-        selected = min(accepted, key=lambda k: (abs(eligible[k] - median), k))
+        # Servix corroborates a primary publisher; it never supplies the displayed
+        # price itself. Two-provider consensus always contains a primary publisher.
+        selectable = [k for k in accepted if k != 'servix']
+        selected = min(selectable, key=lambda k: (abs(eligible[k] - median), k))
         price = eligible[selected].quantize(Decimal('1'), rounding=ROUND_HALF_UP)
         if baseline and asset in baseline and abs(price / number(baseline[asset]) - 1) * 100 > 7:
             raise GoldError(asset + ' moved over 7% from the last successful board; manual review needed.', 'jump')
@@ -210,13 +231,17 @@ def collect(baseline=None):
         provider, asset = key
         try:
             now = datetime.now(UTC)
-            value = tgju_one(asset, now) if asset else (dolar(now) if provider == 'dolarchand' else alanchand(now))
+            if provider == 'servix':
+                from iran_gold_servix import collect as servix
+                value = servix(now)
+            else:
+                value = tgju_one(asset, now) if asset else (dolar(now) if provider == 'dolarchand' else alanchand(now))
             return key, value, None
         except Exception as exc:
             return key, None, dict(code=exc.code if isinstance(exc, GoldError) else 'source',
                 error_type=type(exc).__name__, http_status=exc.code if isinstance(exc, HTTPError) else None,
                 detail=str(exc) if isinstance(exc, GoldError) else 'Provider request/parsing failed.')
-    jobs = [('dolarchand', None), ('alanchand', None), *[('tgju', asset) for asset in SPEC]]
+    jobs = [('servix', None), ('dolarchand', None), ('alanchand', None), *[('tgju', asset) for asset in SPEC]]
     with ThreadPoolExecutor(max_workers=5) as pool:
         tasks = [pool.submit(one, job) for job in jobs]
         for completed in as_completed(tasks):
@@ -230,7 +255,14 @@ def collect(baseline=None):
             else:
                 health[provider].update(status='blocked' if error else 'ok', **(error or {}))
                 if value:
-                    providers[provider] = value
+                    if provider == 'servix':
+                        providers[provider] = value['quotes']
+                        health[provider]['instruments'] = value['rejected']
+                        health[provider]['status'] = 'ok' if len(value['quotes']) == len(SPEC) else 'partial' if value['quotes'] else 'blocked'
+                        health[provider]['quality'] = {a: dict(status=q['catalog_record']['qualityStatus'],
+                            detail=q['catalog_record']['qualityMessage']) for a, q in value['quotes'].items()}
+                    else:
+                        providers[provider] = value
     count = len(providers['tgju'])
     health['tgju']['status'] = 'ok' if count == len(SPEC) else 'partial' if count else 'blocked'
     snapshot = dict(schema_version=2, generated_at=datetime.now(UTC).isoformat(), timezone='Asia/Tehran',
@@ -249,3 +281,4 @@ def accepted_quotes(snapshot):
 
 def accepted_sources(snapshot):
     return sorted({source for row in snapshot['rows'] for source in row['sources']})
+

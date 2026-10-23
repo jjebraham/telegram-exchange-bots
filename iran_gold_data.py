@@ -298,7 +298,7 @@ def collect(baseline=None):
     return collect_quorum(baseline)
 
 
-def validate(snapshot, *, publishing=False, now=None, baseline=None):
+def validate(snapshot, *, publishing=False, now=None, baseline=None, authorized_day=None):
     now = now or datetime.now(UTC)
     if snapshot.get('layout_sample') or snapshot.get('status') != 'verified' or snapshot.get('timezone') != 'Asia/Tehran':
         raise GoldError('Only a verified gold snapshot may be rendered/published.')
@@ -319,7 +319,11 @@ def validate(snapshot, *, publishing=False, now=None, baseline=None):
         raise GoldError('Displayed gold board differs from its verified source values.')
     if publishing:
         local = now.astimezone(TEHRAN)
-        if not time(10) <= local.time() < time(10, 15):
+        if authorized_day is not None:
+            if (authorized_day != local.date().isoformat() or
+                    generated.astimezone(TEHRAN).date() != local.date()):
+                raise GoldError('One-time publication is authorized only for the specified current Tehran day.')
+        elif not time(10) <= local.time() < time(10, 15):
             raise GoldError('Gold posting is allowed only 10:00–10:15 Tehran.')
 
 
@@ -330,3 +334,4 @@ def percent(current, previous):
     if abs(value) > 100:
         return None  # Do not display a suspect historical comparison.
     return str(value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+

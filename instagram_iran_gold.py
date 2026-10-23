@@ -24,8 +24,9 @@ from instagram_economic_calendar_renderer import labels
 STATE = Path.home() / '.local/state/kiani-instagram-iran-gold'
 PUBLIC = Path('/var/www/peerexo.com/public/instagram-rates')
 BASE = 'https://peerexo.com/instagram-rates'
-FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
-         'economic_calendar_data.py', 'instagram_economic_calendar_renderer.py', 'tests/test_instagram_iran_gold.py')
+FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'iran_gold_servix.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
+         'economic_calendar_data.py', 'instagram_economic_calendar_renderer.py', 'tests/test_instagram_iran_gold.py',
+         'tests/test_iran_gold_servix.py')
 ASSETS = ('assets/instagram/kiani-logo.svg', 'fonts/Vazirmatn-Regular.ttf', 'fonts/Vazirmatn-Bold.ttf')
 
 
@@ -120,10 +121,10 @@ def helper(root):
     return module
 
 
-def publish(con, snapshot, manifest, assets):
+def publish(con, snapshot, manifest, assets, *, authorized_day=None):
     if snapshot.get('status') != 'verified':
         raise GoldError('Blocked gold board cannot reach Instagram.')
-    validate(snapshot, publishing=True, baseline=last_prices(con))
+    validate(snapshot, publishing=True, baseline=last_prices(con), authorized_day=authorized_day)
     check_changes(con, snapshot)
     day = stamp(snapshot['generated_at']).astimezone(TEHRAN).date().isoformat()
     if already(con, day):
@@ -149,7 +150,7 @@ def publish(con, snapshot, manifest, assets):
         graph._wait_for_container(parent)
         # Verify again after rendering, URL retrieval and Meta preparation. Nothing
         # can turn a now-stale board into a post by reusing the collection timestamp.
-        validate(snapshot, publishing=True, baseline=last_prices(con))
+        validate(snapshot, publishing=True, baseline=last_prices(con), authorized_day=authorized_day)
         check_changes(con, snapshot)
         with con:
             con.execute("UPDATE instagram_news_publications SET status='publishing' WHERE day=?", (day,))
@@ -176,11 +177,16 @@ def self_check(runtime, assets):
     env['PYTHONPATH'] = libs + os.pathsep + env.get('PYTHONPATH', '')
     subprocess.run([sys.executable, str(runtime / 'tests/test_instagram_iran_gold.py')],
                    check=True, env=env, cwd=runtime, timeout=45)
+    subprocess.run([sys.executable, str(runtime / 'tests/test_iran_gold_servix.py')],
+                   check=True, env=env, cwd=runtime, timeout=45)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--publish', action='store_true')
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument('--publish', action='store_true')
+    actions.add_argument('--publish-now-on', metavar='YYYY-MM-DD')
+    parser.add_argument('--require-servix', action='store_true')
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--self-check', action='store_true')
     parser.add_argument('--asset-root', type=Path, default=Path.home() / 'kiani-instagram-publisher')
@@ -192,17 +198,20 @@ def main():
         self_check(Path(__file__).parent, args.asset_root)
         return 0
     now = datetime.now(TEHRAN)
+    publishing = bool(args.publish or args.publish_now_on)
+    if args.publish_now_on and args.publish_now_on != now.date().isoformat():
+        raise GoldError('One-time publication date must be the current Tehran day.')
     if args.publish and not wall_time(10) <= now.time() < wall_time(10, 15):
         raise GoldError('Gold publication is allowed only 10:00–10:15 Tehran.')
     args.state.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with locked(args.state / ('publication.lock' if args.publish else 'preview.lock')):
+    with locked(args.state / ('publication.lock' if publishing else 'preview.lock')):
         con = database(args.state / 'gold.sqlite3')
         try:
             if args.status:
                 for row in con.execute('SELECT day,status,media_id,finished_at,error_type FROM instagram_news_publications ORDER BY day DESC LIMIT 8'):
                     print(json.dumps(dict(row)))
                 return 0
-            if args.publish and already(con, now.date().isoformat()):
+            if publishing and already(con, now.date().isoformat()):
                 return 0
             folder = args.state / 'runs' / (now.strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
             folder.mkdir(parents=True, mode=0o700)
@@ -211,34 +220,41 @@ def main():
             if snapshot['status'] == 'verified':
                 validate(snapshot, baseline=last_prices(con))
                 add_changes(con, snapshot)
-                segment = 'iran-gold' if args.publish else 'iran-gold-preview'
+                segment = 'iran-gold' if publishing else 'iran-gold-preview'
                 output = PUBLIC / segment
                 output.mkdir(parents=True, exist_ok=True, mode=0o755); output.chmod(0o755)
-                images = render(snapshot, output, args.asset_root, preview=not args.publish)
+                images = render(snapshot, output, args.asset_root, preview=not publishing)
                 text = caption(snapshot, args.asset_root)
                 if len(text) > 2200:
                     raise GoldError('Gold caption exceeds Instagram capacity.')
                 manifest = dict(kind='iran_gold', images=images,
                     image_urls=[BASE + '/' + segment + '/' + Path(p).name for p in images],
-                    caption=text, generated_at=snapshot['generated_at'], timezone='Asia/Tehran')
+                    caption=text, generated_at=snapshot['generated_at'], timezone='Asia/Tehran',
+                    publication_mode='owner_requested_once' if args.publish_now_on else 'scheduled' if publishing else 'preview',
+                    authorized_day=args.publish_now_on)
                 for url in manifest['image_urls']:
                     print('Gold slide:', url, flush=True)
             report = dict(snapshot=snapshot, manifest=manifest)
             (folder / 'audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
             print('Gold source checks:', json.dumps(snapshot['health'], ensure_ascii=False), flush=True)
+            if args.require_servix:
+                contributions = [r for r in snapshot.get('rows', []) if 'servix' in r.get('sources', [])]
+                if len(contributions) < 2:
+                    print('Private audit:', folder / 'audit.json', flush=True)
+                    raise GoldError('Live Servix corroboration of at least two prices is required for this upgrade/post.')
             if snapshot.get('schema_version') == 2 and snapshot['status'] == 'verified':
                 print('Gold consensus:', json.dumps({row['id']: dict(sources=row['sources'],
                     selected=row['selected_source'], price=row['price'], agreement_pct=row['agreement_pct'],
                     excluded=row['rejected_sources']) for row in snapshot['rows']}, ensure_ascii=False), flush=True)
-            if not args.publish:
+            if not publishing:
                 with con:
                     con.execute('INSERT INTO gold_previews VALUES (?,?,?,?,?,?)',
                         (folder.name, time.time(), fingerprint(Path(__file__).parent), fingerprint(args.asset_root, ASSETS),
                          json.dumps(snapshot, ensure_ascii=False), json.dumps(manifest, ensure_ascii=False)))
             if snapshot['status'] != 'verified':
                 print('SKIPPED gold post:', snapshot['reason'], 'Nothing published.', flush=True)
-            elif args.publish:
-                publish(con, snapshot, manifest, args.asset_root)
+            elif publishing:
+                publish(con, snapshot, manifest, args.asset_root, authorized_day=args.publish_now_on)
             else:
                 print('Verified preview only. No Instagram API contact or schedule change.')
             print('Private audit:', folder / 'audit.json', flush=True)
@@ -253,3 +269,4 @@ if __name__ == '__main__':
     except Exception as exc:
         print('ERROR:', str(exc) if isinstance(exc, GoldError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
+
