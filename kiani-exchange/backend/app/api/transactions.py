@@ -1,17 +1,22 @@
+from ..runtime_credentials import credential
+from ..shahidi_rate_client import fetch_shahidi_snapshot
 import aiohttp
+import asyncio
 import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
+from ..admin_auth import optional_admin_session
+from ..canonical_try_rates import get_canonical_try_rates
 from ..database import get_db
 from ..auth import get_current_user_id
 from ..price_cache import price_cache
 from ..exchange_math import calculate_order, derive_rates
 
-ADMIN_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
+ADMIN_BOT_TOKEN = credential("KIANI_TRANSACTION_BOT_TOKEN")
 ADMIN_CHAT_ID = 2043363119
-PROXY_URL = "http://jjebraham-25:Amir1234@p.webshare.io:80"
+PROXY_URL = credential("KIANI_PRIVATE_PROXY_TRANSACTIONS_1")
 
 router = APIRouter()
 
@@ -53,8 +58,8 @@ class NotifyTransactionRequest(BaseModel):
 
 
 class StatusUpdateRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     status: str
     receipt_photo_url: Optional[str] = None
     receipt_description: Optional[str] = None
@@ -103,14 +108,57 @@ def _require_roles(username: str, password: str, allowed: set[str]) -> str:
     return role
 
 
+def _require_admin_access(
+    session: dict[str, str] | None,
+    allowed: set[str],
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
+    if session is not None:
+        role = session.get("role")
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="admin_role_forbidden")
+        return str(role)
+    if username is None or password is None:
+        raise HTTPException(status_code=401, detail="admin_auth_required")
+    return _require_roles(username, password, allowed)
+
+
 @router.post("/transactions")
 async def create_transaction(
     req: TransactionRequest,
     user_id: int = Depends(get_current_user_id),
 ):
-    usdt_irr = await price_cache.get_usdt_irr()
-    usdt_try = await price_cache.get_usdt_try()
-    rates = derive_rates(usdt_irr, usdt_try)
+    if req.exchange_type in {"buy_lira", "sell_lira"}:
+        try:
+            canonical_try = await asyncio.to_thread(get_canonical_try_rates)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="canonical_try_rate_unavailable",
+            ) from exc
+        rates = {
+            "buy_lira": float(canonical_try["buy_lira"]),
+            "sell_lira": float(canonical_try["sell_lira"]),
+        }
+    else:
+        # Use the same final customer prices shown by /api/rates/current.
+        # Fail closed if Shahidi cannot supply validated rates.
+        try:
+            customer_rates, _raw_market = await asyncio.to_thread(
+                fetch_shahidi_snapshot
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="customer_rates_unavailable",
+            ) from exc
+
+        rates = {
+            key: float(value)
+            for key, value in customer_rates.items()
+        }
+
     calculated = calculate_order(req.exchange_type, req.send_amount, rates)
 
     # Prevent negative-net USDT sends
@@ -284,8 +332,17 @@ async def cancel_transaction(
 
 
 @router.post("/admin/transactions/{reference_number}/update-status")
-async def update_transaction_status(reference_number: str, req: StatusUpdateRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def update_transaction_status(
+    reference_number: str,
+    req: StatusUpdateRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
 
     valid_statuses = [
         "Pending",
@@ -325,8 +382,17 @@ async def update_transaction_status(reference_number: str, req: StatusUpdateRequ
 
 
 @router.get("/admin/transactions")
-async def admin_list_transactions(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_list_transactions(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support", "viewer"},
+        username,
+        password,
+    )
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, user_name, user_phone, exchange_pair, exchange_type, send_amount,
@@ -337,8 +403,17 @@ async def admin_list_transactions(username: str, password: str):
 
 
 @router.get("/admin/reports")
-async def admin_reports(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_reports(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support", "viewer"},
+        username,
+        password,
+    )
     with get_db() as conn:
         totals = conn.execute(
             """SELECT COUNT(*) AS total_orders,

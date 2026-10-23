@@ -22,7 +22,10 @@ from decimal import Decimal
 from typing import Mapping
 from zoneinfo import ZoneInfo
 
-from direct_usdt_compare import DirectUsdtQuote, collect_direct_usdt_quotes
+from direct_usdt_compare import DEFAULT_FETCHERS, DirectUsdtQuote, collect_direct_usdt_quotes
+from tabdeal_usdt import fetch_tabdeal_usdt
+from nobitex_usdt import fetch_nobitex_usdt
+from bitpin_usdt import fetch_bitpin_usdt
 from iran_usdt import UsdtExchangeQuote, fetch_usdt_exchange_quotes, filter_usdt_quotes
 from ramzarz_usdt import RamzarzUsdtQuote, fetch_ramzarz_usdt_quotes
 
@@ -48,6 +51,7 @@ DISPLAY_EXCHANGE_NAMES = {
     "آبان تتر": "AbanTether",
     "تبدیل": "Tabdeal",
     "اکسیر": "Exir",
+    "راستین": "Raastin",
 }
 
 
@@ -67,9 +71,48 @@ class HybridUsdtQuote:
     source_time: str | None = None
 
 
+def _from_tabdeal_for_hybrid() -> DirectUsdtQuote:
+    quote = fetch_tabdeal_usdt()
+    return DirectUsdtQuote(
+        exchange="تبدیل",
+        buy_toman=quote.best_ask_toman,
+        sell_toman=quote.best_bid_toman,
+        buy_quantity=quote.best_ask_quantity,
+        sell_quantity=quote.best_bid_quantity,
+    )
+
+
+
+def _from_nobitex_for_hybrid() -> DirectUsdtQuote:
+    q = fetch_nobitex_usdt()
+    return DirectUsdtQuote(
+        exchange="نوبیتکس",
+        buy_toman=q.best_sell_toman,
+        sell_toman=q.best_buy_toman,
+    )
+
+
+def _from_bitpin_for_hybrid() -> DirectUsdtQuote:
+    q = fetch_bitpin_usdt()
+    return DirectUsdtQuote(
+        exchange="بیت پین",
+        buy_toman=q.best_ask_toman,
+        sell_toman=q.best_bid_toman,
+        buy_quantity=q.best_ask_quantity,
+        sell_quantity=q.best_bid_quantity,
+    )
+
+
 def _safe_direct() -> tuple[list[DirectUsdtQuote], dict[str, str]]:
     try:
-        return collect_direct_usdt_quotes(min_sources=1)
+        return collect_direct_usdt_quotes(
+            fetchers=DEFAULT_FETCHERS + (
+                ("Tabdeal", _from_tabdeal_for_hybrid),
+                ("Nobitex", _from_nobitex_for_hybrid),
+                ("Bitpin", _from_bitpin_for_hybrid),
+            ),
+            min_sources=1,
+        )
     except Exception as exc:
         logger.warning("All direct USDT sources failed: %s: %s", type(exc).__name__, exc)
         return [], {"direct": f"{type(exc).__name__}: {exc}"[:300]}
@@ -209,6 +252,19 @@ def merge_hybrid_usdt_quotes(
 
 def collect_hybrid_usdt_snapshot() -> HybridUsdtCollection:
     # The three source families are independent and can be fetched in parallel.
+    import akamai_rate_feed as feed_module
+    if feed_module.enabled():
+        feed = feed_module.read_validated_feed()
+        quotes = [HybridUsdtQuote(
+            exchange=q["exchange"], buy_toman=Decimal(q["buy_toman"]),
+            sell_toman=Decimal(q["sell_toman"]), change_pct=None,
+            source="direct", source_time=q["freshness_upper_bound_utc"],
+        ) for q in feed["quotes"]]
+        health = {"usdt:direct:"+q["provider"]: None for q in feed["quotes"]}
+        for row in feed.get("diagnostics", []):
+            if row.get("provider") not in feed["providers"]:
+                health["usdt:direct:"+str(row.get("provider"))] = row.get("error", "source excluded")
+        return HybridUsdtCollection(quotes=quotes, source_health=health)
     with ThreadPoolExecutor(max_workers=3) as executor:
         direct_future = executor.submit(_safe_direct)
         tgju_future = executor.submit(_safe_tgju)
@@ -396,3 +452,5 @@ def build_hybrid_usdt_post(
 
 def fetch_and_build_hybrid_usdt_post() -> str:
     return build_hybrid_usdt_post(collect_hybrid_usdt_quotes())
+
+# Kiani Akamai cutover v2

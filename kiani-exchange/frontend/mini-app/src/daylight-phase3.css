@@ -1,0 +1,549 @@
+/* Kiani Exchange — Daylight Phase 3
+   Production interaction, navigation, mobile, accessibility and status polish.
+   Customer UI only: all selectors remain scoped below [data-ke]. */
+
+[data-ke] {
+  --ke-nav-h: 70px;
+  --ke-header-h: 62px;
+  --ke-content-max: 720px;
+  --ke-ring: 0 0 0 3px color-mix(in srgb, var(--ke-accent) 20%, transparent);
+  --ke-divider: color-mix(in srgb, var(--ke-line) 88%, transparent);
+  --ke-surface-glass: color-mix(in srgb, var(--ke-surface) 92%, transparent);
+  --ke-viewport-height: 100dvh;
+
+  min-height: var(--ke-viewport-height);
+  overscroll-behavior-y: none;
+  text-rendering: optimizeLegibility;
+}
+
+[data-ke] > .min-h-screen {
+  min-height: var(--ke-viewport-height) !important;
+  padding-bottom: calc(var(--ke-nav-h) + var(--ke-safe-bottom) + 18px) !important;
+}
+
+[data-ke] main {
+  width: min(100%, var(--ke-content-max));
+  margin-inline: auto;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   App header: calm, sticky, readable and safe-area aware
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] > .min-h-screen > header {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  min-height: calc(var(--ke-header-h) + var(--ke-safe-top));
+  padding-top: calc(12px + var(--ke-safe-top)) !important;
+  padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)) !important;
+  padding-bottom: 11px !important;
+  background: var(--ke-surface-glass) !important;
+  border-bottom: 1px solid var(--ke-divider) !important;
+  box-shadow: 0 4px 18px -16px rgba(21, 36, 44, .42) !important;
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+}
+
+[data-ke] > .min-h-screen > header h1 {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: var(--ke-ink) !important;
+}
+
+[data-ke] > .min-h-screen > header .text-sm,
+[data-ke] > .min-h-screen > header .text-xs {
+  color: var(--ke-ink-2) !important;
+}
+
+[data-ke] > .min-h-screen > header button {
+  min-height: 38px;
+  border: 1px solid var(--ke-line) !important;
+  background: var(--ke-surface-2) !important;
+  color: var(--ke-ink-2) !important;
+  box-shadow: none !important;
+  transition: background var(--ke-fast), transform var(--ke-fast), border-color var(--ke-fast) !important;
+}
+
+[data-ke] > .min-h-screen > header button:active {
+  transform: scale(.98);
+  background: var(--ke-accent-soft) !important;
+  border-color: color-mix(in srgb, var(--ke-accent) 30%, var(--ke-line)) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Bottom navigation: active indicator + KYC portal integration
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] nav.fixed.bottom-0 {
+  z-index: 60;
+  min-height: calc(var(--ke-nav-h) + var(--ke-safe-bottom));
+  padding-inline: max(8px, env(safe-area-inset-left, 0px)) max(8px, env(safe-area-inset-right, 0px));
+  padding-top: 5px !important;
+  padding-bottom: calc(7px + var(--ke-safe-bottom)) !important;
+  background: var(--ke-surface-glass) !important;
+  box-shadow: 0 -10px 32px -26px rgba(21, 36, 44, .6) !important;
+}
+
+[data-ke] nav.fixed.bottom-0 > div {
+  width: min(100%, 620px);
+  margin-inline: auto;
+  gap: 2px;
+}
+
+[data-ke] nav.fixed.bottom-0 button,
+[data-ke] .ke-kyc-nav-button {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 54px;
+  padding: 5px 8px !important;
+  border-radius: 14px;
+  color: var(--ke-muted) !important;
+  transition: color var(--ke-fast), background var(--ke-fast), transform var(--ke-fast) !important;
+}
+
+[data-ke] nav.fixed.bottom-0 button:active,
+[data-ke] .ke-kyc-nav-button:active {
+  transform: translateY(1px) scale(.985);
+}
+
+[data-ke] nav.fixed.bottom-0 button.text-blue-600,
+[data-ke] .ke-kyc-nav-button {
+  color: var(--ke-accent) !important;
+}
+
+[data-ke] nav.fixed.bottom-0 button.text-blue-600::before,
+[data-ke] .ke-kyc-nav-button::before {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  width: 22px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--ke-accent);
+  transform: translateX(-50%);
+  opacity: .95;
+}
+
+[data-ke] nav.fixed.bottom-0 button > span:first-child,
+[data-ke] .ke-kyc-nav-button > span:first-child {
+  line-height: 1;
+  transform: translateY(1px);
+}
+
+[data-ke] nav.fixed.bottom-0 button > span:last-child,
+[data-ke] .ke-kyc-nav-button > span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px !important;
+  line-height: 1.25;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Home: market board + service cards
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] main > div > .p-4:first-child {
+  padding-top: 18px !important;
+}
+
+[data-ke] main > div > .p-4:first-child > .flex.justify-between.items-center.mb-4 {
+  margin-bottom: 12px !important;
+}
+
+[data-ke] main > div > .p-4:first-child > .flex button {
+  min-height: 36px;
+  padding: 6px 11px !important;
+  border: 1px solid color-mix(in srgb, var(--ke-accent) 18%, var(--ke-line));
+  background: var(--ke-accent-soft) !important;
+  color: var(--ke-accent) !important;
+  font-size: 12px !important;
+  font-weight: 650;
+}
+
+[data-ke] .bg-white.rounded-xl.p-4.shadow-md.mb-3 {
+  transition: transform var(--ke-fast), border-color var(--ke-fast), box-shadow var(--ke-fast) !important;
+}
+
+[data-ke] .bg-white.rounded-xl.p-4.shadow-md.mb-3:active {
+  transform: scale(.995);
+  border-color: color-mix(in srgb, var(--ke-accent) 24%, var(--ke-line)) !important;
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 10%, var(--ke-line)) !important;
+  box-shadow: var(--ke-sh) !important;
+  transition: transform var(--ke-fast), box-shadow var(--ke-fast), filter var(--ke-fast) !important;
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button::after {
+  content: '';
+  position: absolute;
+  inset: auto -18px -22px auto;
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.09);
+  pointer-events: none;
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button:active {
+  transform: translateY(1px) scale(.985);
+  filter: saturate(.94);
+}
+
+[data-ke] .grid.grid-cols-2.gap-4.p-4 > button > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 9px !important;
+  border-radius: 13px;
+  background: rgba(255,255,255,.14);
+  font-size: 22px !important;
+  line-height: 1;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Exchange: money-first hierarchy, states, countdown and confirmation
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] main > .p-4 {
+  padding-inline: 14px !important;
+  padding-top: 16px !important;
+}
+
+[data-ke] main > .p-4 > button.mb-4 {
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  color: var(--ke-accent) !important;
+  background: var(--ke-accent-soft);
+  font-size: 13px;
+}
+
+[data-ke] main > .p-4 > .bg-white.rounded-2xl.p-6.shadow-lg {
+  border: 1px solid var(--ke-line);
+  padding: 18px !important;
+  box-shadow: var(--ke-sh) !important;
+}
+
+[data-ke] main > .p-4 > .bg-white.rounded-2xl.p-6.shadow-lg > h2 {
+  margin-bottom: 18px !important;
+}
+
+[data-ke] main input.direction-ltr.text-lg {
+  min-height: 64px;
+  padding: 12px 14px !important;
+  font-size: clamp(24px, 7vw, 32px) !important;
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--ke-ink) !important;
+  caret-color: var(--ke-accent);
+}
+
+[data-ke] main input.direction-ltr.text-lg:focus {
+  box-shadow: var(--ke-ring) !important;
+}
+
+[data-ke] main .bg-green-50.border-2.border-green-200.rounded-xl.p-4 {
+  position: relative;
+  overflow: hidden;
+  min-height: 82px;
+  display: grid;
+  place-items: center;
+  border-width: 1px !important;
+  background: linear-gradient(145deg, var(--ke-accent-soft), color-mix(in srgb, var(--ke-surface) 70%, var(--ke-accent-soft))) !important;
+}
+
+[data-ke] main .bg-green-50.border-2.border-green-200.rounded-xl.p-4::before {
+  content: 'دریافتی';
+  position: absolute;
+  top: 8px;
+  right: 11px;
+  color: var(--ke-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+[data-ke] main .bg-green-50.border-2.border-green-200.rounded-xl.p-4 p {
+  padding-top: 9px;
+  font-size: clamp(27px, 8vw, 36px) !important;
+  font-weight: 500 !important;
+  letter-spacing: -.025em;
+}
+
+[data-ke] main button.w-full.py-4.rounded-xl {
+  min-height: 54px;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  border-radius: 15px !important;
+}
+
+[data-ke] main button:disabled,
+[data-ke] main button.disabled\:opacity-50:disabled {
+  opacity: 1 !important;
+  background: var(--ke-surface-2) !important;
+  color: var(--ke-muted) !important;
+  border: 1px solid var(--ke-line) !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+}
+
+[data-ke] main .text-red-500.text-sm.mt-2,
+[data-ke] main .text-red-500.text-xs.mt-1 {
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: var(--ke-danger-soft);
+  line-height: 1.55;
+}
+
+[data-ke] main .font-mono {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
+}
+
+[data-ke] main .text-3xl.font-bold.text-yellow-600.text-center.font-mono {
+  color: var(--ke-sell) !important;
+  font-size: 30px !important;
+  font-weight: 500 !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Auth / registration / history: spacing and dense-mobile polish
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] main .max-w-md.mx-auto {
+  width: min(100%, 460px);
+}
+
+[data-ke] main .max-w-md.mx-auto.bg-white,
+[data-ke] main .bg-white.rounded-2xl.p-6.shadow-lg.max-w-md.mx-auto {
+  border: 1px solid var(--ke-line);
+  box-shadow: var(--ke-sh) !important;
+}
+
+[data-ke] main label.block.text-sm.font-medium {
+  margin-bottom: 6px !important;
+  color: var(--ke-ink-2) !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+}
+
+[data-ke] main input:not([type='checkbox']):not([type='radio']) {
+  scroll-margin-bottom: calc(var(--ke-nav-h) + 28px);
+}
+
+[data-ke] main input[type='checkbox'] {
+  accent-color: var(--ke-accent);
+}
+
+[data-ke] main .space-y-3 > .bg-white.rounded-xl.p-4.shadow-md {
+  border: 1px solid var(--ke-line);
+  box-shadow: var(--ke-sh) !important;
+  transition: border-color var(--ke-fast), transform var(--ke-fast) !important;
+}
+
+[data-ke] main .space-y-3 > .bg-white.rounded-xl.p-4.shadow-md:active {
+  transform: scale(.996);
+  border-color: color-mix(in srgb, var(--ke-accent) 22%, var(--ke-line));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   KYC gate / sheet
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] .ke-kyc-overlay {
+  z-index: 90 !important;
+  padding: max(10px, var(--ke-safe-top)) 10px calc(14px + var(--ke-safe-bottom)) !important;
+  background: rgba(4, 12, 16, .62) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+[data-ke] .ke-kyc-sheet {
+  width: min(100%, 680px);
+  margin: 0 auto !important;
+  padding-top: 8px;
+}
+
+[data-ke] .ke-kyc-close {
+  min-height: 42px;
+  padding: 8px 14px !important;
+  border: 1px solid var(--ke-line) !important;
+  background: var(--ke-surface) !important;
+  color: var(--ke-ink-2) !important;
+  box-shadow: var(--ke-sh) !important;
+}
+
+[data-ke] .ke-kyc-sheet .rounded-2xl.border,
+[data-ke] .ke-kyc-sheet .rounded-3xl {
+  border-color: var(--ke-line) !important;
+}
+
+[data-ke] .ke-kyc-sheet .border-blue-200,
+[data-ke] .ke-kyc-sheet .bg-blue-50,
+[data-ke] .ke-kyc-sheet .bg-blue-50\/60 {
+  border-color: color-mix(in srgb, var(--ke-accent) 28%, var(--ke-line)) !important;
+  background-color: var(--ke-accent-soft) !important;
+}
+
+[data-ke] .ke-kyc-sheet .text-blue-800,
+[data-ke] .ke-kyc-sheet .text-blue-700,
+[data-ke] .ke-kyc-sheet .text-blue-600 {
+  color: var(--ke-accent) !important;
+}
+
+[data-ke] .ke-kyc-sheet .bg-blue-600 {
+  background: var(--ke-accent) !important;
+  color: var(--ke-on-accent) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Blocking progress modal: semantic, calm, consistent with exchange UI
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] .ke-progress-overlay {
+  z-index: 170 !important;
+  padding: max(12px, var(--ke-safe-top)) 12px calc(12px + var(--ke-safe-bottom)) !important;
+  background: rgba(4, 12, 16, .68) !important;
+  backdrop-filter: blur(11px);
+  -webkit-backdrop-filter: blur(11px);
+}
+
+[data-ke] .ke-progress-card {
+  width: min(100%, 520px);
+  max-height: calc(var(--ke-viewport-height) - var(--ke-safe-top) - var(--ke-safe-bottom) - 24px) !important;
+  border: 1px solid var(--ke-line);
+  border-radius: 24px !important;
+  background: var(--ke-surface) !important;
+  color: var(--ke-ink);
+  box-shadow: 0 24px 70px -30px rgba(0,0,0,.7) !important;
+}
+
+[data-ke] .ke-progress-icon {
+  width: 66px !important;
+  height: 66px !important;
+  margin-bottom: 13px !important;
+}
+
+[data-ke] .ke-progress-card h2 {
+  color: var(--ke-ink) !important;
+  font-size: 20px !important;
+  font-weight: 700 !important;
+}
+
+[data-ke] .ke-progress-track {
+  height: 8px !important;
+  background: var(--ke-surface-2) !important;
+}
+
+[data-ke] .ke-progress-fill[data-status='working'],
+[data-ke] .ke-progress-card[data-status='working'] .ke-progress-fill {
+  background: var(--ke-accent) !important;
+}
+
+[data-ke] .ke-progress-step {
+  border-radius: 13px !important;
+}
+
+[data-ke] .ke-progress-step[data-step-state='active'] {
+  border-color: color-mix(in srgb, var(--ke-accent) 30%, var(--ke-line)) !important;
+  background: var(--ke-accent-soft) !important;
+  color: var(--ke-ink) !important;
+}
+
+[data-ke] .ke-progress-message {
+  border-radius: 14px !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Accessibility / motion / mobile keyboard / desktop polish
+   ────────────────────────────────────────────────────────────────────────── */
+
+[data-ke] a,
+[data-ke] button {
+  touch-action: manipulation;
+}
+
+[data-ke] button:focus-visible,
+[data-ke] a:focus-visible,
+[data-ke] input:focus-visible,
+[data-ke] label[role='button']:focus-visible {
+  outline: 2px solid var(--ke-accent) !important;
+  outline-offset: 2px !important;
+}
+
+[data-ke] ::selection {
+  background: color-mix(in srgb, var(--ke-accent) 24%, transparent);
+  color: var(--ke-ink);
+}
+
+[data-ke] input,
+[data-ke] textarea {
+  font-size: max(16px, 1em);
+}
+
+@media (min-width: 760px) {
+  [data-ke] main {
+    padding-inline: 12px;
+  }
+
+  [data-ke] .grid.grid-cols-2.gap-4.p-4 {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  [data-ke] main > .p-4 > .bg-white.rounded-2xl.p-6.shadow-lg {
+    padding: 24px !important;
+  }
+}
+
+@media (max-width: 390px) {
+  [data-ke] {
+    --ke-nav-h: 66px;
+  }
+
+  [data-ke] main > div > .p-4,
+  [data-ke] main > .p-4 {
+    padding-inline: 11px !important;
+  }
+
+  [data-ke] .grid.grid-cols-2.gap-4.p-4 {
+    padding-inline: 11px !important;
+    gap: 8px !important;
+  }
+
+  [data-ke] .grid.grid-cols-2.gap-4.p-4 > button {
+    min-height: 90px;
+    padding: 13px 9px !important;
+  }
+
+  [data-ke] main > .p-4 > .bg-white.rounded-2xl.p-6.shadow-lg,
+  [data-ke] main .bg-white.rounded-2xl.p-6.shadow-lg.max-w-md.mx-auto {
+    padding: 15px !important;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  [data-ke] > .min-h-screen > header {
+    position: relative;
+  }
+
+  [data-ke] .ke-progress-card {
+    max-height: calc(100dvh - 16px) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ke] .animate-spin {
+    animation-duration: 1.6s !important;
+  }
+}

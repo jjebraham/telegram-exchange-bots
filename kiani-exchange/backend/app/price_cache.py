@@ -1,3 +1,4 @@
+from .runtime_credentials import credential
 import time
 import logging
 import aiohttp
@@ -113,9 +114,9 @@ PROXY_LIST = [
 def get_random_proxy():
     """Get a random proxy from the list"""
     proxy = random.choice(PROXY_LIST)
-    return f"http://jjebraham:Amir1234@{proxy}"
+    return credential("KIANI_PRIVATE_PROXY_PRICE_CACHE_1")
 
-WALLEX_API_KEY = "15064|7tVDd4NDBYmATAe4lWTUQSTzj0v7ceTELEv6u6zG"
+WALLEX_API_KEY = credential("WALLEX_API_KEY")
 WALLEX_BASE_URL = "https://api.wallex.ir/v1"
 
 
@@ -138,7 +139,7 @@ class PriceCache:
                 break
                 
             proxy = random.choice(available_proxies)
-            proxy_url = f"http://jjebraham:Amir1234@{proxy}"
+            proxy_url = credential("KIANI_PRIVATE_PROXY_PRICE_CACHE_2")
             tried_proxies.add(proxy)
             
             try:
@@ -201,6 +202,11 @@ class PriceCache:
             raise
 
     async def fetch_usdt_try(self) -> float:
+        if _kiani_akamai_module().enabled():
+            from akamai_btcturk import fetch_btcturk_snapshot
+            snapshot = await asyncio.to_thread(fetch_btcturk_snapshot)
+            self._akamai_btcturk_proof_epoch = snapshot["proof_epoch"]
+            return float(snapshot["price"])
         url = "https://api.btcturk.com/api/v2/ticker?pairSymbol=USDTTRY"
         try:
             async with aiohttp.ClientSession() as sess:
@@ -228,7 +234,8 @@ class PriceCache:
         now = time.time()
         if self.usdt_try is None or (now - self.usdt_try_time) > self.fetch_interval:
             self.usdt_try = await self.fetch_usdt_try()
-            self.usdt_try_time = now
+            self.usdt_try_time = (self._akamai_btcturk_proof_epoch
+                                  if _kiani_akamai_module().enabled() else now)
         return self.usdt_try
 
     async def warm_cache(self):
@@ -241,9 +248,21 @@ class PriceCache:
             self.usdt_irr = usdt_irr
             self.usdt_irr_time = now
             self.usdt_try = usdt_try
-            self.usdt_try_time = now
+            self.usdt_try_time = (self._akamai_btcturk_proof_epoch
+                                  if _kiani_akamai_module().enabled() else now)
         except Exception as e:
             logger.warning(f"Rate warm-up failed: {e}")
 
 
 price_cache = PriceCache()
+
+
+
+def _kiani_akamai_module():
+    import sys
+    from pathlib import Path
+    folder = Path(__file__).resolve().parents[3] / "channel_split"
+    if str(folder) not in sys.path:
+        sys.path.insert(0, str(folder))
+    import akamai_rate_feed
+    return akamai_rate_feed

@@ -1,3 +1,7 @@
+from ..runtime_credentials import credential
+from fastapi import BackgroundTasks, Request
+from .. import password_reset as sms_password_reset
+from .. import sms_gateway
 import aiohttp
 import asyncio
 import random
@@ -10,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+from ..admin_auth import create_admin_session_token, optional_admin_session
 from ..database import get_db
 from ..auth import (
     hash_password,
@@ -18,11 +23,11 @@ from ..auth import (
     get_current_user_id,
 )
 
-EHRAZ_TOKEN = "5942b9d62abc20405dadfb2c0f546b669cf1471c"
+EHRAZ_TOKEN = os.getenv("EHRAZ_TOKEN", "").strip()
 
 # Telegram Bot Configuration
 # Use the same token as in transactions.py for consistency
-TELEGRAM_BOT_TOKEN = "8278787504:AAGU4jeKIYq4Kw_FNcgA-7_rb3H152aKxMU"
+TELEGRAM_BOT_TOKEN = credential("KIANI_REGISTRATION_BOT_TOKEN")
 ADMIN_CHAT_ID = 2043363119
 
 # List of proxy servers from your configuration
@@ -132,7 +137,7 @@ PROXY_LIST = [
 def get_random_proxy():
     """Get a random proxy from the list"""
     proxy = random.choice(PROXY_LIST)
-    return f"http://jjebraham:Amir1234@{proxy}"
+    return credential("KIANI_PRIVATE_PROXY_USERS_1")
 
 
 async def send_telegram_notification(message: str):
@@ -167,6 +172,7 @@ class RegisterRequest(BaseModel):
     bank_card_number: str
     phone_number: str
     password: str
+    father_name: str
 
 
 class LoginRequest(BaseModel):
@@ -191,15 +197,15 @@ class AdminCredentials(BaseModel):
 
 
 class FaqRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     question: str
     answer: str
 
 
 class AdminResetPasswordRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     new_password: str
 
 
@@ -209,14 +215,15 @@ class PasswordResetStartRequest(BaseModel):
 
 
 class PasswordResetCompleteRequest(BaseModel):
+    challenge_id: str = ""
     phone_number: str
     code: str
     new_password: str
 
 
 class AdminSendMessageRequest(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     message: str
     user_id: int | None = None
 
@@ -249,6 +256,22 @@ def _is_admin(username: str, password: str) -> bool:
     return _admin_role(username, password) == "admin"
 
 
+def _require_admin_access(
+    session: dict[str, str] | None,
+    allowed: set[str],
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
+    if session is not None:
+        role = session.get("role")
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="admin_role_forbidden")
+        return str(role)
+    if username is None or password is None:
+        raise HTTPException(status_code=401, detail="admin_auth_required")
+    return _require_roles(username, password, allowed)
+
+
 def _write_admin_log(action: str, details: dict | None = None):
     with get_db() as conn:
         conn.execute(
@@ -272,187 +295,11 @@ def _normalize_iran_phone(phone: str) -> str:
     return digits
 
 
-async def _send_ghasedak_sms(phone_number: str, message: str) -> tuple[bool, str]:
-    """
-    Send SMS via Ghasedak API using proxy rotation.
-    First tries template API, falls back to simple SMS.
-    """
-    api_key = os.getenv("GHASEDAK_API_KEY", "").strip()
-    template_name = os.getenv("GHASEDAK_TEMPLATE_NAME", "").strip()
-    line_number = os.getenv("GHASEDAK_LINE_NUMBER", "").strip()
-    
-    if not api_key:
-        return (False, "missing_ghasedak_api_key")
-    
-    # Try template API first (with template name now configured)
-    if template_name:
-        # Extract OTP code from message (looking for 6-digit code)
-        import re
-        otp_match = re.search(r'\b(\d{6})\b', message)
-        otp_code = otp_match.group(1) if otp_match else "000000"
-        
-        # Create payload for template API
-        payload = {
-            "receptors": [{
-                "mobile": phone_number,
-                "clientReferenceId": f"reset_{int(time.time())}_{phone_number[-4:]}"
-            }],
-            "templateName": template_name,
-            "param1": otp_code,
-            "param2": "",
-            "param3": "",
-            "param4": "",
-            "param5": "",
-            "param6": "",
-            "param7": "",
-            "param8": "",
-            "param9": "",
-            "param10": "",
-            "isVoice": False,
-            "udh": False
-        }
-        
-        headers = {
-            "accept": "text/plain",
-            "ApiKey": api_key,
-            "Content-Type": "application/json",
-        }
-        
-        # Try template API with proxy rotation (3 attempts like EHRAZ)
-        for attempt in range(3):
-            proxy_url = get_random_proxy()
-            try:
-                logger.info(f"Ghasedak template attempt {attempt + 1} with proxy: {proxy_url}")
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        "https://gateway.ghasedak.me/rest/api/v1/WebService/SendOtpWithParams",
-                        json=payload,
-                        headers=headers,
-                        proxy=proxy_url,
-                        timeout=10,
-                    ) as resp:
-                        body = await resp.text()
-                        logger.info("Ghasedak template response status=%s body=%s", resp.status, body[:500])
-                        
-                        # Parse JSON response
-                        try:
-                            response_json = json.loads(body)
-                            # Check for success (different response formats possible)
-                            is_success = (
-                                response_json.get("isSuccess") == True or
-                                response_json.get("IsSuccess") == True or
-                                response_json.get("statusCode") == 200 or
-                                response_json.get("StatusCode") == 200
-                            )
-                            if is_success:
-                                return (True, body)
-                            else:
-                                logger.warning(f"Ghasedak template API failed (attempt {attempt + 1}): {body}")
-                                continue  # Try next proxy
-                        except json.JSONDecodeError:
-                            # If not JSON, check HTTP status
-                            if resp.status == 200:
-                                return (True, body)
-                            else:
-                                logger.warning(f"Ghasedak template API non-JSON response (attempt {attempt + 1}): {body}")
-                                continue  # Try next proxy
-            except Exception as exc:
-                logger.warning(f"Ghasedak template attempt {attempt + 1} exception: {exc}")
-                continue  # Try next proxy
-        
-        logger.warning("All Ghasedak template attempts failed, falling back to simple SMS")
-    
-    # Fallback to simple SMS method (either template not configured or all template attempts failed)
-    # Simple SMS payload
-    simple_payload = {
-        "receptor": phone_number,
-        "message": message,
-    }
-    if line_number:
-        simple_payload["linenumber"] = line_number
-    
-    simple_headers = {
-        "apikey": api_key,
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-    
-    # Try simple SMS with proxy rotation (3 attempts)
-    for attempt in range(3):
-        proxy_url = get_random_proxy()
-        try:
-            logger.info(f"Ghasedak simple SMS attempt {attempt + 1} with proxy: {proxy_url}")
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.ghasedak.me/v2/sms/send/simple",
-                    data=simple_payload,
-                    headers=simple_headers,
-                    proxy=proxy_url,
-                    timeout=10,
-                ) as resp:
-                    body = await resp.text()
-                    logger.info("Ghasedak simple SMS response status=%s body=%s", resp.status, body[:500])
-                    if resp.status == 200:
-                        return (True, body)
-                    else:
-                        logger.warning(f"Ghasedak simple SMS failed with status {resp.status} (attempt {attempt + 1}): {body}")
-                        continue  # Try next proxy
-        except Exception as exc:
-            logger.warning(f"Ghasedak simple SMS attempt {attempt + 1} exception: {exc}")
-            continue  # Try next proxy
-    
-    logger.error("All Ghasedak SMS attempts failed")
-    return (False, "all_attempts_failed")
 
-async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 15):
-    headers = {
-        "Authorization": f"Bearer {EHRAZ_TOKEN}",
-        "Content-Type": "application/json",
-    }
 
-    # Quick direct attempt first to reduce perceived latency.
-    try:
-        logger.info(f"EHRAZ direct attempt: {url}")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    logger.info(f"EHRAZ direct success: {data}")
-                    return data
-                else:
-                    logger.warning(f"EHRAZ direct failed with status: {resp.status}")
-    except Exception as e:
-        logger.warning(f"EHRAZ direct exception: {e}")
-
-    # Fallback with proxy rotation.
-    for attempt in range(3):  # Increased from 2 to 3 attempts
-        proxy_url = get_random_proxy()
-        try:
-            logger.info(f"EHRAZ proxy attempt {attempt + 1}: {proxy_url}")
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    json=payload,
-                    headers=headers,
-                    proxy=proxy_url,
-                    timeout=aiohttp.ClientTimeout(total=timeout_seconds),
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        logger.info(f"EHRAZ proxy success: {data}")
-                        return data
-                    else:
-                        logger.warning(f"EHRAZ proxy failed with status: {resp.status}")
-        except Exception as e:
-            logger.warning(f"EHRAZ proxy attempt {attempt + 1} exception: {e}")
-            continue
-
-    logger.error("All EHRAZ attempts failed")
-    return {"matched": False}
+async def _ehraz_post(url: str, payload: dict, timeout_seconds: int = 12):
+    from ..identity_verification import real_match
+    return await real_match(url, payload, timeout_seconds=min(timeout_seconds, 15))
 
 
 def _user_dict(row):
@@ -473,40 +320,54 @@ def _user_dict(row):
 
 @router.post("/users/register")
 async def register_user(req: RegisterRequest):
-    hashed = hash_password(req.password)
+    from ..user_ids import allocate_user_id
+    from ..identity_verification import (
+        normalize_registration, check_registration_conflicts, record_registration,
+        require_birth_date_policy, civil_match,
+    )
 
+    req = normalize_registration(req)
+    # Check duplicates before paid verification, then recheck atomically before INSERT.
     with get_db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM users WHERE phone_number = ?",
-            (req.phone_number,),
-        ).fetchone()
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail="already_registered_phone",
-            )
+        check_registration_conflicts(conn, req)
+    require_birth_date_policy()
 
-        existing_nid = conn.execute(
-            "SELECT id FROM users WHERE national_id = ?",
-            (req.national_id,),
-        ).fetchone()
-        if existing_nid:
-            raise HTTPException(status_code=409, detail="already_registered_national_id")
+    mobile_proof = await _ehraz_post(
+        "https://ehraz.io/api/v1/match/national-with-mobile",
+        {"nationalCode": req.national_id, "mobileNumber": req.phone_number},
+    )
+    if mobile_proof["matched"] is not True:
+        raise HTTPException(status_code=400, detail="phone_national_mismatch")
+    identity_proof = await civil_match({
+        "nationalCode": req.national_id, "birthDate": req.date_of_birth,
+        "firstName": req.first_name, "lastName": req.last_name,
+        "fatherName": req.father_name,
+    })
+    if identity_proof["matched"] is not True:
+        raise HTTPException(status_code=400, detail="identity_birth_mismatch")
+    if identity_proof.get("birth_date_verified") is not True:
+        raise HTTPException(status_code=503, detail="birth_date_verification_unavailable")
+    card_proof = await _ehraz_post(
+        "https://ehraz.io/api/v1/match/card-with-national",
+        {"nationalCode": req.national_id, "cardNumber": req.bank_card_number,
+         "birthDate": req.date_of_birth},
+    )
+    if card_proof["matched"] is not True:
+        raise HTTPException(status_code=400, detail="card_national_mismatch")
 
-        existing_card = conn.execute(
-            "SELECT id FROM users WHERE bank_card_number = ?",
-            (req.bank_card_number,),
-        ).fetchone()
-        if existing_card:
-            raise HTTPException(status_code=409, detail="already_registered_card")
-
+    hashed = hash_password(req.password)
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        check_registration_conflicts(conn, req)
+        user_id = allocate_user_id(conn)
         conn.execute(
             """INSERT INTO users
-               (first_name, last_name, national_id, dob,
+               (id, first_name, last_name, national_id, dob,
                 bank_card_number, phone_number, password_hash,
                 accepted_terms, kyc_status, verification_level)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Approved', 1)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Approved', 1)""",
             (
+                user_id,
                 req.first_name,
                 req.last_name,
                 req.national_id,
@@ -516,6 +377,7 @@ async def register_user(req: RegisterRequest):
                 hashed,
             ),
         )
+        record_registration(conn, user_id, mobile_proof, card_proof, identity_proof)
         conn.commit()
 
     # Send notification to admin bot
@@ -593,89 +455,21 @@ async def get_me(user_id: int = Depends(get_current_user_id)):
 
 @router.post("/verify/ehraz")
 async def verify_with_ehraz(req: EhrazRequest):
-    logger.info(f"EHRAZ verification request: {req.nationalCode}, {req.cardNumber[:6]}...")
-    
-    # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
-    
-    if USE_MOCK_EHRAZ:
-        logger.info("Using mock EHRAZ mode for testing")
-        
-        # Normalize card number: remove spaces
-        normalized_card = req.cardNumber.replace(" ", "")
-        
-        # Basic validation
-        if len(req.nationalCode) == 10 and len(normalized_card) == 16:
-            logger.info(f"Mock EHRAZ card validation passed: {req.nationalCode}, {normalized_card[:6]}...")
-            return {"matched": True}
-        else:
-            logger.info(f"Mock EHRAZ card validation failed: nationalCode={len(req.nationalCode)} digits, card={len(normalized_card)} digits")
-            return {"matched": False}
-    
     data = await _ehraz_post(
         "https://ehraz.io/api/v1/match/card-with-national",
-        {
-            "cardNumber": req.cardNumber,
-            "nationalCode": req.nationalCode,
-            "birthDate": req.birthDate,
-        },
-        timeout_seconds=15,
+        {"cardNumber": req.cardNumber, "nationalCode": req.nationalCode,
+         "birthDate": req.birthDate},
     )
-    result = bool(data.get("matched", False))
-    logger.info(f"EHRAZ verification result: {result}")
-    return {"matched": result}
+    return {"matched": data["matched"]}
 
 
 @router.post("/verify/ehraz-mobile")
 async def verify_mobile_with_ehraz(req: EhrazMobileRequest):
-    logger.info(f"EHRAZ mobile verification request: {req.nationalCode}, {req.mobileNumber}")
-    
-    # For testing: enable mock mode when EHRAZ is unreachable
-    USE_MOCK_EHRAZ = True  # Set to False in production
-    
-    if USE_MOCK_EHRAZ:
-        logger.info("Using mock EHRAZ mode for mobile verification testing")
-        
-        # Normalize mobile number: remove +, spaces, dashes
-        normalized_mobile = req.mobileNumber.replace('+', '').replace(' ', '').replace('-', '')
-        
-        # Handle different formats:
-        # - 09123456789 (11 digits with 0)
-        # - 9123456789 (10 digits without 0)
-        # - 989123456789 (12 digits with country code)
-        
-        # Check if it's a valid Iranian mobile number
-        is_valid_iran_mobile = False
-        
-        # Format 1: 09123456789 (11 digits, starts with 09)
-        if normalized_mobile.startswith('09') and len(normalized_mobile) == 11:
-            is_valid_iran_mobile = True
-        # Format 2: 9123456789 (10 digits, starts with 9) - add leading 0
-        elif normalized_mobile.startswith('9') and len(normalized_mobile) == 10:
-            is_valid_iran_mobile = True
-        # Format 3: 989123456789 (12 digits, starts with 98) - remove country code
-        elif normalized_mobile.startswith('98') and len(normalized_mobile) == 12:
-            is_valid_iran_mobile = True
-        
-        # Basic validation
-        if len(req.nationalCode) == 10 and is_valid_iran_mobile:
-            logger.info(f"Mock EHRAZ mobile validation passed: {req.nationalCode}, {req.mobileNumber}")
-            return {"matched": True}
-        else:
-            logger.info(f"Mock EHRAZ mobile validation failed: nationalCode={len(req.nationalCode)} digits, mobile={req.mobileNumber}")
-            return {"matched": False}
-    
     data = await _ehraz_post(
         "https://ehraz.io/api/v1/match/national-with-mobile",
-        {
-            "nationalCode": req.nationalCode,
-            "mobileNumber": req.mobileNumber,
-        },
-        timeout_seconds=15,
+        {"nationalCode": req.nationalCode, "mobileNumber": req.mobileNumber},
     )
-    result = bool(data.get("matched", False))
-    logger.info(f"EHRAZ mobile verification result: {result}")
-    return {"matched": result}
+    return {"matched": data["matched"]}
 
 
 @router.post("/admin/login")
@@ -683,13 +477,30 @@ async def admin_login(req: AdminCredentials):
     role = _admin_role(req.username, req.password)
     if not role:
         raise HTTPException(status_code=401, detail="invalid_admin_credentials")
+    try:
+        token = create_admin_session_token(req.username, role)
+    except RuntimeError as exc:
+        logger.error("Admin session token creation failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="admin_session_not_configured",
+        ) from exc
     _write_admin_log("admin_login", {"username": req.username, "role": role})
-    return {"status": "success", "role": role}
+    return {
+        "status": "success",
+        "role": role,
+        "username": req.username,
+        "token": token,
+    }
 
 
 @router.get("/admin/users")
-async def admin_users(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_users(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support", "viewer"}, username, password)
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, first_name, last_name, phone_number, national_id, dob, bank_card_number, kyc_status, verification_level
@@ -698,9 +509,34 @@ async def admin_users(username: str, password: str):
     return {"users": [dict(row) for row in rows]}
 
 
+@router.get("/admin/users/{user_id}")
+async def admin_user_detail(
+    user_id: int,
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support"}, username, password)
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT id, first_name, last_name, phone_number, national_id, dob,
+                      bank_card_number, kyc_status, verification_level
+               FROM users WHERE id = ?""",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="user_not_found")
+    return {"user": dict(row)}
+
+
 @router.delete("/admin/users/{user_id}")
-async def admin_delete_user(user_id: int, username: str, password: str):
-    _require_roles(username, password, {"admin"})
+async def admin_delete_user(
+    user_id: int,
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin"}, username, password)
     with get_db() as conn:
         conn.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -709,25 +545,47 @@ async def admin_delete_user(user_id: int, username: str, password: str):
 
 
 @router.get("/admin/faqs")
-async def admin_get_faqs(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_get_faqs(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support", "viewer"}, username, password)
     with get_db() as conn:
-        rows = conn.execute("SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC").fetchall()
+        rows = conn.execute(
+            "SELECT id, question, answer, created_at FROM faqs ORDER BY id DESC"
+        ).fetchall()
     return {"faqs": [dict(row) for row in rows]}
 
 
 @router.post("/admin/faqs")
-async def admin_add_faq(req: FaqRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def admin_add_faq(
+    req: FaqRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
     with get_db() as conn:
-        conn.execute("INSERT INTO faqs (question, answer) VALUES (?, ?)", (req.question, req.answer))
+        conn.execute(
+            "INSERT INTO faqs (question, answer) VALUES (?, ?)",
+            (req.question, req.answer),
+        )
     _write_admin_log("add_faq", {"question": req.question})
     return {"status": "created"}
 
 
 @router.delete("/admin/faqs/{faq_id}")
-async def admin_delete_faq(faq_id: int, username: str, password: str):
-    _require_roles(username, password, {"admin", "support"})
+async def admin_delete_faq(
+    faq_id: int,
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support"}, username, password)
     with get_db() as conn:
         conn.execute("DELETE FROM faqs WHERE id = ?", (faq_id,))
     _write_admin_log("delete_faq", {"faq_id": faq_id})
@@ -735,97 +593,79 @@ async def admin_delete_faq(faq_id: int, username: str, password: str):
 
 
 @router.get("/admin/logs")
-async def admin_logs(username: str, password: str):
-    _require_roles(username, password, {"admin", "support", "viewer"})
+async def admin_logs(
+    username: str | None = None,
+    password: str | None = None,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(session, {"admin", "support", "viewer"}, username, password)
     with get_db() as conn:
-        rows = conn.execute("SELECT id, action, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 300").fetchall()
+        rows = conn.execute(
+            "SELECT id, action, details, created_at FROM admin_logs "
+            "ORDER BY id DESC LIMIT 300"
+        ).fetchall()
     return {"logs": [dict(row) for row in rows]}
 
 
 @router.post("/admin/users/{user_id}/reset-password")
-async def admin_reset_user_password(user_id: int, req: AdminResetPasswordRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def admin_reset_user_password(
+    user_id: int,
+    req: AdminResetPasswordRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
     with get_db() as conn:
-        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="user_not_found")
-        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(req.new_password), user_id))
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(req.new_password), user_id),
+        )
     _write_admin_log("reset_user_password", {"user_id": user_id})
     return {"status": "success"}
 
 
-@router.post("/users/password-reset/start")
-async def start_password_reset(req: PasswordResetStartRequest):
-    if req.channel not in {"bot", "sms"}:
-        raise HTTPException(status_code=400, detail="invalid_channel")
-
-    normalized_phone = _normalize_iran_phone(req.phone_number)
-
-    with get_db() as conn:
-        # generic behavior: do not leak user existence
-        user = conn.execute("SELECT id, phone_number FROM users WHERE phone_number = ?", (normalized_phone,)).fetchone()
-
-        if user:
-            recent_count = conn.execute(
-                """SELECT COUNT(*) AS cnt FROM password_reset_tokens
-                   WHERE phone_number = ? AND created_at >= datetime('now', '-5 minutes')""",
-                (normalized_phone,),
-            ).fetchone()["cnt"]
-            if recent_count >= 5:
-                logger.warning("password reset rate limited for %s", normalized_phone)
-                return {"status": "sent"}
-
-            code = str(random.randint(100000, 999999))
-            expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
-            conn.execute(
-                "INSERT INTO password_reset_tokens (phone_number, channel, code, expires_at) VALUES (?, ?, ?, ?)",
-                (normalized_phone, req.channel, code, expires_at),
-            )
-        else:
-            code = None
-
-    if req.channel == "sms" and user and code:
-        # Send real SMS via Ghasedak API
-        ok, response_text = await _send_ghasedak_sms(
-            normalized_phone,
-            f"کد بازیابی رمز عبور: {code} (اعتبار: 10 دقیقه)",
-        )
-        
-        _write_admin_log(
-            "password_reset_sms",
-            {"phone": normalized_phone, "success": ok, "provider_response": response_text[:300]},
-        )
-
-    # For bot channel the reset is handled inside Telegram bot conversation (/resetpassword)
-    return {"status": "sent"}
+@router.post("/users/password-reset/start", status_code=202)
+async def start_password_reset(req: PasswordResetStartRequest, request: Request, background_tasks: BackgroundTasks):
+    if req.channel == 'bot':
+        return {'status':'use_bot'}
+    if req.channel != 'sms':
+        raise HTTPException(status_code=400,detail='invalid_channel')
+    import asyncio
+    response,delivery = await asyncio.to_thread(sms_password_reset.begin,req.phone_number,
+        request.client.host if request.client else 'unknown')
+    if delivery:
+        background_tasks.add_task(sms_password_reset.deliver,*delivery)
+    return response
 
 
 @router.post("/users/password-reset/complete")
 async def complete_password_reset(req: PasswordResetCompleteRequest):
-    with get_db() as conn:
-        token = conn.execute(
-            """SELECT id, expires_at FROM password_reset_tokens
-               WHERE phone_number = ? AND code = ? AND used = 0
-               ORDER BY id DESC LIMIT 1""",
-            (req.phone_number, req.code),
-        ).fetchone()
-        if not token:
-            raise HTTPException(status_code=400, detail="invalid_code")
-        if datetime.fromisoformat(token["expires_at"]) < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="expired_code")
-
-        conn.execute(
-            "UPDATE users SET password_hash = ? WHERE phone_number = ?",
-            (hash_password(req.new_password), req.phone_number),
-        )
-        conn.execute("UPDATE password_reset_tokens SET used = 1 WHERE id = ?", (token["id"],))
-
-    return {"status": "success"}
+    import asyncio
+    return await asyncio.to_thread(sms_password_reset.complete,req.phone_number,
+        req.challenge_id,req.code,req.new_password,hash_password)
 
 
 @router.post("/admin/messages/send")
-async def admin_send_message(req: AdminSendMessageRequest):
-    _require_roles(req.username, req.password, {"admin", "support"})
+async def admin_send_message(
+    req: AdminSendMessageRequest,
+    session: dict[str, str] | None = Depends(optional_admin_session),
+):
+    _require_admin_access(
+        session,
+        {"admin", "support"},
+        req.username,
+        req.password,
+    )
 
     with get_db() as conn:
         if req.user_id:
@@ -843,3 +683,32 @@ async def admin_send_message(req: AdminSendMessageRequest):
 
     _write_admin_log("admin_send_message", {"user_id": req.user_id, "sent": sent})
     return {"status": "success", "sent": sent}
+
+
+@router.get('/users/password-reset/options')
+async def password_reset_options():
+    return {'sms_enabled':sms_gateway.configured(),'otp_length':6,'expires_in':600,'retry_after':60}
+
+
+class EhrazIdentityRequest(BaseModel):
+    nationalCode: str
+    birthDate: str
+    firstName: str
+    lastName: str
+    fatherName: str
+
+
+@router.post("/verify/ehraz-identity")
+async def verify_identity_with_ehraz(req: EhrazIdentityRequest):
+    from ..identity_verification import civil_match
+    data = await civil_match(req.model_dump() if hasattr(req, "model_dump") else req.dict())
+    return {"matched": data["matched"],
+            "birth_date_verified": data.get("birth_date_verified") is True}
+
+
+@router.get("/users/registration-options")
+async def registration_options():
+    from ..identity_verification import BIRTH_DATE_POLICY_READY
+    return {"registration_enabled": bool(BIRTH_DATE_POLICY_READY),
+            "reason": None if BIRTH_DATE_POLICY_READY else "birth_date_verification_unavailable"}
+
