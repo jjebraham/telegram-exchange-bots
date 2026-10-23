@@ -1,17 +1,17 @@
+import kianiBrandLockup from './assets/kiani-brand-lockup.png';
+import { isTradeReady, MINIMUM_TRADE_SOURCES } from './rateAvailability';
+import type { RateSources, RateSourceState } from './rateAvailability';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { calculateFee, calculateReceiveAmount, deriveRates } from './exchangeMath';
+import { calculateFee, calculateReceiveAmount } from './exchangeMath';
 import type { ExchangeType, Rates } from './exchangeMath';
+import CustomerMarketDashboard from './CustomerMarketDashboard';
+import SecureAdminPanel from './SecureAdminPanel';
+import SmsPasswordReset from './SmsPasswordReset';
+import AppNotice, { notifyMessage } from './AppNotice';
+import BlockingProgressModal from './BlockingProgressModal';
+import type { ProgressStep } from './BlockingProgressModal';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
-
-const notifyMessage = (message: string, title = 'KIANI Exchange') => {
-  const tg = (window as any)?.Telegram?.WebApp;
-  if (tg?.showPopup) {
-    tg.showPopup({ title, message, buttons: [{ type: 'ok', text: 'باشه' }] });
-    return;
-  }
-  window.alert(message);
-};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -40,56 +40,6 @@ interface Transaction {
 type TabType = 'dashboard' | 'exchange' | 'register' | 'login' | 'history' | 'admin';
 
 // ─── Helper Components ──────────────────────────────────────────────────────
-
-const RateBox = ({
-  label,
-  rate,
-  loading,
-}: {
-  label: string;
-  rate: number | string;
-  loading: boolean;
-}) => {
-  // Check if this is a conversion rate (تبدیل لیر به تتر or تبدیل تتر به لیر)
-  const isConversionRate = label.includes('تبدیل لیر به تتر') || label.includes('تبدیل تتر به لیر');
-  
-  return (
-    <div className="bg-white rounded-xl p-4 shadow-md mb-3">
-      <div className="flex justify-between items-center">
-        <span className="text-gray-700 font-semibold text-sm">{label}</span>
-        <span className="text-blue-600 font-bold text-lg">
-          {loading
-            ? '...'
-            : isConversionRate
-              ? `${rate.toLocaleString('fa-IR')} لیر`
-              : `${rate.toLocaleString('fa-IR')} تومان`}
-        </span>
-      </div>
-    </div>
-  );
-};
-
-const ExchangeButton = ({
-  label,
-  icon,
-  color,
-  onClick,
-  type,
-}: {
-  label: string;
-  icon: string;
-  color: string;
-  onClick: (type: ExchangeType) => void;
-  type: ExchangeType;
-}) => (
-  <button
-    onClick={() => onClick(type)}
-    className={`${color} text-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all flex flex-col items-center justify-center`}
-  >
-    <span className="text-3xl mb-2">{icon}</span>
-    <span className="font-bold text-lg">{label}</span>
-  </button>
-);
 
 const InfoRow = ({ label, value }: { label: string; value: string }) => (
   <div className="flex justify-between items-center py-2 border-b border-gray-100">
@@ -214,7 +164,46 @@ function App() {
     foreign_payment: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [displayRates, setDisplayRates] = useState<Rates>(rates);
+  const [rateError, setRateError] = useState(false);
+  const [rateSources, setRateSources] = useState<RateSources>({
+    shahidi: { ok: false, receivedAt: null },
+    canonical: { ok: false, receivedAt: null },
+    current: { ok: false, receivedAt: null },
+  });
+  const [rateUpdatedAt, setRateUpdatedAt] = useState<number | null>(null);
+  const [rateRefreshedAt, setRateRefreshedAt] = useState<number | null>(null);
+  const [rateDeltas, setRateDeltas] = useState({ usdt: 0, try: 0 });
+  const [changedRates, setChangedRates] = useState<Set<string>>(new Set());
+  const [customerScheme, setCustomerScheme] = useState<'light' | 'dark'>(() =>
+    localStorage.getItem('kiani_theme_preference') === 'dark' ? 'dark' : 'light'
+  );
   const [selectedExchange, setSelectedExchange] = useState<ExchangeType | null>(null);
+  const displayRatesRef = useRef<Rates>(rates);
+  const hasLoadedRatesRef = useRef(false);
+  const rateRequestRef = useRef(false);
+  const changedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (isAdminHost) return;
+    const background = customerScheme === 'dark' ? '#0F171C' : '#F4F6F7';
+    document.getElementById('root')?.setAttribute('data-scheme', customerScheme);
+    document.documentElement.style.backgroundColor = background;
+    document.body.style.backgroundColor = background;
+    (window as any)?.Telegram?.WebApp?.setHeaderColor?.(background);
+    (window as any)?.Telegram?.WebApp?.setBackgroundColor?.(background);
+  }, [customerScheme]);
+
+  const toggleCustomerTheme = () => {
+    setCustomerScheme((current) => {
+      const next = current === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('kiani_theme_preference', next);
+      const background = next === 'dark' ? '#0F171C' : '#F4F6F7';
+      (window as any)?.Telegram?.WebApp?.setHeaderColor?.(background);
+      (window as any)?.Telegram?.WebApp?.setBackgroundColor?.(background);
+      return next;
+    });
+  };
 
   // Check for existing session on mount
   useEffect(() => {
@@ -222,9 +211,12 @@ function App() {
     if (token) {
       fetchUserProfile(token);
     }
-    fetchRates();
-    const interval = setInterval(fetchRates, 600000); // refresh every 10 min
-    return () => clearInterval(interval);
+    void fetchRates();
+    const interval = window.setInterval(() => void fetchRates(), 20000);
+    return () => {
+      window.clearInterval(interval);
+      if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
+    };
   }, []);
 
   const fetchUserProfile = async (token: string) => {
@@ -243,18 +235,198 @@ function App() {
     }
   };
 
-  const fetchRates = async () => {
-    if (!rates.buy_lira) setLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/rates/current`);
-      const data = await response.json();
+  const fetchRates = async (): Promise<boolean> => {
+    if (rateRequestRef.current) return false;
+    rateRequestRef.current = true;
+    setRateError(false);
+    if (!hasLoadedRatesRef.current) setLoading(true);
 
-      const usdt_irr = data.rates.USDT_IRR;
-      const usdt_try = data.rates.USDT_TRY;
-      setRates(deriveRates(usdt_irr, usdt_try));
-    } catch (error) {
-      console.error('Rate fetch error:', error);
+    const fetchJson = async (path: string) => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch(`${API_URL}${path}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Rate API HTTP ${response.status}`);
+        }
+        return await response.json();
+      } finally {
+        window.clearTimeout(timer);
+      }
+    };
+
+    const applyDisplayRates = (
+      values: Rates,
+      sourceState: RateSourceState,
+      tryState: RateSourceState,
+    ) => {
+      const previous = displayRatesRef.current;
+      const next = values;
+      displayRatesRef.current = next;
+      setDisplayRates(next);
+
+      setRateDeltas({
+        usdt: previous.buy_usdt > 0
+          ? ((values.buy_usdt - previous.buy_usdt) / previous.buy_usdt) * 100 : 0,
+        try: previous.buy_lira > 0
+          ? ((values.buy_lira - previous.buy_lira) / previous.buy_lira) * 100 : 0,
+      });
+
+      const changed = new Set<string>();
+      if (previous.buy_usdt > 0 && previous.buy_usdt !== next.buy_usdt)
+        changed.add('usdt-buy');
+      if (previous.sell_usdt > 0 && previous.sell_usdt !== next.sell_usdt)
+        changed.add('usdt-sell');
+      if (previous.buy_lira > 0 && previous.buy_lira !== next.buy_lira)
+        changed.add('try-buy');
+      if (previous.sell_lira > 0 && previous.sell_lira !== next.sell_lira)
+        changed.add('try-sell');
+
+      if (changed.size) {
+        setChangedRates(changed);
+        if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
+        changedTimerRef.current = setTimeout(
+          () => setChangedRates(new Set()),
+          1100,
+        );
+      }
+
+      setRateSources((old) => ({
+        ...old,
+        current: sourceState,
+        currentTry: tryState,
+        shahidi: sourceState,
+      }));
+      setRateUpdatedAt(sourceState.receivedAt);
+      setRateRefreshedAt(Date.now());
+      hasLoadedRatesRef.current = true;
+      setLoading(false);
+    };
+
+    const loadShahidi = async (): Promise<boolean> => {
+      try {
+        const data = await fetchJson('/rates/current');
+        const source = data?.rates;
+        const values = {
+          buy_lira: Number(source?.buy_lira),
+          sell_lira: Number(source?.sell_lira),
+          buy_usdt: Number(source?.buy_usdt),
+          sell_usdt: Number(source?.sell_usdt),
+          lira_to_usdt: Number(source?.lira_to_usdt),
+          usdt_to_lira: Number(source?.usdt_to_lira),
+          foreign_payment: Number(source?.foreign_payment),
+        };
+
+        const transactionRatesAvailable =
+          source?.transaction_rates_available === true &&
+          source?.rate_mode === 'confirmed' &&
+          Number.isInteger(source?.market_source_count) &&
+          source.market_source_count >= MINIMUM_TRADE_SOURCES;
+        const sourceCount = Number(source?.market_source_count);
+        if (!Number.isInteger(sourceCount) || sourceCount < 1 || sourceCount > 7)
+          throw new Error('Invalid display source count');
+        const marketState = (market: 'usdt' | 'try', validValues: boolean): RateSourceState => {
+          const metadata = source?.market_status?.[market];
+          if (metadata?.available === false || !validValues)
+            return { ok: false, receivedAt: null, transactionRatesAvailable: false, sourceCount };
+          const age = Number(metadata?.age_seconds ?? (market === 'try'
+            ? Math.max(Number(source?.market_age_seconds), Number(source?.market_usdt_try_age_seconds ?? source?.market_age_seconds))
+            : source?.market_age_seconds));
+          const receivedAt = Date.now() - age * 1000;
+          const expiresAt = Math.min(Date.parse(metadata?.valid_until_utc ?? source?.market_feed_valid_until_utc), receivedAt + 90_000);
+          if (!Number.isFinite(age) || age < 0 || age > 90 || !Number.isFinite(expiresAt) || expiresAt <= Date.now())
+            return { ok: false, receivedAt: null, transactionRatesAvailable: false, sourceCount };
+          return { ok: true, receivedAt, expiresAt, transactionRatesAvailable, sourceCount };
+        };
+        const positive = (items: number[]) => items.every((v) => Number.isFinite(v) && v > 0);
+        const usdtState = marketState('usdt', positive([values.buy_usdt, values.sell_usdt, values.foreign_payment]) && values.buy_usdt >= values.sell_usdt);
+        const tryState = marketState('try', positive([values.buy_lira, values.sell_lira, values.lira_to_usdt, values.usdt_to_lira]) && values.buy_lira >= values.sell_lira && values.lira_to_usdt >= values.usdt_to_lira);
+        if (!usdtState.ok && !tryState.ok) throw new Error('No fresh display market');
+        if (!usdtState.ok) { values.buy_usdt = 0; values.sell_usdt = 0; values.foreign_payment = 0; }
+        if (!tryState.ok) { values.buy_lira = 0; values.sell_lira = 0; values.lira_to_usdt = 0; values.usdt_to_lira = 0; }
+        applyDisplayRates(values, usdtState, tryState);
+        setRates((old) => ({
+          ...old,
+          buy_usdt: values.buy_usdt,
+          sell_usdt: values.sell_usdt,
+          lira_to_usdt: values.lira_to_usdt,
+          usdt_to_lira: values.usdt_to_lira,
+          foreign_payment: values.foreign_payment,
+        }));
+        return true;
+      } catch (error) {
+        console.error('Shahidi rates unavailable:', error);
+        setRateSources((old) => ({
+          ...old,
+          shahidi: { ...old.shahidi, ok: false },
+          // Keep the display's original expiry through a temporary refresh failure.
+          // Transaction readiness is revoked immediately by shahidi.ok above.
+        }));
+        return false;
+      }
+    };
+
+    const loadCanonical = async (): Promise<boolean> => {
+      try {
+        const data = await fetchJson('/rates/try');
+        const source = data?.rates;
+        const age = Number(source?.market_age_seconds);
+        const buyAdjustment = Number(source?.buy_adjustment_pct);
+        const sellAdjustment = Number(source?.sell_adjustment_pct);
+        const sourceCount = Number(source?.source_count);
+        const validSource = (
+          source?.source === 'channel-hybrid-usdt+btcturk' &&
+          Number.isInteger(sourceCount) && sourceCount >= MINIMUM_TRADE_SOURCES && sourceCount <= 7
+        );
+        const values = {
+          buy_lira: Number(source?.buy_lira),
+          sell_lira: Number(source?.sell_lira),
+        };
+
+        if (
+          !validSource ||
+          !Number.isFinite(age) || age < 0 || age > 90 ||
+          !Number.isFinite(buyAdjustment) ||
+          Math.abs(buyAdjustment) > 50 ||
+          !Number.isFinite(sellAdjustment) ||
+          Math.abs(sellAdjustment) > 50 ||
+          Object.values(values).some(
+            (v) => !Number.isFinite(v) || v <= 0
+          ) ||
+          values.buy_lira < values.sell_lira
+        ) {
+          throw new Error('Invalid canonical TRY rates');
+        }
+
+        const receivedAt = Date.now() - age * 1000;
+        setRates((old) => ({ ...old, ...values }));
+        setRateSources((old) => ({
+          ...old,
+          canonical: { ok: true, receivedAt, expiresAt: receivedAt + 90_000, transactionRatesAvailable: true, sourceCount },
+        }));
+        return true;
+      } catch (error) {
+        console.error('Canonical TRY rates unavailable:', error);
+        setRateSources((old) => ({
+          ...old,
+          canonical: { ...old.canonical, ok: false },
+        }));
+        return false;
+      }
+    };
+
+    try {
+      const [shahidiOk] = await Promise.all([
+        loadShahidi(),
+        loadCanonical(),
+      ]);
+      setRateError(!shahidiOk);
+      return shahidiOk;
     } finally {
+      rateRequestRef.current = false;
       setLoading(false);
     }
   };
@@ -262,6 +434,14 @@ function App() {
   const handleExchangeClick = (exchangeType: ExchangeType) => {
     if (!user || user.kyc_status !== 'Approved') {
       setActiveTab('login');
+      return;
+    }
+    if (!isTradeReady(
+      rateSources,
+      exchangeType,
+      Date.now(),
+    )) {
+      notifyMessage('نرخ این معامله موقتاً در دسترس نیست.');
       return;
     }
     setSelectedExchange(exchangeType);
@@ -279,11 +459,56 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 pb-20">
+    <div data-ke="" data-scheme={customerScheme} className="min-h-screen bg-gray-100 pb-20">
+      <AppNotice />
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-700 to-purple-700 text-white p-4 shadow-lg">
         <div className="flex justify-between items-center">
-          <h1 className="text-xl font-bold">صرافی کیانی</h1>
+          <h1 className="ke-main-brand">
+            <img
+              src={kianiBrandLockup}
+              alt="صرافی کیانی — kiani.exchange"
+              width={200}
+              height={82}
+              className="ke-brand-lockup"
+            />
+          </h1>
+          <div className="ke-header-actions">
+            <button
+              type="button"
+              onClick={toggleCustomerTheme}
+              aria-label={customerScheme === 'dark' ? 'فعال کردن حالت روشن' : 'فعال کردن حالت تاریک'}
+              aria-pressed={customerScheme === 'dark'}
+              className={`relative inline-flex h-10 w-[72px] shrink-0 rounded-full transition-colors duration-300 ${
+                customerScheme === 'dark' ? 'bg-[#292f39]' : 'bg-[#bdbdbd]'
+              }`}
+            >
+              <span
+                className={`absolute left-1 top-1 flex h-8 w-8 items-center justify-center rounded-[13px] bg-white text-[#171b22] shadow-sm transition-transform duration-300 ${
+                  customerScheme === 'dark' ? 'translate-x-9' : 'translate-x-0'
+                }`}
+                aria-hidden="true"
+              >
+                {customerScheme === 'dark' ? (
+                  <svg width="23" height="23" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5
+                             8.5 8.5 0 1 0 20.5 14.2Z" />
+                  </svg>
+                ) : (
+                  <svg width="23" height="23" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" strokeWidth="2"
+                    strokeLinecap="round">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42
+                             M17.65 17.65l1.42 1.42M2 12h2M20 12h2
+                             M4.93 19.07l1.42-1.42
+                             M17.65 6.35l1.42-1.42" />
+                  </svg>
+                )}
+              </span>
+            </button>
           {user ? (
             <div className="flex items-center gap-3">
               <span className="text-sm">{user.first_name}</span>
@@ -302,17 +527,24 @@ function App() {
               ورود / ثبت نام
             </button>
           )}
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main>
+      <main className={activeTab === 'dashboard' ? 'ke-main ke-dashboard-main' : 'ke-main ke-legacy-main'}>
         {activeTab === 'dashboard' && (
-          <DashboardPage
-            rates={rates}
+          <CustomerMarketDashboard
+            rates={displayRates}
             loading={loading}
             onExchangeClick={handleExchangeClick}
             onRefresh={fetchRates}
+            updatedAt={rateUpdatedAt}
+            refreshedAt={rateRefreshedAt}
+            deltas={rateDeltas}
+            changed={changedRates}
+            rateError={rateError}
+            rateSources={rateSources}
           />
         )}
         {activeTab === 'exchange' && selectedExchange && (
@@ -320,6 +552,7 @@ function App() {
             rates={rates}
             user={user}
             selectedExchange={selectedExchange}
+            rateSources={rateSources}
             onBack={() => setActiveTab('dashboard')}
           />
         )}
@@ -399,109 +632,37 @@ function NavButton({
   );
 }
 
-// ─── PART 1 & 2: Dashboard Page ─────────────────────────────────────────────
-
-function DashboardPage({
-  rates,
-  loading,
-  onExchangeClick,
-  onRefresh,
-}: {
-  rates: Rates;
-  loading: boolean;
-  onExchangeClick: (type: ExchangeType) => void;
-  onRefresh: () => void;
-}) {
-  return (
-    <div>
-      {/* Rates Section */}
-      <div className="p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-gray-800">نرخ لحظه‌ای</h2>
-          <button
-            onClick={onRefresh}
-            className="text-sm text-blue-600 bg-blue-50 px-3 py-1 rounded-full"
-          >
-            بروزرسانی
-          </button>
-        </div>
-
-        <RateBox label="نرخ خرید لیر از ما" rate={rates.buy_lira} loading={loading} />
-        <RateBox label="نرخ فروش لیر به ما" rate={rates.sell_lira} loading={loading} />
-        <RateBox label="نرخ خرید تتر از ما" rate={rates.buy_usdt} loading={loading} />
-        <RateBox label="نرخ فروش تتر به ما" rate={rates.sell_usdt} loading={loading} />
-        <RateBox label="تبدیل تتر به لیر" rate={rates.usdt_to_lira} loading={loading} />
-        <RateBox label="تبدیل لیر به تتر" rate={rates.lira_to_usdt} loading={loading} />
-        <RateBox
-          label="نرخ دلار خرید از سایت‌های خارجی"
-          rate={rates.foreign_payment}
-          loading={loading}
-        />
-      </div>
-
-      {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-4 p-4">
-        <ExchangeButton
-          label="خرید لیر"
-          icon="💰"
-          color="bg-gradient-to-br from-green-500 to-emerald-600"
-          onClick={onExchangeClick}
-          type="buy_lira"
-        />
-        <ExchangeButton
-          label="فروش لیر"
-          icon="💸"
-          color="bg-gradient-to-br from-red-500 to-pink-600"
-          onClick={onExchangeClick}
-          type="sell_lira"
-        />
-        <ExchangeButton
-          label="خرید تتر"
-          icon="🪙"
-          color="bg-gradient-to-br from-blue-500 to-indigo-600"
-          onClick={onExchangeClick}
-          type="buy_usdt"
-        />
-        <ExchangeButton
-          label="فروش تتر"
-          icon="💵"
-          color="bg-gradient-to-br from-orange-500 to-amber-600"
-          onClick={onExchangeClick}
-          type="sell_usdt"
-        />
-        <ExchangeButton
-          label="تبدیل تتر به لیر"
-          icon="🔄"
-          color="bg-gradient-to-br from-purple-500 to-violet-600"
-          onClick={onExchangeClick}
-          type="convert_usdt_to_lira"
-        />
-        <ExchangeButton
-          label="تبدیل لیر به تتر"
-          icon="🔁"
-          color="bg-gradient-to-br from-teal-500 to-cyan-600"
-          onClick={onExchangeClick}
-          type="convert_lira_to_usdt"
-        />
-      </div>
-    </div>
-  );
-}
-
 // ─── PART 3: Exchange Page ──────────────────────────────────────────────────
 
 function ExchangePage({
   rates,
   user,
   selectedExchange,
+  rateSources,
   onBack,
 }: {
   rates: Rates;
   user: User | null;
   selectedExchange: ExchangeType;
+  rateSources: RateSources;
   onBack: () => void;
 }) {
   const [amount, setAmount] = useState('');
+  const [quoteClock, setQuoteClock] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setQuoteClock(Date.now()),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const quoteAvailable = isTradeReady(
+    rateSources,
+    selectedExchange,
+    quoteClock,
+  );
   const [formattedAmount, setFormattedAmount] = useState('');
   const [receiveAmount, setReceiveAmount] = useState(0);
   const [fee, setFee] = useState(0);
@@ -591,6 +752,14 @@ function ExchangePage({
   };
 
   const handleSubmit = async () => {
+    if (!isTradeReady(
+      rateSources,
+      selectedExchange,
+      Date.now(),
+    )) {
+      notifyMessage('نرخ این معامله معتبر نیست. لطفاً بروزرسانی کنید.');
+      return;
+    }
     if (!user || user.kyc_status !== 'Approved') {
       notifyMessage('لطفاً ابتدا وارد شوید و احراز هویت کنید');
       return;
@@ -659,6 +828,16 @@ function ExchangePage({
       });
 
       if (response.ok) {
+        const confirmed = await response.json();
+        const confirmedReceive = Number(confirmed?.receive_amount);
+
+        if (Number.isFinite(confirmedReceive) && confirmedReceive >= 0) {
+          setReceiveAmount(confirmedReceive);
+          adminNotificationData.receive_amount = confirmedReceive;
+        } else {
+          console.error('Transaction confirmation missing valid receive_amount');
+        }
+
         setRequestSubmitted(true);
 
         // Notify admin with user's 3 factors
@@ -823,7 +1002,7 @@ function ExchangePage({
             </label>
             <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4">
               <p className="text-2xl font-bold text-green-600 text-center" dir="ltr">
-                {formatReceiveAmount(receiveAmount, selectedExchange, 'receive')}
+                {quoteAvailable ? formatReceiveAmount(receiveAmount, selectedExchange, 'receive') : '—'}
               </p>
             </div>
           </div>
@@ -831,7 +1010,12 @@ function ExchangePage({
           {/* Submit Button */}
           <button
             onClick={handleSubmit}
-            disabled={!user || user.kyc_status !== 'Approved' || !amount}
+            disabled={
+              !user ||
+              user.kyc_status !== 'Approved' ||
+              !amount ||
+              !quoteAvailable
+            }
             className={`w-full py-4 rounded-xl font-bold text-lg ${
               !user || user.kyc_status !== 'Approved'
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
@@ -995,6 +1179,7 @@ function ExchangePage({
 interface RegistrationFormData {
   firstName: string;
   lastName: string;
+  fatherName: string;
   nationalId: string;
   dateOfBirth: string;
   bankCardNumber: string;
@@ -1012,10 +1197,30 @@ function RegistrationPage({
   const [attempts, setAttempts] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState(0);
+  type RegistrationStage = 'precheck' | 'mobile' | 'civil' | 'card' | 'creating' | 'done';
+  const [verificationStage, setVerificationStage] = useState<RegistrationStage>('precheck');
+  const [verificationModalStatus, setVerificationModalStatus] = useState<'idle' | 'working' | 'success' | 'error'>('idle');
+  const [verificationMessage, setVerificationMessage] = useState('');
+  const [registrationCompleted, setRegistrationCompleted] = useState(false);
+  const progressCeilingRef = useRef(18);
   const [showTerms, setShowTerms] = useState(false);
+  const [registrationAvailability, setRegistrationAvailability] = useState<'loading' | 'ready' | 'paused' | 'unavailable'>('loading');
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_URL}/users/registration-options`, { cache: 'no-store' })
+      .then(async (response) => {
+        const options = await response.json().catch(() => null);
+        if (!active) return;
+        setRegistrationAvailability(response.ok && options?.registration_enabled === true ? 'ready'
+          : response.ok && options?.reason === 'birth_date_verification_unavailable' ? 'paused' : 'unavailable');
+      })
+      .catch(() => { if (active) setRegistrationAvailability('unavailable'); });
+    return () => { active = false; };
+  }, []);
   const [formData, setFormData] = useState<RegistrationFormData>({
     firstName: '',
     lastName: '',
+    fatherName: '',
     nationalId: '',
     dateOfBirth: '',
     bankCardNumber: '',
@@ -1029,6 +1234,16 @@ function RegistrationPage({
   useEffect(() => {
     checkAttemptLimit();
   }, []);
+
+  useEffect(() => {
+    if (!submitting) return;
+    const preventLeave = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', preventLeave);
+    return () => window.removeEventListener('beforeunload', preventLeave);
+  }, [submitting]);
 
   const isValidNationalId = (nid: string) => {
     // Exactly 10 digits and not all same digits
@@ -1081,6 +1296,9 @@ function RegistrationPage({
     }
     if (!formData.lastName || !isPersianText(formData.lastName)) {
       newErrors.lastName = 'لطفا نام خانوادگی را با حروف فارسی وارد کنید';
+    }
+    if (!formData.fatherName || !isPersianText(formData.fatherName)) {
+      newErrors.fatherName = 'لطفاً نام پدر را با حروف فارسی وارد کنید';
     }
     if (!isValidNationalId(formData.nationalId)) {
       newErrors.nationalId = 'کد ملی نامعتبر است';
@@ -1154,6 +1372,9 @@ function RegistrationPage({
     if (field === 'lastName' && strValue && !isPersianText(strValue)) {
       nextErrors.lastName = 'لطفا نام خانوادگی را با حروف فارسی وارد کنید';
     }
+    if (field === 'fatherName' && strValue && !isPersianText(strValue)) {
+      nextErrors.fatherName = 'لطفاً نام پدر را با حروف فارسی وارد کنید';
+    }
     if (field === 'nationalId' && strValue && !isValidNationalId(strValue)) {
       nextErrors.nationalId = 'کد ملی نامعتبر است';
     }
@@ -1181,114 +1402,157 @@ function RegistrationPage({
   };
 
 
-   const handleSubmit = async () => {
-    if (!validateForm()) return;
+  const failVerification = (message: string) => {
+    setVerificationMessage(message);
+    setVerificationModalStatus('error');
+  };
 
+  const handleSubmit = async () => {
+    if (submitting || !validateForm()) return;
     if (attempts >= 5) {
-      notifyMessage('شما بیش از 5 بار امروز تلاش کرده‌اید. لطفاً فردا دوباره تلاش کنید.');
+      notifyMessage('شما امروز ۵ بار تلاش کرده‌اید. لطفاً فردا دوباره تلاش کنید.');
       return;
     }
 
     setSubmitting(true);
-    setProgress(0);
+    setRegistrationCompleted(false);
+    setVerificationModalStatus('working');
+    setVerificationStage('precheck');
+    setVerificationMessage('در حال بررسی اولیه اطلاعات وارد شده...');
+    setProgress(5);
+    progressCeilingRef.current = 18;
     const progressTimer = window.setInterval(() => {
-      setProgress((prev) => (prev >= 95 ? prev : prev + 5));
-    }, 1000);
+      setProgress((previous) => Math.min(progressCeilingRef.current, previous + 1));
+    }, 900);
+
+    const stage = (next: RegistrationStage, value: number, ceiling: number, message: string) => {
+      setVerificationStage(next);
+      setProgress((previous) => Math.max(previous, value));
+      progressCeilingRef.current = ceiling;
+      setVerificationMessage(message);
+    };
+    const checkMatch = async (path: string, payload: Record<string, string>, mismatch: string, requireBirthDateProof = false) => {
+      const response = await fetch(`${API_URL}${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok && data?.detail === 'ownership_lookup_unconfirmed') {
+        failVerification(path === '/verify/ehraz-mobile'
+          ? 'تطبیق شماره موبایل و کد ملی تأیید نشد. کد ملی را بررسی کنید و از شماره موبایل متعلق به همان کد ملی استفاده کنید. اگر اطلاعات صحیح است، کمی بعد دوباره تلاش کنید. این بررسی از سهمیه تلاش‌ها کم نمی‌کند.'
+          : 'تطبیق مالکیت کارت بانکی و کد ملی تأیید نشد. شماره کارت و کد ملی را بررسی کنید و فقط کارت متعلق به خودتان را وارد کنید. اگر اطلاعات صحیح است، کمی بعد دوباره تلاش کنید. این بررسی از سهمیه تلاش‌ها کم نمی‌کند.');
+        return false;
+      }
+      if (!response.ok && path === '/verify/ehraz-identity' && data?.detail === 'identity_lookup_unconfirmed') {
+        failVerification('ثبت احوال نتوانست اطلاعات واردشده را تأیید کند. نام، نام خانوادگی، نام پدر و تاریخ تولد را مطابق مدارک بررسی کنید. اگر اطلاعات صحیح است، کمی بعد دوباره تلاش کنید. این خطا از تعداد تلاش‌های شما کم نمی‌کند.');
+        return false;
+      }
+      if (!response.ok || typeof data?.matched !== 'boolean') {
+        failVerification('سرویس بررسی این مرحله موقتاً در دسترس نیست. لطفاً کمی بعد دوباره تلاش کنید. این خطا از تعداد تلاش‌های شما کم نمی‌کند.');
+        return false;
+      }
+      if (data.matched !== true) {
+        incrementAttempts();
+        failVerification(mismatch);
+        return false;
+      }
+      if (requireBirthDateProof && data.birth_date_verified !== true) {
+        failVerification('تطبیق نام و نام پدر انجام شد، اما تاریخ تولد به‌طور مستقل تأیید نشده است. ثبت‌نام جدید تا فراهم شدن این تأیید موقتاً متوقف است.');
+        return false;
+      }
+      return true;
+    };
 
     try {
-      // Verify with EHRAZ.IO
-      const ehrazResponse = await fetch(`${API_URL}/verify/ehraz`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cardNumber: formData.bankCardNumber.replace(/\s/g, ''),
-          nationalCode: formData.nationalId,
-          birthDate: formData.dateOfBirth.replace(/\//g, ''),
-        }),
-      });
-
-      const ehrazData = await ehrazResponse.json();
-
-      if (!ehrazData.matched) {
-        incrementAttempts();
-        notifyMessage('اطلاعات وارد شده صحیح نیست. لطفاً دوباره بررسی کنید.\n\n' +
-              'اطلاعات کارت بانکی شما با کد ملی و تاریخ تولدتان همخوانی ندارد.\n' +
-              'لطفا اطلاعات وارد شده رو بررسی و دوباره تلاش کنید.');
-        setSubmitting(false);
-        clearInterval(progressTimer);
-        setProgress(0);
+      // Check availability before any paid identity lookup.
+      const optionsResponse = await fetch(`${API_URL}/users/registration-options`, { cache: 'no-store' });
+      const options = await optionsResponse.json().catch(() => null);
+      if (!optionsResponse.ok || options?.registration_enabled !== true) {
+        failVerification(options?.reason === 'birth_date_verification_unavailable'
+          ? 'ثبت‌نام جدید موقتاً متوقف است؛ تأیید مستقل تاریخ تولد هنوز در دسترس نیست. اگر حساب دارید، از صفحه ورود استفاده کنید.'
+          : 'امکان بررسی وضعیت ثبت‌نام موقتاً وجود ندارد. لطفاً کمی بعد دوباره تلاش کنید.');
         return;
       }
+      stage('mobile', 20, 36, 'در حال تطبیق مالکیت شماره موبایل با کد ملی...');
+      if (!await checkMatch('/verify/ehraz-mobile', {
+        nationalCode: formData.nationalId, mobileNumber: formData.phoneNumber,
+      }, 'شماره موبایل و کد ملی با هم تطابق ندارند. کد ملی را بررسی کنید و از شماره موبایل متعلق به همان کد ملی استفاده کنید.')) return;
 
-      // Verify national ID with phone ownership
-      const mobileMatchResponse = await fetch(`${API_URL}/verify/ehraz-mobile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nationalCode: formData.nationalId,
-          mobileNumber: formData.phoneNumber,
-        }),
-      });
-      const mobileMatchData = await mobileMatchResponse.json();
-      if (!mobileMatchData.matched) {
-        incrementAttempts();
-        notifyMessage('شماره موبایل با کد ملی مطابقت ندارد یا به نام شما نیست.');
-        setSubmitting(false);
-        clearInterval(progressTimer);
-        setProgress(0);
-        return;
-      }
+      stage('civil', 38, 62, 'در حال بررسی مشخصات هویتی، نام پدر و تاریخ تولد...');
+      if (!await checkMatch('/verify/ehraz-identity', {
+        nationalCode: formData.nationalId,
+        birthDate: formData.dateOfBirth.replace(/\//g, ''),
+        firstName: formData.firstName, lastName: formData.lastName,
+        fatherName: formData.fatherName,
+      }, 'مشخصات هویتی یا تاریخ تولد مطابقت ندارد. نام، نام خانوادگی، نام پدر و تاریخ تولد را دقیقاً مطابق مدارک هویتی وارد کنید.', true)) return;
 
-      // Register user
-      const registerResponse = await fetch(`${API_URL}/users/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      stage('card', 65, 83, 'در حال تطبیق مالکیت کارت بانکی با کد ملی...');
+      if (!await checkMatch('/verify/ehraz', {
+        cardNumber: formData.bankCardNumber.replace(/\s/g, ''),
+        nationalCode: formData.nationalId,
+        birthDate: formData.dateOfBirth.replace(/\//g, ''),
+      }, 'کارت بانکی با کد ملی تطابق ندارد. فقط کارت بانکی متعلق به خودتان را وارد کنید.')) return;
+
+      stage('creating', 86, 98, 'بررسی نهایی اطلاعات و ایجاد حساب کاربری...');
+      const response = await fetch(`${API_URL}/users/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          first_name: formData.firstName,
-          last_name: formData.lastName,
-          national_id: formData.nationalId,
+          first_name: formData.firstName, last_name: formData.lastName,
+          father_name: formData.fatherName, national_id: formData.nationalId,
           date_of_birth: formData.dateOfBirth.replace(/\//g, ''),
           bank_card_number: formData.bankCardNumber.replace(/\s/g, ''),
-          phone_number: formData.phoneNumber,
-          password: formData.password,
+          phone_number: formData.phoneNumber, password: formData.password,
         }),
       });
-
-      if (registerResponse.ok) {
-        notifyMessage('ثبت نام با موفقیت انجام شد! اکنون می‌توانید وارد شوید.');
-        onLoginRedirect();
-      } else {
-        const errorData = await registerResponse.json().catch(() => null);
-        incrementAttempts();
-        
-        // Show specific error messages based on backend response
-        let errorMessage = 'خطا در ثبت نام. لطفاً دوباره تلاش کنید.';
-        
-        if (errorData?.detail) {
-          if (errorData.detail === 'already_registered_phone') {
-            errorMessage = 'شما قبلاً در سیستم ثبت‌نام کرده‌اید. لطفاً وارد شوید.';
-          } else if (errorData.detail === 'already_registered_national_id') {
-            errorMessage = 'این کد ملی قبلاً ثبت شده است. لطفاً وارد شوید یا با پشتیبانی تماس بگیرید.';
-          } else if (errorData.detail === 'already_registered_card') {
-            errorMessage = 'این شماره کارت قبلاً ثبت شده است.';
-          } else {
-            errorMessage = 'خطا در ثبت نام، لطفاً مجدد تلاش کنید.';
-          }
-        }
-        
-        notifyMessage(errorMessage);
+      const data = await response.json().catch(() => null);
+      if (response.ok) {
+        setProgress(100);
+        setVerificationStage('done');
+        setRegistrationCompleted(true);
+        setVerificationMessage('ثبت نام با موفقیت انجام شد. اکنون می‌توانید وارد حساب خود شوید.');
+        setVerificationModalStatus('success');
+        return;
       }
-    } catch (error) {
-      incrementAttempts();
-      console.error('Registration error:', error);
-      notifyMessage('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.');
+      if (response.status === 409) {
+        failVerification('این اطلاعات قبلاً ثبت شده‌اند. اگر حساب دارید، از صفحه ورود استفاده کنید.');
+        return;
+      }
+      if (data?.detail === 'identity_birth_mismatch') {
+        incrementAttempts();
+        setVerificationStage('civil');
+        failVerification('مشخصات هویتی یا تاریخ تولد مطابقت ندارد. لطفاً اطلاعات صحیح را وارد کنید.');
+        return;
+      }
+      if (data?.detail === 'phone_national_mismatch' || data?.detail === 'card_national_mismatch') {
+        incrementAttempts();
+        setVerificationStage(data.detail === 'phone_national_mismatch' ? 'mobile' : 'card');
+        failVerification('مالکیت شماره موبایل یا کارت بانکی با کد ملی مطابقت ندارد.');
+        return;
+      }
+      failVerification('تأیید نهایی احراز هویت موقتاً در دسترس نیست. لطفاً کمی بعد دوباره تلاش کنید. این خطا از تعداد تلاش‌های شما کم نمی‌کند.');
+    } catch {
+      failVerification('ارتباط با سرور قطع شد. لطفاً اینترنت خود را بررسی کرده و دوباره تلاش کنید. این خطا از تعداد تلاش‌های شما کم نمی‌کند.');
     } finally {
-      clearInterval(progressTimer);
-      setProgress(100);
-      setTimeout(() => setProgress(0), 400);
+      window.clearInterval(progressTimer);
       setSubmitting(false);
     }
   };
+
+  const registrationStageOrder = { precheck: 0, mobile: 1, civil: 2, card: 3, creating: 4, done: 5 } as const;
+  const currentStage = registrationStageOrder[verificationStage];
+  const registrationSteps: ProgressStep[] = [
+    'بررسی اولیه اطلاعات',
+    'تطبیق موبایل و کد ملی',
+    'تطبیق مشخصات هویتی و تاریخ تولد',
+    'تطبیق کارت بانکی و کد ملی',
+    'ایجاد حساب کاربری',
+  ].map((label, index): ProgressStep => ({
+    label,
+    state: verificationModalStatus === 'error' && index === currentStage ? 'error'
+      : verificationStage === 'done' || index < currentStage ? 'done'
+      : index === currentStage ? 'active' : 'pending',
+  }));
+
 
   // Terms and Conditions Popup Component
   const TermsPopup = () => (
@@ -1336,6 +1600,26 @@ function RegistrationPage({
   );
 
   return (
+    <>
+      <BlockingProgressModal
+        open={verificationModalStatus !== 'idle'}
+        title={verificationModalStatus === 'success' ? 'ثبت نام با موفقیت انجام شد'
+          : verificationModalStatus === 'error' ? 'بررسی اطلاعات انجام نشد'
+          : 'در حال بررسی اطلاعات شما'}
+        description={verificationModalStatus === 'working'
+          ? 'تا پایان بررسی همه مراحل، لطفاً این صفحه را باز نگه دارید.' : undefined}
+        progress={progress}
+        status={verificationModalStatus === 'success' ? 'success'
+          : verificationModalStatus === 'error' ? 'error' : 'working'}
+        message={verificationMessage}
+        steps={registrationSteps}
+        closeLabel={registrationCompleted ? 'رفتن به صفحه ورود' : 'بستن و اصلاح اطلاعات'}
+        onClose={verificationModalStatus === 'working' ? undefined : () => {
+          setVerificationModalStatus('idle');
+          if (registrationCompleted) onLoginRedirect();
+        }}
+      />
+
     <div className="p-4">
       {showTerms && <TermsPopup />}
       <div className="bg-white rounded-2xl p-6 shadow-lg max-w-md mx-auto">
@@ -1352,6 +1636,15 @@ function RegistrationPage({
           </div>
         ) : (
           <div className="space-y-4">
+            {registrationAvailability !== 'ready' && (
+              <div role="status" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-900">
+                {registrationAvailability === 'paused'
+                  ? 'ثبت‌نام جدید موقتاً متوقف است؛ تأیید مستقل تاریخ تولد هنوز در دسترس نیست. اگر حساب دارید، از صفحه ورود استفاده کنید.'
+                  : registrationAvailability === 'loading' ? 'در حال بررسی امکان ثبت‌نام...'
+                  : 'وضعیت ثبت‌نام موقتاً در دسترس نیست. لطفاً کمی بعد دوباره تلاش کنید.'}
+              </div>
+            )}
+
             {/* First Name */}
             <FormField
               label="نام (فارسی)"
@@ -1373,6 +1666,18 @@ function RegistrationPage({
               value={formData.lastName}
               onChange={(v) => updateField('lastName', v)}
               onBlur={(v) => validateSingleField('lastName', v)}
+              type="text"
+              inputMode="text"
+              dir="rtl"
+            />
+
+            <FormField
+              label="نام پدر (فارسی)"
+              error={errors.fatherName}
+              placeholder="نام پدر مطابق مدرک هویتی"
+              value={formData.fatherName}
+              onChange={(v) => updateField('fatherName', v)}
+              onBlur={(v) => validateSingleField('fatherName', v)}
               type="text"
               inputMode="text"
               dir="rtl"
@@ -1486,20 +1791,11 @@ function RegistrationPage({
             {/* Submit Button */}
             <button
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={registrationAvailability !== 'ready' || submitting || attempts >= 5}
               className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-4 rounded-xl font-bold text-lg hover:shadow-xl transition-all disabled:opacity-50"
             >
               {submitting ? 'در حال ثبت نام...' : 'ثبت نام'}
             </button>
-            {submitting && (
-              <div className="w-full mt-2">
-                <div className="text-xs text-gray-600 mb-1">در حال بررسی اطلاعات... {progress}%</div>
-                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} />
-                </div>
-              </div>
-            )}
-
             {/* Login Link */}
             <p className="text-center text-sm text-gray-600">
               قبلاً ثبت نام کرده‌اید؟{' '}
@@ -1514,6 +1810,7 @@ function RegistrationPage({
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -1649,52 +1946,13 @@ function LoginPage({
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [resetMode, setResetMode] = useState<'' | 'bot' | 'sms'>('');
-  const [resetCode, setResetCode] = useState('');
-  const [newPassword, setNewPassword] = useState('');
 
-  const startReset = async (channel: 'bot' | 'sms') => {
-    if (!phoneNumber) {
-      setError('ابتدا شماره موبایل را وارد کنید');
-      return;
-    }
-
+  const startReset = (channel: 'bot' | 'sms') => {
+    setError('');
     if (channel === 'bot') {
       notifyMessage('در تلگرام به ربات پیام /resetpassword بدهید و شماره خود را با Share Contact ارسال کنید.');
-      return;
-    }
-
-    const response = await fetch(`${API_URL}/users/password-reset/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone_number: phoneNumber, channel }),
-    });
-
-    if (response.ok) {
-      setResetMode(channel);
-      notifyMessage('در صورت معتبر بودن شماره، کد بازیابی پیامک شد.');
     } else {
-      setError('در ارسال درخواست بازیابی خطا رخ داد');
-    }
-  };
-
-  const completeReset = async () => {
-    const response = await fetch(`${API_URL}/users/password-reset/complete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phone_number: phoneNumber,
-        code: resetCode,
-        new_password: newPassword,
-      }),
-    });
-
-    if (response.ok) {
-      notifyMessage('رمز عبور با موفقیت تغییر کرد.');
-      setResetMode('');
-      setResetCode('');
-      setNewPassword('');
-    } else {
-      setError('کد بازیابی نامعتبر یا منقضی است');
+      setResetMode('sms');
     }
   };
 
@@ -1732,6 +1990,11 @@ function LoginPage({
       setSubmitting(false);
     }
   };
+
+  if (resetMode === 'sms') {
+    return <SmsPasswordReset initialPhone={phoneNumber} onBack={() => setResetMode('')}
+      onComplete={(phone) => { setPhoneNumber(phone); setPassword(''); setResetMode(''); setError(''); }} />;
+  }
 
   return (
     <div className="p-4">
@@ -1785,24 +2048,6 @@ function LoginPage({
             <button onClick={() => startReset('sms')} className="text-blue-600">فراموشی رمز (پیامک)</button>
           </div>
 
-          {resetMode && (
-            <div className="bg-gray-50 border rounded-xl p-3 space-y-2">
-              <input
-                className="w-full px-3 py-2 border rounded"
-                placeholder="کد تایید"
-                value={resetCode}
-                onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              />
-              <input
-                type="password"
-                className="w-full px-3 py-2 border rounded"
-                placeholder="رمز عبور جدید"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
-              <button onClick={completeReset} className="w-full bg-indigo-600 text-white py-2 rounded">ثبت رمز جدید</button>
-            </div>
-          )}
           {/* Login Button */}
           <button
             onClick={handleLogin}
@@ -1829,73 +2074,8 @@ function LoginPage({
 }
 
 function AdminPanelPage() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [users, setUsers] = useState<any[]>([]);
-  const [transactions, setTransactions] = useState<any[]>([]);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [report, setReport] = useState<any>(null);
-  const [faqs, setFaqs] = useState<any[]>([]);
-  const [statusRef, setStatusRef] = useState('');
-  const [statusValue, setStatusValue] = useState('Under Review');
-  const [faqQuestion, setFaqQuestion] = useState('');
-  const [faqAnswer, setFaqAnswer] = useState('');
-  const [receiptPhotoUrl, setReceiptPhotoUrl] = useState('');
-  const [receiptDescription, setReceiptDescription] = useState('');
-  const [paymentLink, setPaymentLink] = useState('');
-  const [messageText, setMessageText] = useState('');
-  const [targetUserId, setTargetUserId] = useState('');
-  const [newUserPassword, setNewUserPassword] = useState('');
-
-  const loadAll = async () => {
-    const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    const [u, t, l, r, f] = await Promise.all([
-      fetch(`${API_URL}/admin/users?${qs}`),
-      fetch(`${API_URL}/admin/transactions?${qs}`),
-      fetch(`${API_URL}/admin/logs?${qs}`),
-      fetch(`${API_URL}/admin/reports?${qs}`),
-      fetch(`${API_URL}/admin/faqs?${qs}`),
-    ]);
-    setUsers((await u.json()).users || []);
-    setTransactions((await t.json()).transactions || []);
-    setLogs((await l.json()).logs || []);
-    setReport((await r.json()).report || null);
-    setFaqs((await f.json()).faqs || []);
-  };
-
-  const login = async () => {
-    const res = await fetch(`${API_URL}/admin/login`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (res.ok) {
-      setLoggedIn(true);
-      loadAll();
-    } else {
-      notifyMessage('نام کاربری یا رمز عبور ادمین اشتباه است');
-    }
-  };
-
-  if (!loggedIn) return <div className="p-6 max-w-md mx-auto"><div className="bg-white p-6 rounded-xl shadow"><h2 className="text-xl font-bold mb-4">ورود ادمین</h2><input className="w-full border p-2 mb-2 rounded" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} /><input type="password" className="w-full border p-2 mb-3 rounded" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} /><button onClick={login} className="w-full bg-blue-600 text-white py-2 rounded">Login</button></div></div>;
-
-  return (
-    <div className="p-4 space-y-4">
-      <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Admin Panel</h2><button onClick={loadAll} className="bg-blue-100 px-3 py-1 rounded">Refresh</button></div>
-      <div className="bg-white p-4 rounded-xl shadow text-sm">{report && <div>Orders: {report.total_orders} | Done: {report.done_orders} | Canceled: {report.canceled_orders}</div>}</div>
-      <div className="bg-white p-4 rounded-xl shadow">
-        <h3 className="font-bold mb-2">کنترل سفارش</h3>
-        <div className="flex gap-2 flex-wrap"><input className="border p-2 rounded flex-1" placeholder="Reference Number" value={statusRef} onChange={(e) => setStatusRef(e.target.value)} /><input className="border p-2 rounded" value={statusValue} onChange={(e) => setStatusValue(e.target.value)} /><input className="border p-2 rounded flex-1" placeholder="Receipt photo URL" value={receiptPhotoUrl} onChange={(e)=>setReceiptPhotoUrl(e.target.value)} /><input className="border p-2 rounded flex-1" placeholder="Receipt description" value={receiptDescription} onChange={(e)=>setReceiptDescription(e.target.value)} /><input className="border p-2 rounded flex-1" placeholder="Payment link" value={paymentLink} onChange={(e)=>setPaymentLink(e.target.value)} /><button onClick={async () => { await fetch(`${API_URL}/admin/transactions/${statusRef}/update-status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, status: statusValue, receipt_photo_url: receiptPhotoUrl || null, receipt_description: receiptDescription || null, payment_link: paymentLink || null }) }); loadAll(); }} className="bg-green-600 text-white px-3 rounded">Update</button></div>
-      </div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Users ({users.length})</h3><div className="max-h-56 overflow-auto text-xs">{users.map((u) => <div key={u.id} className="border-b py-2"><div>#{u.id} | {u.first_name} {u.last_name} - {u.phone_number}</div><div>National ID: {u.national_id} | DOB: {u.dob} | Card: {u.bank_card_number}</div><div className="flex gap-2 mt-1"><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/users/${u.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete</button><button className="text-blue-600" onClick={async ()=>{ if(!newUserPassword){notifyMessage('رمز جدید را در کادر پایین وارد کنید');return;} await fetch(`${API_URL}/admin/users/${u.id}/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,new_password:newUserPassword})}); notifyMessage('رمز عبور کاربر تغییر کرد'); }}>Reset Password</button></div></div>)}</div><input className="border p-2 rounded w-full mt-2" placeholder="New password for reset action" value={newUserPassword} onChange={(e)=>setNewUserPassword(e.target.value)} /></div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Exchange Requests ({transactions.length})</h3><div className="max-h-56 overflow-auto text-xs">{transactions.slice(0, 100).map((t) => <div key={t.id} className="border-b py-1">#{t.reference_number} | {t.exchange_pair} | {t.status} | {t.user_name} ({t.user_phone})<div>Receipt: {t.receipt_photo_url || '-'} | Link: {t.payment_link || '-'}</div><div>{t.receipt_description || ''}</div></div>)}</div></div><div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">ارسال پیام دستی</h3><div className="flex gap-2"><input className="border p-2 rounded flex-1" placeholder="User ID (خالی = ارسال همگانی)" value={targetUserId} onChange={(e)=>setTargetUserId(e.target.value)} /><input className="border p-2 rounded flex-[2]" placeholder="متن پیام" value={messageText} onChange={(e)=>setMessageText(e.target.value)} /><button className="bg-purple-600 text-white px-3 rounded" onClick={async ()=>{const res=await fetch(`${API_URL}/admin/messages/send`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,message:messageText,user_id:targetUserId?Number(targetUserId):null})});const data=await res.json();notifyMessage(`ارسال شد: ${data.sent ?? 0}`);}}>Send</button></div></div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">FAQ ({faqs.length})</h3><div className="flex gap-2 mb-2"><input className="border p-2 rounded flex-1 text-xs" placeholder="سوال" value={faqQuestion} onChange={(e)=>setFaqQuestion(e.target.value)} /><input className="border p-2 rounded flex-1 text-xs" placeholder="پاسخ" value={faqAnswer} onChange={(e)=>setFaqAnswer(e.target.value)} /><button className="bg-blue-600 text-white px-2 rounded text-xs" onClick={async ()=>{await fetch(`${API_URL}/admin/faqs`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,question:faqQuestion,answer:faqAnswer})});setFaqQuestion('');setFaqAnswer('');loadAll();}}>Add</button></div><div className="max-h-40 overflow-auto text-xs">{faqs.map((f) => <div key={f.id} className="border-b py-1 flex justify-between"><span>{f.question}</span><button className="text-red-600" onClick={async () => { const qs = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; await fetch(`${API_URL}/admin/faqs/${f.id}?${qs}`, { method: 'DELETE' }); loadAll(); }}>Delete</button></div>)}</div></div>
-      <div className="bg-white p-4 rounded-xl shadow"><h3 className="font-bold mb-2">Logs ({logs.length})</h3><div className="max-h-40 overflow-auto text-xs">{logs.slice(0, 100).map((l) => <div key={l.id} className="border-b py-1">{l.created_at} - {l.action}</div>)}</div></div>
-    </div>
-  );
+  return <SecureAdminPanel />;
 }
-
-// ─── PART 6: History Page ───────────────────────────────────────────────────
 
 function HistoryPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);

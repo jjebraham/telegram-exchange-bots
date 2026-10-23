@@ -5,6 +5,7 @@ MVP source: TGJU's USDT comparison table. TGJU publishes values in Iranian
 rials; the Telegram post converts them to toman.
 
 Safety filters:
+- require a timestamp no more than 90 minutes old (or 5 minutes in the future);
 - keep rows from the modal (most common) source date;
 - keep rows no more than 90 minutes behind the freshest row on that date;
 - reject sell-price outliers more than 12% away from the median;
@@ -13,14 +14,16 @@ Safety filters:
 
 from __future__ import annotations
 
-import re
-import statistics
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+import re
+import statistics
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 TGJU_USDT_URL = "https://www.tgju.org/crypto/exchanges/local/asset/usdt"
 
@@ -39,6 +42,53 @@ _DIGITS = str.maketrans(
     "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
     "01234567890123456789",
 )
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+
+
+def _jalali_to_gregorian(year: int, month: int, day: int) -> tuple[int, int, int]:
+    """Convert a Jalali calendar date to Gregorian (no optional deps)."""
+    jy = year - 979
+    days = 365 * jy + (jy // 33) * 8 + ((jy % 33 + 3) // 4)
+    days += (month - 1) * 31 if month <= 7 else 186 + (month - 7) * 30
+    days += day - 1 + 79
+    gy = 1600 + 400 * (days // 146097)
+    days %= 146097
+    leap = True
+    if days >= 36525:
+        days -= 1
+        gy += 100 * (days // 36524)
+        days %= 36524
+        if days >= 365:
+            days += 1
+        else:
+            leap = False
+    gy += 4 * (days // 1461)
+    days %= 1461
+    if days >= 366:
+        leap = False
+        days -= 1
+        gy += days // 365
+        days %= 365
+    month_lengths = (31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    gm = 1
+    for length in month_lengths:
+        if days < length:
+            break
+        days -= length
+        gm += 1
+    return gy, gm, days + 1
+
+
+def _source_datetime(quote: UsdtExchangeQuote) -> datetime | None:
+    if not quote.source_date or not quote.source_time:
+        return None
+    try:
+        year, month, day = (int(part) for part in quote.source_date.split("/"))
+        hour, minute = (int(part) for part in quote.source_time.split(":"))
+        gy, gm, gd = _jalali_to_gregorian(year, month, day)
+        return datetime(gy, gm, gd, hour, minute, tzinfo=TEHRAN_TZ)
+    except (ValueError, OverflowError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -206,7 +256,25 @@ def filter_usdt_quotes(
     *,
     max_lag_minutes: int = 90,
     max_median_deviation: Decimal = Decimal("0.12"),
+    now: datetime | None = None,
 ) -> list[UsdtExchangeQuote]:
+    if not quotes:
+        return []
+
+    current = now or datetime.now(TEHRAN_TZ)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=TEHRAN_TZ)
+    else:
+        current = current.astimezone(TEHRAN_TZ)
+    cutoff = current - timedelta(minutes=max_lag_minutes)
+    # TGJU can serve an old comparison-table snapshot while all rows still
+    # agree with one another. Require an absolute, current timestamp too.
+    quotes = [
+        q
+        for q in quotes
+        if (stamp := _source_datetime(q)) is not None
+        and cutoff <= stamp <= current + timedelta(minutes=5)
+    ]
     if not quotes:
         return []
 

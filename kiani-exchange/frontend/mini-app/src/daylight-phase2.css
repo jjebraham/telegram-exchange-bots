@@ -1,0 +1,390 @@
+/* Kiani Exchange — Daylight Phase 2
+   Deep customer-facing layout for Home + Exchange.
+   No business logic lives here. Everything remains scoped to [data-ke]. */
+
+/* --------------------------------------------------------------------------
+   Home — rates become a compact market board
+   -------------------------------------------------------------------------- */
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 16px 14px 8px !important;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .flex.justify-between.items-center.mb-4 {
+  grid-column: 1 / -1;
+  margin-bottom: 2px !important;
+  padding: 2px 2px 8px;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .flex h2 {
+  font-size: 20px !important;
+  font-weight: 650 !important;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .flex button {
+  min-height: 36px !important;
+  padding: 5px 12px !important;
+  border: 1px solid var(--ke-line) !important;
+  background: var(--ke-surface) !important;
+  color: var(--ke-accent) !important;
+  box-shadow: none !important;
+  font-size: 12px !important;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3 {
+  margin: 0 !important;
+  min-height: 86px;
+  padding: 13px 14px !important;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--ke-line) !important;
+  border-radius: 17px !important;
+  background: var(--ke-surface) !important;
+  box-shadow: none !important;
+  transition: transform var(--ke-fast), border-color var(--ke-fast), box-shadow var(--ke-fast);
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:active {
+  transform: scale(.99);
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3 > .flex {
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 5px;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3 > .flex > span:first-child {
+  width: 100%;
+  color: var(--ke-muted) !important;
+  font-size: 11.5px !important;
+  line-height: 1.45;
+  font-weight: 500 !important;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3 > .flex > span:last-child {
+  width: 100%;
+  color: var(--ke-ink) !important;
+  font-size: 22px !important;
+  line-height: 1.25;
+  font-weight: 400 !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+  direction: ltr;
+  text-align: right;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:nth-of-type(2),
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:nth-of-type(4),
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:nth-of-type(6) {
+  border-color: color-mix(in srgb, var(--ke-accent) 22%, var(--ke-line)) !important;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:nth-of-type(3),
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:nth-of-type(5) {
+  border-color: color-mix(in srgb, var(--ke-sell) 25%, var(--ke-line)) !important;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:last-child {
+  grid-column: 1 / -1;
+  min-height: 72px;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:last-child > .flex {
+  flex-direction: row;
+  align-items: center !important;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:last-child > .flex > span:first-child {
+  width: auto;
+  max-width: 55%;
+}
+
+[data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:last-child > .flex > span:last-child {
+  width: auto;
+  color: var(--ke-accent) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Home — exchange actions become semantic service cards
+   -------------------------------------------------------------------------- */
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 10px 14px calc(22px + var(--ke-safe-bottom)) !important;
+  gap: 10px !important;
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4::before {
+  content: "خدمات تبدیل";
+  grid-column: 1 / -1;
+  color: var(--ke-ink);
+  font-size: 16px;
+  font-weight: 650;
+  padding: 8px 2px 2px;
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button {
+  position: relative;
+  overflow: hidden;
+  min-height: 98px !important;
+  padding: 14px !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  border: 1px solid var(--ke-line) !important;
+  border-radius: 18px !important;
+  background: var(--ke-surface) !important;
+  color: var(--ke-ink) !important;
+  box-shadow: var(--ke-sh) !important;
+  text-align: right;
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: -24px;
+  bottom: -36px;
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  background: var(--ke-accent-soft);
+  opacity: .75;
+  pointer-events: none;
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button.from-red-500::after,
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button.from-orange-500::after {
+  background: var(--ke-sell-soft);
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button > span:first-child {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 39px;
+  margin: 0 !important;
+  border-radius: 12px;
+  background: var(--ke-accent-soft);
+  font-size: 20px !important;
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button.from-red-500 > span:first-child,
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button.from-orange-500 > span:first-child {
+  background: var(--ke-sell-soft);
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button > span:last-child {
+  position: relative;
+  z-index: 1;
+  color: var(--ke-ink) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+
+[data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button:active {
+  transform: translateY(1px) scale(.992);
+  box-shadow: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   Exchange request — tighter financial hierarchy
+   -------------------------------------------------------------------------- */
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 14px 14px calc(28px + var(--ke-safe-bottom)) !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) > button.mb-4.text-blue-600 {
+  min-height: 38px !important;
+  margin: 2px 0 12px !important;
+  padding: 5px 10px !important;
+  border: 1px solid var(--ke-line);
+  border-radius: 12px;
+  background: var(--ke-surface);
+  color: var(--ke-ink-2) !important;
+  box-shadow: none !important;
+  font-size: 12.5px;
+  font-weight: 550 !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) > .bg-white.rounded-2xl.p-6.shadow-lg {
+  padding: 18px !important;
+  border: 1px solid var(--ke-line);
+  border-radius: 22px !important;
+  background: var(--ke-surface) !important;
+  box-shadow: var(--ke-sh-lift) !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) > .bg-white.rounded-2xl.p-6.shadow-lg > h2 {
+  margin-bottom: 16px !important;
+  font-size: 19px !important;
+  font-weight: 650 !important;
+}
+
+/* signed-in customer strip */
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-blue-50.rounded-xl.p-4.mb-6 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 12px;
+  margin-bottom: 14px !important;
+  padding: 12px 13px !important;
+  border: 1px solid color-mix(in srgb, var(--ke-accent) 24%, var(--ke-line));
+  border-radius: 14px !important;
+  background: var(--ke-accent-soft) !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-blue-50.rounded-xl.p-4.mb-6 p {
+  margin: 0 !important;
+  font-size: 11.5px !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-blue-50.rounded-xl.p-4.mb-6 p:last-child {
+  grid-column: 1 / -1;
+  padding-top: 2px;
+}
+
+/* exchange type card */
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .mb-4:has(> label + .bg-gray-100.rounded-xl.p-4.text-center) {
+  margin-bottom: 14px !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-gray-100.rounded-xl.p-4.text-center {
+  padding: 11px 13px !important;
+  border: 1px solid var(--ke-line);
+  background: var(--ke-surface-2) !important;
+  text-align: right !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-gray-100.rounded-xl.p-4.text-center > span {
+  color: var(--ke-ink) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+
+/* send amount — make it the primary input */
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) input.direction-ltr {
+  min-height: 66px !important;
+  padding: 10px 14px !important;
+  border: 1px solid var(--ke-line) !important;
+  border-radius: 16px !important;
+  background: var(--ke-surface) !important;
+  color: var(--ke-ink) !important;
+  font-size: 28px !important;
+  font-weight: 350 !important;
+  letter-spacing: -.03em;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) input.direction-ltr:focus {
+  border-color: var(--ke-accent) !important;
+  box-shadow: 0 0 0 4px var(--ke-accent-soft) !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .text-xs.text-gray-500.mt-2 {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--ke-muted) !important;
+  font-size: 10.5px !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .text-xs.text-gray-500.mt-2 .mx-2 {
+  display: none;
+}
+
+/* fee recap */
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .mb-3:has(.text-red-600) {
+  margin: 12px 0 !important;
+  padding: 11px 12px;
+  border: 1px solid var(--ke-line);
+  border-radius: 14px;
+  background: var(--ke-surface-2);
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .mb-3:has(.text-red-600) .text-red-600 {
+  color: var(--ke-sell) !important;
+}
+
+/* receive hero */
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .mb-6:has(> .bg-green-50.border-2.border-green-200.rounded-xl.p-4) {
+  margin-bottom: 14px !important;
+  padding-top: 2px;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-green-50.border-2.border-green-200.rounded-xl.p-4 {
+  position: relative;
+  min-height: 96px;
+  padding: 20px 14px !important;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ke-accent) 28%, var(--ke-line)) !important;
+  border-radius: 18px !important;
+  background: var(--ke-accent-soft) !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-green-50.border-2.border-green-200.rounded-xl.p-4 p {
+  color: var(--ke-accent) !important;
+  font-size: 34px !important;
+  font-weight: 350 !important;
+  letter-spacing: -.035em;
+  line-height: 1.2;
+}
+
+/* submit CTA */
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .bg-white.rounded-2xl.p-6.shadow-lg > button.w-full.py-4 {
+  min-height: 54px !important;
+  border-radius: 15px !important;
+  font-size: 15px !important;
+  font-weight: 650 !important;
+}
+
+/* submitted order view */
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .space-y-4 > .bg-yellow-50.border-2.border-yellow-200.rounded-xl.p-4,
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .space-y-4 > .bg-blue-50.rounded-xl.p-4 {
+  border-width: 1px !important;
+  border-radius: 15px !important;
+}
+
+[data-ke] main > .p-4:has(> button.mb-4.text-blue-600) .text-3xl.font-bold.text-yellow-600.text-center.font-mono {
+  color: var(--ke-sell) !important;
+  font-size: 30px !important;
+  font-weight: 400 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   Small-screen tuning
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 360px) {
+  [data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) {
+    grid-template-columns: 1fr;
+  }
+
+  [data-ke] main > div > .p-4:first-child:has(> .bg-white.rounded-xl.p-4.shadow-md.mb-3) > .bg-white.rounded-xl.p-4.shadow-md.mb-3:last-child {
+    grid-column: auto;
+  }
+
+  [data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 {
+    grid-template-columns: 1fr !important;
+  }
+
+  [data-ke] main > div > .grid.grid-cols-2.gap-4.p-4::before {
+    grid-column: auto;
+  }
+
+  [data-ke] main > div > .grid.grid-cols-2.gap-4.p-4 > button {
+    min-height: 82px !important;
+  }
+}

@@ -24,3 +24,21 @@ dist/
 channel_split/market_history.sqlite3
 channel_split/market_history.sqlite3-shm
 channel_split/market_history.sqlite3-wal
+
+# Exchange runtime state and private deployment material
+/kiani-exchange/backend/.env
+/kiani-exchange/backend/.env.*
+!/kiani-exchange/backend/.env.example
+/kiani-exchange/backend/.admin_session_secret
+/kiani-exchange/backend/.venv*/
+/kiani-exchange/backend/kyc_uploads/
+/kiani-exchange/backend/uploads/
+/kiani-exchange/backend/kyc_retained_metadata.json
+/kiani-exchange/backend/*.db*
+/kiani-exchange/backend/*.sqlite*
+/kiani-exchange/backend/*.log*
+/kiani-exchange/backend.backup*/
+/kiani-exchange/backups/
+/kiani-exchange/frontend/mini-app/node_modules/
+/kiani-exchange/frontend/mini-app/dist*/
+/shahidi-exchange/

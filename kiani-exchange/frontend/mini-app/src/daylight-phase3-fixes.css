@@ -1,0 +1,15 @@
+/* Small post-Phase-3 UI corrections.
+   Keeps the visible lira fee guidance aligned with the actual calculation. */
+
+[data-ke] main .mb-3 > .bg-yellow-50.border.border-yellow-200.rounded-lg.p-2.mt-2.text-xs.text-yellow-700 > p {
+  display: none !important;
+}
+
+[data-ke] main .mb-3 > .bg-yellow-50.border.border-yellow-200.rounded-lg.p-2.mt-2.text-xs.text-yellow-700::after {
+  content: '✅ کارمزد ثابت ۱۶۰ TL برای این تراکنش اعمال می‌شود.';
+  display: block;
+  color: var(--ke-sell);
+  font-size: 12px;
+  line-height: 1.65;
+  font-weight: 600;
+}

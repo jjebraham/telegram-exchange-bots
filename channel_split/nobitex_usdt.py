@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 
-from price_proxy import fetch_json_with_price_proxy
+from price_proxy import fetch_json_direct_then_price_proxy
 
 NOBITEX_STATS_URL = "https://apiv2.nobitex.ir/market/stats"
 
@@ -84,7 +84,7 @@ def parse_nobitex_usdt_stats(payload: dict) -> NobitexUsdtQuote:
 
 def fetch_nobitex_usdt(timeout: float | None = None) -> NobitexUsdtQuote:
     query = urlencode({"srcCurrency": "usdt", "dstCurrency": "rls"})
-    payload = fetch_json_with_price_proxy(
+    payload = fetch_json_direct_then_price_proxy(
         f"{NOBITEX_STATS_URL}?{query}",
         headers={
             "Accept": "application/json",

@@ -1,14 +1,18 @@
 import logging
 import os
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
 from .database import init_db
-from .api import rates, users, transactions
+from .api import pricing, rates, users, transactions
 from .price_cache import price_cache
 
-# Load environment variables from .env file
-load_dotenv()
+# Preserve market module startup order while configuring the restored KYC routes.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+from .api import kyc, kyc_admin
+from .api import admin_portal
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,16 +34,36 @@ app.add_middleware(
 )
 
 app.include_router(rates.router, prefix="/api", tags=["rates"])
+app.include_router(pricing.router, prefix="/api", tags=["pricing"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])
+app.include_router(kyc.router, prefix="/api", tags=["kyc"])
+app.include_router(kyc_admin.router, prefix="/api", tags=["kyc-admin"])
+app.include_router(admin_portal.router, prefix='/api', tags=['admin-portal'])
 
 
 @app.on_event("startup")
 async def startup():
     init_db()
+    kyc._ensure_schema()
     await price_cache.warm_cache()
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "kyc": "enabled"}
+
+
+# Precompute verified TRY rates outside incoming customer requests.
+from .canonical_try_rates import start_canonical_try_background_refresh
+
+
+@app.on_event("startup")
+async def start_canonical_try_refresh_worker():
+    start_canonical_try_background_refresh()
+
+
+@app.on_event('startup')
+async def initialize_sms_password_reset():
+    from .password_reset import initialize
+    initialize()
