@@ -1,91 +1,95 @@
-# Daily Iran gold board: multiple source consensus
+# Iran gold: Servix supplementary verification
 
-Daily Feed: **10:00 Asia/Tehran (06:30 UTC)**. One board with seven prices;
-a Story follows a successful Feed 30 minutes later. The source upgrade preserves
-that schedule, the existing Story registration and the publication database.
+Daily Feed remains **10:00 Asia/Tehran (06:30 UTC)**, with its existing delayed
+Story 30 minutes after successful publication. All seven prices remain mandatory.
+At least two current agreeing publishers must support every displayed price.
 
-## Providers and evidence
+## Servix's role
 
-The runtime polls three separate publishers, not three URLs for one publisher:
+TGJU, DolarChand and Alanchand retain their existing parsing and evidence rules.
+Servix adds one authenticated corroborating service, not a claim that its upstream
+contributors are independent. Servix alone cannot authorize a price or post.
 
-- **TGJU:** dedicated instrument profiles, explicit rial/volume units, quote
-  clocks, and dated summary records with matching Persian/Gregorian dates.
-- **DolarChand:** visible toman buy/sell values must match structured quotes;
-  its original ISO board timestamp must match the displayed board clock.
-- **Alanchand:** the original Persian date, weekday and board update clock;
-  exact named instrument rows in the market-price column; visible toman prices
-  must equal the structured IRR offers divided by ten. The intrinsic-value and
-  bubble columns are excluded. Offer expiry verifies timezone/date only and
-  never serves as the update timestamp.
+Two fixed HTTPS GETs use an X-API-Key header: /api/v1/assets/supported for original
+observations and quality, and /api/v1/assets?codes=... for seven exact instruments.
+No unbounded retries consume quota. The key is prompted privately once, verified,
+then saved publisher-owned mode0600 at
+~/.local/state/kiani-instagram-iran-gold/servix-api-key.
+It is not placed in commands, URLs, logs, the repository or the existing Instagram
+environment file. An existing private key is reused. Redirects never receive the
+key. Reads are bounded; raw headers and error bodies are never logged.
 
-The last two publish board snapshot timestamps, not individual trade times.
-Provider agreement reduces errors but cannot prove their upstream contributors
-are independent or guarantee that any price is executable. Known TGJU mirrors
-are not additional votes. Providers without verifiable timestamps/units were
-not added just to increase the source count.
+### Exact observation checks
 
-## Per-price consensus
+Each accepted Servix item requires:
 
-For **each of seven instruments**, require at least two usable current providers.
-A stale/unavailable third provider no longer vetoes the other two. A failed TGJU
-instrument is isolated; its other valid instruments can still contribute.
+- Exact code and explicit RLS unit; divide by ten exactly for toman.
+- Available, supported, not stale, and the declared SERVIX provider identity.
+- Catalog and price values/times from the same observation. A refresh between
+  reads excludes that item; old quality is not attached to a new quote.
+- Original timezone-aware businessTime, current Tehran day, age <=30 minutes,
+  future skew <=60 seconds. HTTP/insert/catalog/source clocks never refresh it.
+- Positive ordered sides; value = midPrice = (buyPrice + sellPrice)/2. Missing
+  sides stay missing. Internal bid/ask spread <=1%, applying the same conservative
+  pair guard already used for DolarChand.
+- ACCEPTED without warnings, or the specifically reviewed RateSurf DEGRADED
+  warning reporting excluded stale/outlier sources. Unknown warnings and hard
+  failures are rejected. Reviewed warnings still need another agreeing publisher
+  and remain visible in private audits.
+- Existing price bounds, coin hierarchy and gold fineness/volume checks.
 
-1. Original source timestamps must belong to the current Tehran day and be no
-   older than 30 minutes, with at most 60 seconds of future skew. Retrieval time
-   never refreshes an old source timestamp. The whole collection expires after
-   three minutes and is revalidated immediately before final publication.
-2. Normalize rial/toman exactly, without guessing units or multiplying values
-   to make them agree. Require positive finite numbers and existing conservative
-   per-instrument bounds. DolarChand bid/ask must not cross or exceed 1% width.
-3. Build pairwise agreeing clusters: full range divided by midpoint <=1% for
-   coins and <=0.5% for 18K gram / bazaar mesghal. Select the unique largest
-   cluster with at least two providers. Equal-size competing clusters block
-   the board; a transitive chain of disagreements is not a consensus.
-4. Choose the actual supporting quote nearest the cluster median, breaking
-   exact ties by provider name. Do not average incompatible quotes or invent a
-   market quote. Fractional midpoint quotes round half-up to integral toman.
-5. Validate source-board and final-board coin ordering and gold fineness/volume
-   ratios. Bazaar mesghal / 18K gram must remain in 4.28–4.38. A >7% move against
-   the last successful board still requires manual review; there is no automatic
-   rebasing or widening of limits.
+Servix always supplies its midpoint, never an ask chosen to force agreement.
+Its observed gram coin had a 2.5974% spread and is excluded individually. Its
+other six items can still corroborate; gram needs other agreeing publishers.
+All seven final prices remain mandatory; there is no partial Instagram board.
 
-All seven instruments are mandatory. A missing/ambiguous consensus for even one
-skips the entire post. This improves availability when one provider fails; it
-cannot guarantee a post if the market has no two fresh agreeing sources at 10:00.
-No stale fallback, partial board, sample prices or late catch-up is introduced.
+Preserve a unique largest original-provider consensus when available; add Servix
+only if it agrees with that entire cluster. A supplementary quote cannot veto
+an otherwise valid original consensus. When the original providers have no unique
+consensus, use the unique largest agreeing cluster across all providers: >=2
+publishers, range/midpoint <=1% coins or <=0.5% gold. Equal competing clusters
+block the post. Servix supports a cluster
+but is never the displayed price source: select an actual supporting primary
+publisher nearest the cluster median. Do not manufacture a price. A >7% move
+from the last successful board still requires review.
 
-Private audits and logs retain each provider's health, original timestamp, units,
-content hashes, supporters and rejected quotes. The footer/caption list the
-actual contributing publishers and the oldest accepted source time. Failed or
-outlier quotes do not determine that displayed time.
+Collections expire after three minutes and are revalidated before container
+creation and final publication. Footer/caption attribute contributing services.
+Underlying upstream independence and executable liquidity are not asserted.
 
-## History and publication
+## Install and test
 
-State remains `~/.local/state/kiani-instagram-iran-gold/gold.sqlite3`.
-Only successful Feed publications advance price history. Missing valid 24-hour
-or 30-day publication comparisons show an em dash. The daily duplicate guard,
-publication lock, uncertain-publish review state and final 10:00–10:15 Tehran
-window are retained. Gold remains protected from news-retention deletion.
-No translation, AI image or price-generation API is introduced.
+The pinned runner extracts twelve small files, runs the authorized offline tests,
+optionally configures the key, and collects/renders a verified live preview.
+Servix must actually corroborate at least two prices for preflight and activation.
+The original sources agreeing cannot disguise an untested Servix installation.
 
-## Guarded upgrade from confirmed PR65
+Use --setup-servix --activate. The installer checks the exact confirmed PR68
+release 9c2cb58426f2c91d1b6868c732d3529b054325d9, owned file hashes, launcher,
+active UTC cron, Story registration and publication database. It requires an exact
+runtime/assets preview plus a NEW valid live consensus. Locks, private backups,
+concurrent-edit checks and guarded rollback remain. Only the immutable gold
+release, launcher and activation metadata change. Crontab, Story config, existing
+Instagram credentials and publication rows are not rewritten. A later Servix
+outage does not veto a valid primary consensus.
 
-`run_gold.py` extracts ten small files from the pinned revision, without a full
-checkout or new virtual environment. Default mode performs public source reads
-and renders only a fully verified board. It does not contact Meta or change jobs.
+## Owner-requested one-time post
 
-`--activate` calls `upgrade_sources.py`. It requires the confirmed gold launcher,
-installed source hashes, existing UTC gold cron, Story registration, a verified
-preview from the exact runtime/assets within 24 hours, and a NEW fully valid live
-consensus at activation. A stale or disagreeing preflight cannot authorize the
-upgrade. It parses source syntax without automatically executing unit tests.
+The owner requested testing and posting after the upgrade on 23 October 2026.
+The extra --publish-now-on 2026-10-23 option is scoped to that current Tehran date.
+It runs after preview and activation, collects fresh prices again, and does not
+publish the earlier preview image.
 
-Only the versioned gold runtime, gold launcher and gold activation metadata are
-written. Crontab and Story configuration are checked for concurrent changes and
-never rewritten. A private backup and guarded rollback cover the launcher and
-metadata. Original publication rows and all other publishers are preserved.
-Installation publishes nothing immediately.
+This bypasses only the 10:00-10:15 clock window. It retains the publication lock,
+once-per-day guard, source ages, collection expiry, all-seven consensus, baseline
+jump check, original history, final revalidation and uncertain-publish review.
+An already successful gold post today is not duplicated. Wrong date or an
+unreviewed active release fails. Authorization date/mode are recorded privately.
 
-Log: `~/kiani-instagram-iran-gold-cron.log`.
-Audits: `~/.local/state/kiani-instagram-iran-gold/runs/`.
-Images: `instagram-rates/iran-gold/`; previews: `iran-gold-preview/`.
+No one-time flag is put in cron. Tomorrow stays 10:00 Tehran. No automatic late
+catch-up or replacements. Gold and Stories remain protected from news deletion.
+A successful Feed is discovered by the unchanged Story worker for +30 minutes.
+
+Logs: ~/kiani-instagram-iran-gold-cron.log
+Private audits/history: ~/.local/state/kiani-instagram-iran-gold/
+
