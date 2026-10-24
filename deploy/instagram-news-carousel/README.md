@@ -28,8 +28,21 @@ source passage/original 24-hour timestamp, opinion/forecast filters, translation
 deduplication, quota planning and publication helper are unchanged.
 
 `--kind crypto` or `--kind economy` can regenerate an individual preview if needed.
-`--activate` requires a successful exact-runtime/assets preview in both categories
-within 24 hours, readable JPEGs, and complete source-text manifests.
+`--activate` requires a successful exact-runtime/assets layout preview in both
+categories within 24 hours, readable JPEGs, and complete source-text manifests.
+
+When no unpublished story qualifies, use `--layout-preview` (optionally with
+`--kind economy` or `--kind crypto`). This reads a completed single-story
+publication and its original manifest from the existing database in SQLite
+read-only/query-only mode. It re-renders exactly that saved text/date/attribution
+and records a separate private layout audit. It performs no selection, ranking,
+translation, Meta request, publication claim or database write. Preview output
+explicitly identifies historical examples; their manifests carry
+`layout_preview_only=true`. They are never inserted into ranking runs or reused
+by scheduled publication. Activation rechecks the original completed publication
+and exact manifest hash as well as all common layout/text/asset proofs. Thus
+layout verification cannot be blocked just because today's news has already
+been published or rejected; actual scheduled posts still need fresh eligible news.
 
 The narrow installer verifies the confirmed PR75 deployment
 `4745d848a1253b5c3ec39bf86a723b4c560ff8cd`, all nine old news source hashes,

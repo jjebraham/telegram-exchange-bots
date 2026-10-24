@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 import fcntl
 import hashlib
 import json
@@ -12,10 +12,12 @@ import os
 from pathlib import Path
 import re
 import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from urllib.parse import urlsplit
 
 BASE_REVISION = '4745d848a1253b5c3ec39bf86a723b4c560ff8cd'
@@ -105,20 +107,104 @@ set +a
     return outputs
 
 
+def historical_story(home, kind, story_id=None):
+    """Read a completed publication's original manifest; never enroll/re-publish it."""
+    database = home / ('.local/state/kiani-instagram-news/news.sqlite3' if kind == 'crypto'
+                       else '.local/state/kiani-instagram-economy/economy.sqlite3')
+    if database.is_symlink() or not database.is_file() or database.stat().st_uid != os.getuid():
+        raise RuntimeError('Expected the existing publisher-owned news database.')
+    with closing(sqlite3.connect(database.as_uri()+'?mode=ro', uri=True, timeout=10)) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute('PRAGMA query_only=ON')
+        rows = connection.execute('''SELECT story_id,media_id,finished_at,manifest_json
+            FROM instagram_news_publications WHERE status='published'
+            AND (? IS NULL OR story_id=?) ORDER BY finished_at DESC LIMIT 50''',
+            (story_id, story_id)).fetchall()
+    for row in rows:
+        raw = row['manifest_json']
+        if (not isinstance(raw, str) or len(raw.encode()) > 256000 or
+                not re.fullmatch('[0-9a-f]{24}', str(row['story_id'])) or
+                not re.fullmatch('[0-9]{5,30}', str(row['media_id'])) or
+                not isinstance(row['finished_at'], (int,float)) or not 0 < row['finished_at'] <= time.time()+5):
+            continue
+        try:
+            stories = json.loads(raw).get('stories', [])
+            if len(stories) != 1 or not isinstance(stories[0], dict):
+                continue
+            story = stories[0]
+            if not all(isinstance(story.get(n), str) and story[n].strip()
+                       for n in ('title_fa','summary_fa','source_name','source_url')):
+                continue
+            parsed = urlsplit(story['source_url'])
+            if parsed.scheme not in {'http','https'} or not parsed.hostname:
+                continue
+        except (ValueError, TypeError, AttributeError):
+            continue
+        reference = dict(story_id=row['story_id'], media_id=row['media_id'],
+                         published_at=row['finished_at'], publication_manifest_sha256=sha(raw.encode()))
+        return story, reference
+    raise RuntimeError('No completed single-story '+kind+' publication with its original manifest is available.')
+
+
+def render_historical_layout(home, source, assets, kind):
+    """Render a past post only as a layout artifact; no selector or Meta calls."""
+    story, reference = historical_story(home, kind)
+    sys.path.insert(0, str(source/'selector_trial_runtime'))
+    import instagram_news_renderer as renderer
+    output = PUBLIC/kind
+    original_metadata = renderer.metadata
+    original_umask = os.umask(0o022)
+    try:
+        # Keep original text/date/attribution. Fetching today's article metadata
+        # could otherwise relabel an old story as new in this design artifact.
+        renderer.metadata = lambda saved: saved
+        paths, _, manifest = renderer.render_news([story], output, assets,
+            news_label='خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی',
+            caption_title='صرافی کیانی | ' + ('خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'),
+            caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi'
+                if kind == 'crypto' else 'خبر اقتصادی روز | kiani.exchange')
+        manifest['layout_preview_only'] = True
+        atomic(output/(paths[0].name[:-7]+'.json'),
+               (json.dumps(manifest,ensure_ascii=False,indent=2)+'\n').encode(), 0o644)
+    finally:
+        renderer.metadata = original_metadata
+        os.umask(original_umask)
+    urls = ['https://peerexo.com/instagram-rates/ranked-news-preview/'+kind+'/'+path.name for path in paths]
+    run = home/'.local/state/kiani-instagram-news-carousel/layout-previews'/(kind+'-'+str(int(time.time()))+'-'+uuid.uuid4().hex[:8])
+    audit = dict(status='layout_previewed', kind=kind, selected_at=time.time(),
+                 runtime_fingerprint=fingerprint(source,RUNTIME), chosen_ids=[reference['story_id']],
+                 media_ids=[], preview_urls=urls, history_source=reference)
+    atomic(run/'audit.json', (json.dumps(audit,ensure_ascii=False,indent=2)+'\n').encode())
+    print(kind+': layout-only example of an ALREADY-PUBLISHED story; original date/text retained. Not a publication candidate.', flush=True)
+    for url in urls:
+        print('Historical layout preview:', url, flush=True)
+    print('Private layout audit:', run/'audit.json', flush=True)
+
+
 def preview_proof(home, source, assets, kind):
     from PIL import Image
     expected = fingerprint(source, RUNTIME)
     assets_hash = fingerprint(assets, ASSETS)
     runs = home / '.local/state/kiani-instagram-news-ranking/runs'
-    reports = sorted(runs.glob(kind+'-*/ranking.json'), key=lambda p:p.stat().st_mtime, reverse=True)[:80]
-    for report in reports:
+    reports = [(p,False) for p in sorted(runs.glob(kind+'-*/ranking.json'),
+                key=lambda p:p.stat().st_mtime, reverse=True)[:80]]
+    archives = home/'.local/state/kiani-instagram-news-carousel/layout-previews'
+    reports += [(p,True) for p in sorted(archives.glob(kind+'-*/audit.json'),
+                key=lambda p:p.stat().st_mtime, reverse=True)[:20]]
+    reports.sort(key=lambda entry:entry[0].stat().st_mtime, reverse=True)
+    for report, historical in reports:
         audit = json.loads(owned(report, private=True))
         selected = audit.get('selected_at', 0)
-        if (audit.get('status') != 'previewed' or audit.get('kind') != kind or
+        if (audit.get('status') != ('layout_previewed' if historical else 'previewed') or audit.get('kind') != kind or
                 audit.get('runtime_fingerprint') != expected or
                 not time.time()-86400 <= selected <= time.time()+5 or
                 len(audit.get('chosen_ids', [])) != 1 or audit.get('media_ids')):
             continue
+        if historical:
+            reference = audit.get('history_source', {})
+            original, confirmed = historical_story(home, kind, audit['chosen_ids'][0])
+            if reference != confirmed:
+                raise RuntimeError('Historical layout provenance differs from its completed publication.')
         urls = audit.get('preview_urls') or []
         if not 2 <= len(urls) <= 10:
             continue
@@ -149,18 +235,23 @@ def preview_proof(home, source, assets, kind):
             raise RuntimeError('Preview layout, source-text or asset proof differs.')
         if re.sub(r'\s+', ' ', manifest['stories'][0]['summary_fa']).strip() != summary:
             raise RuntimeError('Preview summary differs from the verified translation.')
+        if historical and (manifest.get('layout_preview_only') is not True or manifest['stories'][0] != original):
+            raise RuntimeError('Historical layout text/date differs from the original published manifest.')
         if ''.join(p.get('separator_before', '')+p['text'] for p in body) != summary:
             raise RuntimeError('The preview did not preserve the complete summary.')
         if any(not 1 <= len(p.get('lines', [])) <= 7 for p in body):
             raise RuntimeError('A large-type page exceeds its line limit.')
-        return dict(report=str(report), slides=len(files), hero=manifest.get('hero_available'), runtime_hash=expected)
-    raise RuntimeError('A successful new-runtime '+kind+' preview within 24 hours is required; run the preview first.')
+        return dict(report=str(report), slides=len(files), hero=manifest.get('hero_available'), runtime_hash=expected,
+                    basis='published_history_layout' if historical else 'fresh_unpublished_live')
+    raise RuntimeError('A successful new-runtime '+kind+' layout preview within 24 hours is required; use --layout-preview if no fresh story qualifies.')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--revision', required=True)
+    parser.add_argument('--layout-preview', action='store_true')
+    parser.add_argument('--kind', choices=('both','crypto','economy'), default='both')
     args = parser.parse_args()
     if not hasattr(os, 'geteuid') or os.geteuid() == 0 or not re.fullmatch('[0-9a-f]{40}', args.revision):
         parser.error('Use the pinned revision as the existing publisher user, without sudo.')
@@ -173,6 +264,13 @@ def main():
         if name not in {'selector_trial_runtime/instagram_news_renderer.py', 'selector_trial_runtime/PINNED.md'}:
             if sha(owned(source/name)) != NEWS_HASHES[name]:
                 raise RuntimeError('This style upgrade may not change selection, quota or publishing logic: '+name)
+    if args.layout_preview:
+        for kind in ('crypto','economy') if args.kind == 'both' else (args.kind,):
+            render_historical_layout(home, source, assets, kind)
+            proof = preview_proof(home, source, assets, kind)
+            print(kind+': historical layout verified ('+str(proof['slides'])+' slides).', flush=True)
+        print('Layout preview complete. No Meta API contact, selection override, database write, posting or deletion.')
+        return 0
     proofs = {kind:preview_proof(home, source, assets, kind) for kind in ('crypto', 'economy')}
     initial_cron = cron()
     expected_jobs = {

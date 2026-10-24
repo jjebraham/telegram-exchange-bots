@@ -24,7 +24,11 @@ def main():
     parser.add_argument('--revision', required=True)
     parser.add_argument('--kind', choices=('both','crypto','economy'), default='both')
     parser.add_argument('--activate', action='store_true')
+    parser.add_argument('--layout-preview', action='store_true',
+                        help='Render an already-published story read-only to verify layout when no fresh story qualifies.')
     args = parser.parse_args()
+    if args.activate and args.layout_preview:
+        parser.error('Layout preview and activation are separate actions.')
     if not hasattr(os,'geteuid') or os.geteuid() == 0 or not re.fullmatch('[0-9a-f]{40}',args.revision):
         parser.error('Use the pinned revision as the existing publisher user, without sudo.')
     os.umask(0o077)
@@ -52,14 +56,17 @@ def main():
         if not path.exists():
             path.write_bytes(raw)
     python = home/'kiani-instagram-venv/bin/python'
-    if args.activate:
+    if args.activate or args.layout_preview:
         command = [str(python),'-u',str(root/'deploy/instagram-news-carousel/activate_carousel.py'),
                    '--runtime',str(root),'--revision',args.revision]
+        if args.layout_preview:
+            command += ['--layout-preview','--kind',args.kind]
     else:
         command = [str(python),'-u',str(root/'instagram_ranked_news.py'),'--kind',args.kind,
                    '--publisher-root',str(home/'kiani-instagram-publisher')]
     print(f'Extracted/verified {len(FILES)} files ({total/1024:.1f} KiB); no repository checkout.',flush=True)
     print('Activating approved Option B news layout.' if args.activate else
+          'Layout-only historical preview. Read-only completed publication; no Meta API contact or publication.' if args.layout_preview else
           'Preview only: fresh verified/ranked news, readable carousel. No Meta API contact or publication.',flush=True)
     return subprocess.run(command,cwd=root,env=dict(os.environ,PYTHONIOENCODING='utf-8',TZ='Europe/Istanbul')).returncode
 
