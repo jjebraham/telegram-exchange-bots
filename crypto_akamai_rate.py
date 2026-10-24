@@ -30,6 +30,10 @@ class AkamaiError(RuntimeError):
     pass
 
 
+class AkamaiExpiredError(AkamaiError):
+    """Original evidence expired; only a newly collected snapshot may replace it."""
+
+
 def regular_bytes(path, limit, *, root_owned=False):
     """Refuse unsafe local inputs; never execute or modify the upstream collector."""
     try:
@@ -89,8 +93,11 @@ def validate_evidence(evidence, *, now, collecting=False):
             or evidence['display_minimum'] not in {1, 2}):
         raise AkamaiError('Invalid Akamai market-feed provenance or policy.')
     generated = stamp(evidence.get('generated_at_utc'))
-    if not -5 <= (now - generated).total_seconds() <= (35 if collecting else MAX_AGE):
+    generated_age = (now - generated).total_seconds()
+    if generated_age < -5:
         raise AkamaiError('Akamai collector snapshot is stale or dated in the future.')
+    if generated_age > (35 if collecting else MAX_AGE):
+        raise AkamaiExpiredError('Akamai collector snapshot has expired; fresh collection is required.')
     quotes = evidence.get('quotes')
     if not isinstance(quotes, list) or not evidence['display_minimum'] <= len(quotes) <= 7:
         raise AkamaiError('Akamai feed has too few or too many quotes for the enabled display policy.')
@@ -117,10 +124,13 @@ def validate_evidence(evidence, *, now, collecting=False):
         number(quote.get('buy_quantity')); number(quote.get('sell_quantity'))
         proof = stamp(quote.get('freshness_upper_bound_utc'))
         observation = stamp(quote.get('observed_at_utc'))
-        if (not -5 <= (now - proof).total_seconds() <= MAX_AGE
+        proof_age = (now - proof).total_seconds()
+        if (proof_age < -5
                 or proof > observation + timedelta(seconds=5)
                 or observation > generated + timedelta(seconds=5)):
             raise AkamaiError('Akamai original source evidence is stale or dated in the future.')
+        if proof_age > MAX_AGE:
+            raise AkamaiExpiredError('Akamai original source evidence has expired; fresh collection is required.')
         basis = quote.get('freshness_basis')
         if basis == 'exchange_timestamp':
             if provider not in {'Nobitex', 'Exir'} or stamp(quote.get('exchange_timestamp')) != proof:
@@ -135,9 +145,11 @@ def validate_evidence(evidence, *, now, collecting=False):
             state, trade = stamp(quote.get('market_state_proof_utc')), stamp(quote.get('latest_trade_utc'))
             if (quote.get('endpoint_selector') != 'bitpin_book'
                     or basis != 'http_cache_checks+observed_book_change'
-                    or any(not -5 <= (now - value).total_seconds() <= MAX_AGE for value in (state, trade))
+                    or any((now - value).total_seconds() < -5 for value in (state, trade))
                     or proof > min(state, trade) + timedelta(milliseconds=1)):
                 raise AkamaiError('Bitpin original trade/market-state evidence is stale or missing.')
+            if any((now - value).total_seconds() > MAX_AGE for value in (state, trade)):
+                raise AkamaiExpiredError('Bitpin original trade/market-state evidence has expired; fresh collection is required.')
         asks.append(ask); bids.append(bid); proofs.append(proof); observed.append(observation)
     asks.sort()
     with localcontext() as context:
@@ -157,8 +169,10 @@ def validate_evidence(evidence, *, now, collecting=False):
     if expected_ok and number(evidence.get('median_buy_toman')) != median:
         raise AkamaiError('Akamai original unadjusted median differs from its source quotes.')
     expiry = stamp(evidence.get('valid_until_utc'))
-    if not now < expiry <= min(proofs) + timedelta(seconds=MAX_AGE, milliseconds=1):
+    if expiry > min(proofs) + timedelta(seconds=MAX_AGE, milliseconds=1):
         raise AkamaiError('Akamai source expiry was reached or extended.')
+    if now >= expiry:
+        raise AkamaiExpiredError('Akamai original expiry has been reached; fresh collection is required.')
     return dict(raw_usdt_toman=str(median), rate_source='Market USDT/Toman median ask via Akamai feed: ' + ', '.join(sorted(seen)),
         rate_url=SOURCE, rate_public_url=' | '.join(PROVIDERS[name][1] for name in sorted(seen)),
         rate_caption_fa=('نرخ تقریبی تک‌منبعی؛ در انتظار تأیید منبع دوم؛ ' if len(seen) == 1 else '') +

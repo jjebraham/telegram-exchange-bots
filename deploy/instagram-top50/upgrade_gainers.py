@@ -26,6 +26,14 @@ LEGACY = {
     'instagram_top50_prices.py': 'aaaf133b87dc3a57f42e43470195d54a1944e7f891afe786c01ff29a9f7fed07',
     'instagram_top50_renderer.py': '146f861ef8858791305199b195639ab143a2a28c670fc27c1f9a8bc3ec6f1acb',
 }
+DEPLOYED_GAINERS_REVISION = '06e8796386f345b2c3d544a67040061dab2ccf82'
+DEPLOYED_GAINERS_HASHES = {
+    'instagram_top50_prices.py': '751ec7e3b740b874d2624226606a0a8d6c725c6d5d8a5243af3aca8aa4f85c85',
+    'crypto_top50_data.py': 'c5375d532c279d5e3b64b05d7fda5b816c27fb4ebe57a98f8e40e288b98c100e',
+    'instagram_top50_renderer.py': '50d5d4d82c1e607273f6ed12d85db0e1eb6c67992d362f5358c7b1213489d6cd',
+    'crypto_akamai_rate.py': '6acc5acb29c108da95fbce2b040157f57506aeb5fcb784a3f0e842a98a39924e',
+}
+DEPLOYED_GAINERS_RUNTIME_HASH = '2eee174e9b9040f689dfa015ed007a896a5f9b4ae375393f710e84965675e514'
 
 
 def owned(path):
@@ -109,8 +117,24 @@ def main():
         for name, digest in LEGACY.items():
             if hashlib.sha256(owned(home / 'kiani-instagram-top50-publisher' / name)).hexdigest() != digest:
                 raise RuntimeError('An installed top 50 source differs from the confirmed release: ' + name)
-    elif (original != replacement or not original_metadata or
-          json.loads(original_metadata).get('revision') != args.revision):
+    elif original_metadata:
+        installed = json.loads(original_metadata)
+        installed_revision = installed.get('revision')
+        if installed_revision == args.revision:
+            if original != replacement or installed.get('runtime_hash') != app.fingerprint(runtime, app.RUNTIME_FILES):
+                raise RuntimeError('Installed same-revision launcher or fingerprint differs; nothing replaced.')
+        elif installed_revision == DEPLOYED_GAINERS_REVISION:
+            previous = home / 'kiani-instagram-top50-releases' / DEPLOYED_GAINERS_REVISION
+            expected = old_wrapper.replace(marker, shlex.quote(str(previous / 'instagram_top50_prices.py')).encode())
+            if original != expected or installed.get('runtime_hash') != DEPLOYED_GAINERS_RUNTIME_HASH:
+                raise RuntimeError('Installed gainers launcher or activation fingerprint differs; nothing replaced.')
+            for name, digest in DEPLOYED_GAINERS_HASHES.items():
+                if hashlib.sha256(owned(previous / name)).hexdigest() != digest:
+                    raise RuntimeError('An installed gainers source differs from the confirmed release: ' + name)
+            print('Existing deployed gainers release verified:', installed_revision, flush=True)
+        else:
+            raise RuntimeError('Unreviewed installed gainers revision; nothing replaced.')
+    else:
         raise RuntimeError('Installed top 50 launcher differs; nothing replaced.')
     subprocess.run(['bash', '-n'], input=replacement, check=True, timeout=15)
     for name in app.RUNTIME_FILES:
@@ -176,6 +200,8 @@ def main():
     print('Backup:', backup)
     print('Installed gainers revision:', args.revision)
     print('Market USDT: existing Akamai feed; unadjusted median ask; original source proofs/expiry preserved.')
+    print('Preparation: three concurrent slide uploads; at most three total attempts with fresh rebuilds on expiry only.')
+    print('Final freshness check remains mandatory. Uncertain publication stops all retries; no stale image/evidence reuse.')
     print('Feed: daily 16:00 Europe/Istanbul; six slides: gainers first, then five top 50 price slides.')
     print('Gainers: up to ten positive 24h USD changes among the global top 100; volume > USD 50,000; CoinPaprika.')
     print('Story: first-slide gainers preview, 30 minutes after successful Feed publication.')
