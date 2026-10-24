@@ -61,6 +61,35 @@ def release(source,target,names):
         if not path.exists(): atomic(path,raw)
 
 
+def hourly_wrappers(home, runtime):
+    python = shlex.quote(str(home / 'kiani-instagram-venv/bin/python'))
+    script = shlex.quote(str(runtime / 'instagram_ranked_news.py'))
+    header = '''#!/bin/bash
+set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin
+export TZ=Europe/Istanbul
+export PYTHONIOENCODING=utf-8
+umask 077
+action="${1:-publish}"
+case "$action" in
+'''
+    outputs = {}
+    for kind, filename in (('crypto', 'publish-kiani-instagram-news.sh'), ('economy', 'publish-kiani-instagram-economy.sh')):
+        text = header
+        if kind == 'economy':
+            text += f'  collect) exec {python} -u {script} --kind economy --collect-only ;;\n'
+        text += '''  publish) slot="hour-$(date +%H)" ;;
+  *) echo "Usage: publish''' + ('|collect' if kind == 'economy' else '') + '''" >&2; exit 2 ;;
+esac
+set -a
+. "$HOME/.kiani-instagram.env"
+set +a
+'''
+        text += f'exec {python} -u {script} --kind {kind} --slot "$slot" --publish\n'
+        outputs[home / filename] = text.encode()
+    return outputs
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime',type=Path,required=True); parser.add_argument('--revision',required=True)
@@ -167,11 +196,15 @@ set +a
     changed={launcher:(wrapper,0o700),story_config:(json.dumps(config,indent=2).encode()+b'\n',0o600),
              analytics_launcher:(original_analytics_launcher.replace(old_script,str(new_analytics/'instagram_post_insights.py').encode()),0o700),
              metadata_path:(json.dumps(new_meta,indent=2).encode(),0o600)}
-    old_news_script=str(news_root/'instagram_ranked_news.py').encode()
-    for name in ('publish-kiani-instagram-news.sh','publish-kiani-instagram-economy.sh'):
-        path=home/name; raw=owned(path)
-        if raw.count(old_news_script)!=1: raise RuntimeError('An hourly news launcher differs from its installed revision.')
-        changed[path]=(raw.replace(old_news_script,str(news_new/'instagram_ranked_news.py').encode()),path.stat().st_mode&0o777)
+    old_news_wrappers=hourly_wrappers(home,news_root)
+    new_news_wrappers=hourly_wrappers(home,news_new)
+    for path,expected in old_news_wrappers.items():
+        if owned(path)!=expected:
+            raise RuntimeError('An hourly news launcher differs from its reviewed layout: '+path.name)
+        # Economy intentionally has TWO references: collect-only and publish.
+        # Reproduce the deployed wrapper verbatim, changing only its runtime path.
+        changed[path]=(new_news_wrappers[path],path.stat().st_mode&0o777)
+    print('Existing hourly launchers verified: crypto publish; economy collect and publish.',flush=True)
     story_root=home/'kiani-instagram-story-publisher'
     for name,expected in STORY_OLD.items():
         path=story_root/name; raw=owned(path); target=(source/name).read_bytes()

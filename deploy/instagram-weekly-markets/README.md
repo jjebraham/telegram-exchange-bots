@@ -80,6 +80,10 @@ Git revision). This preserves Story quota discovery when the new category arrive
 It keeps credentials, enrollment, policy, decisions, news selection/publishing
 logic, history and other cron entries. Weekly comparisons are protected
 non-news. Existing worker sends the image as a Story +30min after Feed success.
+Both news launchers must match the exact original PR67 definitions. Crypto has
+one publish reference; economy intentionally has both collect-only and publish
+references. The installer reproduces those wrappers with only the release path
+changed. It never treats economy's two references as an installation mismatch.
 All affected workers are locked during the switch, with backups, concurrent-edit
 checks and guarded rollback. Installation never sends publish/delete requests.
 
