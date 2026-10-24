@@ -241,6 +241,9 @@ def main():
         now=datetime.now(core.UTC)
         if args.capture and core.capture_anchor(now) is None: return 0
         if args.scheduled and (now.astimezone(core.TEHRAN).weekday()!=6 or not 0<=(now.astimezone(core.TEHRAN)-slot(now)).total_seconds()<900): return 0
+    # The installed calendar libraries also supply Alanchand's Persian-date
+    # parser. Initialize them in every worker process, not only while rendering.
+    renderer.labels(datetime.now(core.TEHRAN),args.asset_root)
     if args.layout_preview:
         images=renderer.render(core.sample(),args.output or PUBLIC/'risk-thermometer-preview',args.asset_root,preview=True)
         for p in images:

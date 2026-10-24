@@ -53,7 +53,7 @@ No package installation, repository checkout, new test suite or credential chang
 
 The developer machine successfully fetched and parsed all public routes. Matched examples as of 25 October: Brent 20 Oct 115.22 (prior 13 Oct 125.78), broad dollar 16 Oct 121.4048 (prior 9 Oct 121.6023), VIX 22 Oct 19.03 (prior 15 Oct 16.46), ten-year yield 22 Oct 4.96% (prior 15 Oct 5.10%), STLFSI4 16 Oct -0.6328 (prior 9 Oct -0.7205). These are read-only qualification results, not publication candidates or gold/BTC history.
 
-Syntax and six-slide visual rendering were checked. No automated tests were added or run. **Selenium connectivity, authenticated gold/BTC preflight, installation, first Friday captures, actual Feed publication and subsequent Story delivery remain unconfirmed until their server outputs are reviewed.** No production activation is implied by this PR.
+Syntax and six-slide visual rendering were checked. No automated tests were added or run. Selenium rendered all six fictional pages and passed the source preflight: gold agreed between Servix/DolarChand, BTC between Servix/CoinPaprika, and all public delivery routes were reachable. That run exposed an optional Alanchand date-library import failure in the separate probe process; the worker now initializes the existing calendar libraries for every active mode, without installing packages or changing source rules. **The updated server run, installation, first Friday captures, actual Feed publication and subsequent Story delivery remain unconfirmed until their outputs are reviewed.** No production activation is implied by this PR.
 
 Primary definitions and source terms:
 
