@@ -19,7 +19,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 UTC = timezone.utc
-KINDS = ('rates', 'economy', 'crypto', 'top50', 'iran_gold', 'calendar', 'crypto_calendar', 'weekly_markets')
+KINDS = ('rates', 'economy', 'crypto', 'top50', 'iran_gold', 'calendar', 'crypto_calendar', 'weekly_markets', 'risk_thermometer')
 METRICS = ('views', 'reach', 'likes', 'comments', 'saved', 'shares',
            'total_interactions', 'profile_visits', 'follows')
 STATE = Path.home() / '.local/state/kiani-instagram-insights'

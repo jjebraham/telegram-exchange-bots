@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Pinned, bounded extraction and separate preview/activation; no checkout or pip."""
+import argparse
+import ast
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+
+FILES=('risk_market_core.py','risk_market_sources.py','instagram_risk_renderer.py','instagram_risk_thermometer.py',
+       'global_metals_data.py','iran_gold_data.py','iran_gold_quorum.py','iran_gold_servix.py',
+       'economic_calendar_data.py','instagram_economic_calendar_renderer.py','instagram_news_batch.py',
+       'instagram_insights_data.py','instagram_post_insights.py','instagram_news_retention.py',
+       'instagram_delayed_stories.py','instagram_story_renderer.py',
+       'deploy/instagram-risk/run_risk.py','deploy/instagram-risk/activate_risk.py','deploy/instagram-risk/README.md')
+
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--repo',type=Path,default=Path.home()/'telegram_bot_repo');p.add_argument('--revision',required=True)
+    g=p.add_mutually_exclusive_group();g.add_argument('--layout-preview',action='store_true');g.add_argument('--activate',action='store_true')
+    args=p.parse_args()
+    if not hasattr(os,'geteuid') or os.geteuid()==0 or not re.fullmatch('[0-9a-f]{40}',args.revision):
+        p.error('Use the pinned revision as the existing publisher user, without sudo.')
+    os.umask(0o077);home=Path.home();blobs={};total=0
+    for path in (home,Path('/var/www/peerexo.com/public/instagram-rates')):
+        if not path.is_dir() or shutil.disk_usage(path).free<128*1024**2: raise RuntimeError('128 MiB free is required.')
+    for name in FILES:
+        spec=args.revision+':'+name
+        size=int(subprocess.check_output(['git','-C',str(args.repo),'cat-file','-s',spec],timeout=20));total+=size
+        if size<=0 or total>768*1024: raise RuntimeError('Pinned extraction exceeded its size limit.')
+        raw=subprocess.check_output(['git','-C',str(args.repo),'cat-file','blob',spec],timeout=20)
+        if len(raw)!=size: raise RuntimeError('Pinned source size differs.')
+        if name.endswith('.py'): ast.parse(raw.decode('utf-8'),filename=name,feature_version=(3,11))
+        blobs[name]=raw
+    root=home/'.local/state/kiani-instagram-risk-thermometer/source'/args.revision
+    for name,raw in blobs.items():
+        path=root/name
+        if path.is_symlink() or path.exists() and path.read_bytes()!=raw: raise RuntimeError('Existing pinned source differs.')
+        path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+        if not path.exists(): path.write_bytes(raw);path.chmod(0o600)
+    python=home/'kiani-instagram-venv/bin/python';env=dict(os.environ,PYTHONIOENCODING='utf-8',TZ='Asia/Tehran')
+    print(f'Extracted/verified {len(FILES)} files ({total/1024:.1f} KiB); no repository checkout.',flush=True)
+    action='--layout-preview' if args.layout_preview else '--probe'
+    subprocess.run([str(python),'-u',str(root/'instagram_risk_thermometer.py'),action],cwd=root,env=env,check=True)
+    if args.activate:
+        subprocess.run([str(python),'-u',str(root/'deploy/instagram-risk/activate_risk.py'),'--runtime',str(root),'--revision',args.revision],
+                       cwd=root,env=env,check=True)
+    print('This command published or deleted no Instagram content.',flush=True)
+    return 0
+
+
+if __name__=='__main__':
+    try: raise SystemExit(main())
+    except Exception as exc:
+        print('Risk launcher stopped:',str(exc) if isinstance(exc,RuntimeError) else type(exc).__name__)
+        raise SystemExit(1)
