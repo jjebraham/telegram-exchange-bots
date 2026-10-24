@@ -37,7 +37,9 @@ Use the pinned `deploy/instagram-top50/run_gainers.py` bootstrap. Default mode
 extracts nine small files without a full checkout and renders a six-slide live
 preview. There is no Meta API contact. It prints the preview links.
 
-`--activate` verifies the installed PR55 runtime/launcher, exact existing daily
+`--activate` verifies the installed PR55 runtime/launcher or the confirmed deployed
+PR69 gainers release `06e8796386f345b2c3d544a67040061dab2ccf82` (all four source
+hashes, activation fingerprint and exact launcher), plus the exact existing daily
 16:00 Istanbul cron entry, Story source and matching six-slide preview from the
 new runtime/assets within 24 hours. A separate fresh source-only validation is
 required at activation. It installs an immutable versioned runtime and switches
@@ -51,6 +53,41 @@ installation. No automated unit tests run as part of the upgrade.
 
 The previous schema-2 saved snapshots remain previewable with the sample banner;
 new publication requires schema 3 and exactly six slides with gainers first.
+
+## Fix for evidence expiring during Meta preparation
+
+The 23 and 24 October server jobs collected valid Akamai prices and generated
+all six slides, but their original market proofs expired while six Meta child
+containers were prepared sequentially. Both rows are `failed` with no media ID;
+the 24 October original expiry was 13:00:51 UTC and the job failed at 13:01:00.
+
+- Verify public images concurrently, with at most three requests in flight.
+- Prepare/wait for Meta child containers with at most three workers. Keep the
+  exact slide order, all six readiness checks, parent readiness, and the single
+  final publication request. SQLite writes remain on the main thread.
+- Typed expiry errors allow at most **three total preparation attempts** in one
+  publishing invocation, separated by two seconds. Each retry collects all
+  CoinPaprika data and a fresh Akamai quote, renders six new uniquely named
+  images, saves a separate snapshot/manifest, and creates new containers.
+- No old evidence, images or containers are relabelled as fresh. The quote's
+  original 90-second proofs, original expiry, <=35-second collector age at
+  collection, agreement, liquidity, units and conversions are unchanged.
+- Future-dated/invalid evidence and non-expiry errors are not automatically
+  retried. An uncertain final publish still records `needs_review` and blocks
+  automatic/manual blind retries. A date change stops next-day catch-up.
+- The final full validation still runs immediately before `media_publish`.
+  Expiry under persistently slow processing can still safely block publication
+  after the bounded attempts; this fix does not promise a daily post regardless
+  of source health.
+- Timing logs identify collection/render/public-image/child/parent/final-check
+  stages, original expiry, remaining seconds and failure type. Graph exception
+  bodies, tokens and private transport diagnostics are not printed.
+
+The installer preserves cron, the Story worker/configuration, credentials,
+the publication database, all other publishers and the existing daily guard.
+Preview and activation do not publish. After successful activation, the owner
+may retry the existing daily launcher with fresh data; any already-published or
+uncertain day remains protected by the same duplicate guard.
 
 ## Prices and selection
 

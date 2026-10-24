@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from crypto_akamai_rate import AkamaiError, SOURCE as AKAMAI_SOURCE, read_quote, validate_evidence
+from crypto_akamai_rate import AkamaiError, AkamaiExpiredError, SOURCE as AKAMAI_SOURCE, read_quote, validate_evidence
 
 TICKERS_URL = 'https://api.coinpaprika.com/v1/tickers?quotes=USD'
 STABLE_URL = 'https://api.coinpaprika.com/v1/tags/stablecoin?additional_fields=coins'
@@ -44,6 +44,10 @@ oeth-origin-ether'''.split())
 
 class PricesError(RuntimeError):
     pass
+
+
+class SnapshotExpiredError(PricesError):
+    """Retryable only by recollecting and rebuilding before any publish request."""
 
 
 def provider_label(url):
@@ -237,6 +241,8 @@ def fetch_market_quote():
     # from Google or use customer quotes with Kiani pricing adjustments.
     try:
         quote = read_quote()
+    except AkamaiExpiredError as exc:
+        raise SnapshotExpiredError(str(exc)) from None
     except AkamaiError as exc:
         raise PricesError(str(exc) + ' No post created.') from None
     print(f"Akamai market feed: {quote['rate_evidence']['source_count']} fresh exchanges; "
@@ -441,6 +447,8 @@ def validate_snapshot(snapshot, *, publishing=False):
         try:
             original = validate_evidence(snapshot.get('rate_evidence'),
                 now=now if publishing else timestamp(snapshot['generated_at']))
+        except AkamaiExpiredError as exc:
+            raise SnapshotExpiredError(str(exc)) from None
         except AkamaiError as exc:
             raise PricesError(str(exc)) from None
         if any(snapshot.get(key) != value for key, value in original.items()):
