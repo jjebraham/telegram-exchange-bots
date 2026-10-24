@@ -12,6 +12,7 @@ LABELS = {
     'calendar': 'تقویم اقتصادی',
     'crypto_calendar': 'تقویم کریپتو',
     'iran_gold': 'طلا و سکه ایران',
+    'weekly_markets': 'مقایسه بازدهی بازارها',
 }
 
 
@@ -54,3 +55,4 @@ def render_story(source, destination, asset_root, kind):
     canvas.save(destination, 'JPEG', quality=94, optimize=True)
     destination.chmod(0o644)
     return destination
+
