@@ -19,7 +19,53 @@ from market_report_templates import (CURRENCY_FLAG_CODES, CURRENCY_ORDER, ARTBOA
 from test_market_images import SAMPLES, SAMPLE_TIMES, FX_SAMPLE_ROWS
 
 
+def extended_period_samples():
+    gold=SAMPLES['iran-gold'].replace('\n','\n💰 <b>Δ24H / Δ1M</b>\n',1)
+    gold=re.sub(r'(<code>[^<]+</code>\s*)([^\n]+)',lambda m:m.group(1)+'— / '+m.group(2),gold)
+    turkey=SAMPLES['turkey-gold'].replace('BUY     Δ24H','BUY     Δ24H Δ1M')
+    turkey=re.sub(r'(?m)^(🌕(?:GRAM|CEYREK|YARIM|TAM)[^\n<]+)',lambda m:m.group(1)+' +5.67%',turkey)
+    pulse=SAMPLES['fx-pulse'].replace('RATE Δ24H','RATE Δ24H Δ1M').replace('49.7900 0.00%','49.7900 — +2.12%').replace('55.5750 -0.26%','55.5750 -0.26% +0.19%')
+    return {'iran-gold':gold,'turkey-gold':turkey,'fx-pulse':pulse}
+
+
 class ReportTests(unittest.TestCase):
+    def test_extended_gold_periods_keep_monthly_values_out_of_daily_column(self):
+        sample=extended_period_samples()['iran-gold']
+        rows=parse_iran_gold(sample)
+        self.assertEqual((rows[0].day,rows[0].month),('—','+10.19%'))
+        self.assertEqual((rows[-1].day,rows[-1].month),('—','+8.17%'))
+        html=html_for_post('iran-gold',sample,now=SAMPLE_TIMES['iran-gold'])
+        self.assertEqual(html.count('data-period="24h" data-value="—"'),7)
+        self.assertIn('data-period="1m" data-value="+10.19%"',html)
+
+    def test_extended_turkish_gold_and_pulse_fields_are_preserved(self):
+        samples=extended_period_samples()
+        gold=parse_turkey_gold(samples['turkey-gold'])
+        self.assertEqual((gold[1].sell,gold[1].buy,gold[1].day,gold[1].month),('10,560.44','10,322.22','-3.49%','+5.67%'))
+        pulse=parse_pulse(samples['fx-pulse'])
+        self.assertEqual((pulse[0].rate,pulse[0].day,pulse[0].month),('49.7900','—','+2.12%'))
+        self.assertEqual((pulse[1].day,pulse[1].month),('-0.26%','+0.19%'))
+        for kind in ('turkey-gold','fx-pulse'):
+            html=html_for_post(kind,samples[kind],now=SAMPLE_TIMES[kind])
+            expected='+5.67%' if kind=='turkey-gold' else '+2.12%'
+            self.assertIn(f'data-period="1m" data-value="{expected}"',html)
+
+    def test_period_header_and_field_count_must_agree(self):
+        for kind,sample in extended_period_samples().items():
+            for corrupt in (sample.replace('Δ1M','Δ7D'),sample.replace('Δ24H','Δ1M').replace('Δ1M / Δ1M','Δ1M / Δ24H'),
+                            sample.replace('Δ1M','').replace('Δ24H /','Δ24H')):
+                with self.subTest(kind=kind),self.assertRaises(ValueError):
+                    html_for_post(kind,corrupt,now=SAMPLE_TIMES[kind])
+
+    def test_extended_period_browser_outputs(self):
+        if os.environ.get('RENDER_PNG_TESTS')!='1':
+            self.skipTest('Enable RENDER_PNG_TESTS=1 for extended-schema screenshots')
+        with tempfile.TemporaryDirectory() as directory:
+            for kind,sample in extended_period_samples().items():
+                with self.subTest(kind=kind):
+                    target=render_png(kind,sample,Path(directory)/(kind+'.png'),now=SAMPLE_TIMES[kind])
+                    self.assertEqual(struct.unpack('>II',target.read_bytes()[16:24]),(2400,2400))
+
     def test_usdt_html_is_unchanged_from_the_approved_implementation(self):
         # Golden HTML from d9e4894, including its embedded artwork and OFL font.
         from test_market_images import SAMPLE_TIME
@@ -62,7 +108,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual((rows['USD'].price,rows['USD'].day,rows['USD'].month),('1,000','-1.23%','+4.56%'))
         self.assertEqual((rows['QAR'].price,rows['QAR'].day,rows['QAR'].month),('—','—','—'))
 
-    def test_actual_iran_gold_history_is_daily_and_monthly_is_missing(self):
+    def test_legacy_iran_gold_history_is_daily_and_monthly_is_missing(self):
         from iran_gold import IranGoldMarket, build_iran_gold_post
         prices={name:Decimal(10000+i*1000) for i,name in enumerate(GOLD_COINS)}
         market=IranGoldMarket(prices,{},Decimal('5000'),Decimal('20000'))
@@ -77,7 +123,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn('section-heading',html)
         self.assertNotIn('>●<',html)
 
-    def test_actual_turkish_gold_sell_buy_and_period_contract(self):
+    def test_legacy_turkish_gold_sell_buy_and_period_contract(self):
         from gold_prices import GoldQuote,build_turkish_gold_post
         quotes=[GoldQuote(code,'','',Decimal(100+i*10),Decimal(104+i*10))
                 for i,code in enumerate(('gram','quarter','half','tam'))]
@@ -90,7 +136,7 @@ class ReportTests(unittest.TestCase):
         for label in ('Gram Altın','Çeyrek Altın','Yarım Altın','Tam Altın'):
             self.assertIn('<small>'+label+'</small>',html)
 
-    def test_actual_pulse_midpoints_remain_four_decimals_and_daily(self):
+    def test_legacy_pulse_midpoints_remain_four_decimals_and_daily(self):
         from market_pulse import build_turkey_fx_pulse_post
         usd=[SimpleNamespace(name='Kapalıçarşı',buy=Decimal('49.7800'),sell=Decimal('49.8000'))]
         eur=[SimpleNamespace(name='Kapalıçarşı',buy=Decimal('55.5700'),sell=Decimal('55.5800'))]

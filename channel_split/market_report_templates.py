@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from html import escape
+from html import escape, unescape
 from pathlib import Path
 import re
 from zoneinfo import ZoneInfo
@@ -49,6 +49,7 @@ class GoldRow:
     name: str
     price: str
     day: str
+    month: str = '—'
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class TurkishGoldRow:
     sell: str
     buy: str
     day: str
+    month: str = '—'
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,21 @@ class PulseRow:
     pair: str
     rate: str
     day: str
+    month: str = '—'
+
+
+def _table_has_month(text: str, columns: tuple[str, ...]) -> bool:
+    """Accept only the declared legacy daily or extended daily/monthly schema."""
+    match = re.search(r'<pre>(.*?)</pre>',text,re.S)
+    if not match:
+        raise ValueError('Missing approved preformatted market table')
+    first = unescape(match.group(1)).splitlines()[0].lstrip('\u200e🌕 ')
+    header = tuple(first.split())
+    if header == columns:
+        return False
+    if header == columns + ('Δ1M',):
+        return True
+    raise ValueError('Unrecognized market-period columns')
 
 
 def parse_iran_fx(text: str) -> list[FxRow]:
@@ -83,7 +100,11 @@ def parse_iran_fx(text: str) -> list[FxRow]:
 
 
 def parse_iran_gold(text: str) -> list[GoldRow]:
-    pattern = re.compile(rf'^[^<]*<b>([^<]+)</b>\s*<code>({RATE})</code>\s*({PCT})\s*$')
+    visible = unescape(re.sub(r'<[^>]*>',' ',text))
+    monthly = bool(re.search(r'Δ24H\s*/\s*Δ1M',visible))
+    if 'Δ1M' in visible and not monthly:
+        raise ValueError('Unrecognized Iranian gold period columns')
+    pattern = re.compile(rf'^[^<]*<b>([^<]+)</b>\s*<code>({RATE})</code>\s*({PCT})(?:\s*/\s*({PCT}))?\s*$')
     rows = {}
     for line in text.splitlines():
         if '<b>' not in line or '<code>' not in line:
@@ -91,10 +112,12 @@ def parse_iran_gold(text: str) -> list[GoldRow]:
         match = pattern.fullmatch(line)
         if not match:
             raise ValueError('Malformed Iran gold row')
-        name, price, day = match.groups()
+        name, price, day, month = match.groups()
+        if monthly != (month is not None):
+            raise ValueError('Iranian gold row does not match its declared periods')
         if name not in GOLD_COINS + GOLD_BARS or name in rows:
             raise ValueError('Unknown or repeated gold instrument')
-        rows[name] = GoldRow(name, price, day)
+        rows[name] = GoldRow(name, price, day, month if monthly else '—')
     if not set(GOLD_COINS) <= set(rows):
         raise ValueError('Missing Iranian coin rows')
     return [rows[name] for name in GOLD_COINS + GOLD_BARS if name in rows]
@@ -102,15 +125,18 @@ def parse_iran_gold(text: str) -> list[GoldRow]:
 
 def parse_turkey_gold(text: str) -> list[TurkishGoldRow]:
     rows = {}
-    pattern = re.compile(rf'^(\S+)\s+({RATE})\s+({RATE})\s+({PCT})$')
+    monthly = _table_has_month(text,('GOLD','SELL','BUY','Δ24H'))
+    suffix = rf'\s+({PCT})' if monthly else ''
+    pattern = re.compile(rf'^(\S+)\s+({RATE})\s+({RATE})\s+({PCT}){suffix}$')
     for line in _pre(text):
         match = pattern.fullmatch(line.removeprefix('🌕'))
         if not match:
             raise ValueError('Malformed Turkish gold row')
-        code, sell, buy, day = match.groups()
+        fields = match.groups()
+        code, sell, buy, day = fields[:4]
         if code not in GOLD_TR or code in rows:
             raise ValueError('Unknown or repeated Turkish gold instrument')
-        rows[code] = TurkishGoldRow(code, sell, buy, day)
+        rows[code] = TurkishGoldRow(code, sell, buy, day, fields[4] if monthly else '—')
     if set(rows) != set(GOLD_TR):
         raise ValueError('Missing Turkish gold instruments')
     return [rows[code] for code in GOLD_TR]
@@ -118,15 +144,18 @@ def parse_turkey_gold(text: str) -> list[TurkishGoldRow]:
 
 def parse_pulse(text: str) -> list[PulseRow]:
     rows = {}
-    pattern = re.compile(rf'^[^\w\s<]*(USD/TL|EUR/TL)\s+(\d+\.\d{{4}}|—)\s+({PCT})$')
+    monthly = _table_has_month(text,('MARKET','RATE','Δ24H'))
+    suffix = rf'\s+({PCT})' if monthly else ''
+    pattern = re.compile(rf'^[^\w\s<]*(USD/TL|EUR/TL)\s+(\d+\.\d{{4}}|—)\s+({PCT}){suffix}$')
     for line in _pre(text):
         match = pattern.fullmatch(line)
         if not match:
             raise ValueError('Malformed Turkey FX pulse row')
-        pair, rate, day = match.groups()
+        fields = match.groups()
+        pair, rate, day = fields[:3]
         if pair in rows:
             raise ValueError('Repeated FX pulse market')
-        rows[pair] = PulseRow(pair, rate, day)
+        rows[pair] = PulseRow(pair, rate, day, fields[3] if monthly else '—')
     if set(rows) != {'USD/TL', 'EUR/TL'}:
         raise ValueError('Missing USD/TL or EUR/TL market')
     return [rows[pair] for pair in ('USD/TL', 'EUR/TL')]
@@ -194,7 +223,7 @@ def iran_gold_body(text: str) -> str:
             variant = {GOLD_COINS[0]:'full',GOLD_COINS[1]:'full',GOLD_COINS[2]:'half',GOLD_COINS[3]:'quarter',GOLD_COINS[4]:'small',GOLD_BARS[0]:'bar',GOLD_BARS[1]:'bar-mesghal'}[row.name]
             table += (f'<tr class="instrument-row" data-instrument="{escape(row.name)}"><td>'
                       f'<div class="instrument-name">{gold_art(variant)}<strong>{escape(row.name)}</strong></div></td>'
-                      f'<td>{number(row.price)}</td><td>{change(row.day,"24h")}</td><td>{change("—","1m")}</td></tr>')
+                      f'<td>{number(row.price)}</td><td>{change(row.day,"24h")}</td><td>{change(row.month,"1m")}</td></tr>')
     return table + '</tbody></table>'
 
 
@@ -206,7 +235,7 @@ def turkey_gold_body(text: str) -> str:
         table += (f'<tr class="instrument-row" data-instrument="{row.code}"><td>'
                   f'<div class="instrument-name">{gold_art(variant)}<div class="name-stack"><strong>{escape(name)}</strong><small>{escape(latin)}</small></div></div></td>'
                   f'<td>{number(row.sell,"sell")}</td><td>{number(row.buy,"buy")}</td>'
-                  f'<td>{change(row.day,"24h")}</td><td>{change("—","1m")}</td></tr>')
+                  f'<td>{change(row.day,"24h")}</td><td>{change(row.month,"1m")}</td></tr>')
     return table + '</tbody></table>' + currency_unit()
 
 
@@ -226,7 +255,7 @@ def pulse_body(text: str) -> str:
             f'<div class="rate-block">{number(row.rate,"pulse-rate")}<small>لیر ترکیه</small></div>'
             '<div class="movement-panels">'
             f'<div class="movement"><span>۲۴ ساعت</span>{change(row.day,"24h")}</div>'
-            f'<div class="movement"><span>۱ ماه</span>{change("—","1m")}</div>'
+            f'<div class="movement"><span>۱ ماه</span>{change(row.month,"1m")}</div>'
             '</div></section>')
     return '<div class="pulse-cards">' + ''.join(cards) + '</div>' + currency_unit()
 

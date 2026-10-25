@@ -35,15 +35,18 @@ service is required during publication.
 |---|---|---|
 | USDT | `buy_toman` is the first numeric value (customer purchase); `sell_toman` second | Existing daily/monthly publisher fields |
 | Iranian FX | Toman value for each canonical currency, including unavailable slots | Explicit Δ24H and Δ1M from `build_iran_fx_post` |
-| Iranian gold | Publisher's toman price per exact instrument name | Producer Δ24H uses `load_iran_gold_near_24h`; monthly remains `—` |
-| Turkish gold | Producer SELL first, BUY second; red sell, green buy | Midpoint-based producer Δ24H from `load_turkey_gold_near_24h`; monthly remains `—` |
-| Turkey FX pulse | Producer's already-calculated Kapalıçarşı midpoint, exactly four decimals | Producer Δ24H uses bank-FX history; monthly remains `—` |
+| Iranian gold | Publisher's toman price per exact instrument name | Producer's explicit Δ24H / Δ1M pair; legacy daily-only text leaves monthly `—` |
+| Turkish gold | Producer SELL first, BUY second; red sell, green buy | Explicit Δ24H and optional declared Δ1M columns; legacy monthly is `—` |
+| Turkey FX pulse | Producer's already-calculated Kapalıçarşı midpoint, exactly four decimals | Explicit Δ24H and optional declared Δ1M columns; legacy monthly is `—` |
 
-The original gold/pulse mockups place some sample percentages in monthly
-columns. They do **not** define data semantics. Values are not moved between
-periods to match those pixels. Typed immutable payloads parse the existing
-publisher contracts strictly; no rate conversion, rounding, midpoint, history,
-freshness or quorum calculation is duplicated in the renderer.
+The original gold/pulse mockups do **not** define data semantics. Values are not
+moved between periods to match those pixels. The live server's newer producers
+already supply monthly fields; the renderer accepts both those explicitly
+declared daily/monthly schemas and the repository's legacy daily-only text.
+Monthly fields are passed through unchanged when supplied, with a dash only
+when unavailable. Mismatched headers/field counts fail closed. Typed immutable
+payloads parse these contracts; no rate conversion, rounding, midpoint,
+history, freshness or quorum calculation is duplicated in the renderer.
 
 Unknown, duplicate, malformed or incomplete required rows fail closed. Missing
 values stay as dashes. All 25 FX slots are present, ordered canonically with USD
