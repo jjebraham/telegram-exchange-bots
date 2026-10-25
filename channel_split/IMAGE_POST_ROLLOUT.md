@@ -30,9 +30,24 @@ Do not put Telegram bot tokens in GitHub. The runner triggers an SSH command; th
 
 ## Server prerequisites
 
-- /usr/bin/python3 must import playwright.sync_api.
-- A Chromium executable or Playwright-managed Chromium must be available to that Python user.
-- A Persian-capable font, ideally Noto Sans Arabic or Vazirmatn.
+- The existing production `/usr/bin/python3` remains unchanged and does **not** require Playwright.
+- Use a dedicated `~/.venvs/alanchande-images/bin/python` with `playwright==1.57.0`.
+- `/usr/bin/chromium` must be installed.
+- A Persian-capable font, ideally Noto Sans Arabic, should be installed.
+
+One-time setup on Google Cloud as `kianirad2020`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-venv fonts-noto-core
+mkdir -p "$HOME/.venvs"
+/usr/bin/python3 -m venv "$HOME/.venvs/alanchande-images"
+"$HOME/.venvs/alanchande-images/bin/python" -m pip install --disable-pip-version-check "playwright==1.57.0"
+"$HOME/.venvs/alanchande-images/bin/python" -c 'from playwright.sync_api import sync_playwright; print("Dedicated Playwright OK")'
+fc-match "Noto Sans Arabic"
+```
+
+Do not `sudo pip install`, do not change the Python executable used by the existing market publisher, and do not reinstall Chromium.
 - Existing channel_split/run_channel_split_production.sh, systemd units, and post safety scripts must remain configured.
 - The bot must be able to post to @alanchandetest before preview is run.
 
