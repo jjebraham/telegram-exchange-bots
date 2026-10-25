@@ -286,7 +286,7 @@ def render_png(kind: str, approved_text: str, output: Path | str) -> Path:
     html = html_for_post(kind, approved_text)
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
-    if importlib.util.find_spec("playwright"):
+    if importlib.util.find_spec("playwright") and os.environ.get("ALANCHANDE_RENDER_FORCE_WORKER") != "1":
         _screenshot_html(html, target)
     else:
         worker_python = Path(
