@@ -1,0 +1,59 @@
+name: AlanChande image publisher
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Test renderer, post five TEST previews, or activate production"
+        required: true
+        type: choice
+        default: test-only
+        options:
+          - test-only
+          - preview
+          - activate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alanchande-image-publisher
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/alanchande-image-posts-20261025
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install renderer dependencies
+        run: |
+          python -m pip install "playwright==1.57.0"
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-core
+      - name: Test all 5 layouts including screenshots
+        env:
+          RENDER_PNG_TESTS: "1"
+        run: python channel_split/test_market_images.py
+
+  deploy:
+    needs: validate
+    if: ${{ inputs.stage == 'preview' || inputs.stage == 'activate' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ALANCHANDE_DEPLOY_SSH_KEY: ${{ secrets.ALANCHANDE_DEPLOY_SSH_KEY }}
+      ALANCHANDE_DEPLOY_KNOWN_HOSTS: ${{ secrets.ALANCHANDE_DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/alanchande-image-posts-20261025
+          persist-credentials: false
+      - name: Deploy code and publish five test-channel previews
+        run: bash channel_split/deploy_images_via_ssh.sh "${{ inputs.stage }}"
