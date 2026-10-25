@@ -316,7 +316,7 @@ USDT_CSS = """
  height:123px;font-size:33px;position:relative;isolation:isolate;overflow:hidden;
  padding:0 40px}
 .usdt .header>.header-date,.usdt .header>.header-time{z-index:2;display:flex;align-items:center;gap:14px;white-space:nowrap}
-.usdt .header .time{font-size:50px;font-weight:900;color:#ffe47a}
+.usdt .header .time{font-size:50px;font-weight:900;color:#ffe47a;direction:ltr;unicode-bidi:isolate}
 .usdt .header small{font-size:25px}
 .usdt .header svg{height:42px;width:42px;color:#f3f4ff;flex-shrink:0}
 .usdt .header-landscape{position:absolute;inset:5px 250px 0;opacity:.19;z-index:0;pointer-events:none}
@@ -389,7 +389,7 @@ def html_for_post(kind: str, text: str, *, now: datetime | None = None) -> str:
     city = "تهران" if tz == "Asia/Tehran" else "استانبول"
     content = {"usdt":_usdt,"iran-fx":_iran_fx,"iran-gold":_iran_gold,
                "turkey-gold":_turkey_gold,"fx-pulse":_pulse}[kind](text)
-    heights = {"usdt":1550,"iran-fx":1580,"iran-gold":1280,"turkey-gold":1280,"fx-pulse":1180}
+    heights = {"usdt":1500,"iran-fx":1580,"iran-gold":1280,"turkey-gold":1280,"fx-pulse":1180}
     subtitle = {"usdt":"ارقام به تومان","iran-fx":"ارقام به تومان",
                 "iran-gold":"قیمت بازار · ارقام به تومان",
                 "turkey-gold":"بازار Kapalıçarşı · لیر ترکیه",
@@ -398,7 +398,7 @@ def html_for_post(kind: str, text: str, *, now: datetime | None = None) -> str:
         head = (
             f'<header class="header">{USDT_HEADER_DECOR}'
             f'<span class="header-date">{USDT_CAL}{escape(date)}</span>'
-            f'<span class="header-time"><span class="time">{escape(time)}</span>'
+            f'<span class="header-time"><span class="time" dir="ltr">{escape(time)}</span>'
             f'<small>{city}</small>{USDT_CLOCK}</span></header>'
         )
         heading = (
@@ -447,13 +447,23 @@ def _screenshot_html(html: str, target: Path) -> None:
             browser.close()
 
 
-def render_png(kind: str, approved_text: str, output: Path | str) -> Path:
+def render_png(kind: str, approved_text: str, output: Path | str, *, demo: bool = False) -> Path:
     """Render a verified rate card. Keep publisher's system Python unchanged."""
     import importlib.util
     import subprocess
     import sys
 
     html = html_for_post(kind, approved_text)
+    if demo:
+        # A visible test-only disclaimer inside image bytes; cannot be mistaken
+        # for a live-price screenshot when forwarded without its Telegram caption.
+        html = html.replace(
+            "</style>",
+            """.canvas{position:relative}.canvas:after{content:'نمونه آزمایشی — قیمت‌ها واقعی نیستند';
+            position:absolute;z-index:999;bottom:94px;left:0;right:0;background:#9b1c1c;
+            padding:13px;text-align:center;color:white;font-size:29px;font-weight:900}</style>""",
+            1,
+        )
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     if importlib.util.find_spec("playwright") and os.environ.get("ALANCHANDE_RENDER_FORCE_WORKER") != "1":
