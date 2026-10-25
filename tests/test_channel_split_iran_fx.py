@@ -2,14 +2,68 @@ import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlsplit
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "channel_split"))
 
-from iran_fx import CURRENCY_ROWS, build_iran_fx_post, parse_tgju_currency_page  # noqa: E402
+from iran_fx import CURRENCY_ROWS, build_iran_fx_post, parse_tgju_currency_page, fetch_iran_open_market_fx  # noqa: E402
 
 
 class IranFxTests(unittest.TestCase):
+    def _response(self, body: str):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.headers.get_content_charset.return_value = "utf-8"
+        response.read.return_value = body.encode("utf-8")
+        return response
+
+    def test_empty_cache_response_retries_same_source_once(self):
+        with patch("iran_fx.urlopen", side_effect=[self._response(""), self._response(self._fixture_html())]) as request:
+            rates = fetch_iran_open_market_fx("https://www.tgju.org/currency?language=fa",timeout=7)
+        self.assertEqual(len(rates),25)
+        self.assertEqual(rates["USD"],Decimal("228600"))
+        self.assertEqual(request.call_count,2)
+        first, second = [call.args[0] for call in request.call_args_list]
+        self.assertEqual(first.full_url,"https://www.tgju.org/currency?language=fa")
+        retry = urlsplit(second.full_url)
+        self.assertEqual((retry.scheme,retry.netloc,retry.path),("https","www.tgju.org","/currency"))
+        self.assertEqual(parse_qs(retry.query)["language"],["fa"])
+        self.assertIn("_alanchande_refresh",parse_qs(retry.query))
+        self.assertEqual(second.get_header("Cache-control"),"no-cache")
+        self.assertTrue(all(call.kwargs["timeout"]==7 for call in request.call_args_list))
+
+    def test_two_empty_responses_fail_without_inventing_rates(self):
+        with patch("iran_fx.urlopen",side_effect=[self._response(""),self._response(" \n")]) as request:
+            with self.assertRaisesRegex(RuntimeError,"empty response twice"):
+                fetch_iran_open_market_fx()
+        self.assertEqual(request.call_count,2)
+
+    def test_nonempty_missing_rows_still_fail_without_retry(self):
+        with patch("iran_fx.urlopen",return_value=self._response(self._fixture_html(omit="QAR"))) as request:
+            with self.assertRaisesRegex(ValueError,"QAR"):
+                fetch_iran_open_market_fx()
+        self.assertEqual(request.call_count,1)
+
+    def test_nonempty_challenge_page_is_not_treated_as_empty_cache(self):
+        with patch("iran_fx.urlopen",return_value=self._response("<html><title>Unavailable</title></html>")) as request:
+            with self.assertRaisesRegex(ValueError,"missing required rows"):
+                fetch_iran_open_market_fx()
+        self.assertEqual(request.call_count,1)
+
+    def test_http_errors_are_not_retried_or_replaced_with_fixtures(self):
+        with patch("iran_fx.urlopen",side_effect=HTTPError("https://www.tgju.org/currency",503,"Unavailable",{},None)) as request:
+            with self.assertRaisesRegex(RuntimeError,"HTTP 503"):
+                fetch_iran_open_market_fx()
+        self.assertEqual(request.call_count,1)
+
+    def test_usable_first_response_is_not_requested_again(self):
+        with patch("iran_fx.urlopen",return_value=self._response(self._fixture_html())) as request:
+            self.assertEqual(len(fetch_iran_open_market_fx()),25)
+        self.assertEqual(request.call_count,1)
+
     def _fixture_html(self, *, omit: str | None = None) -> str:
         values = {
             "USD": "2,286,000",

@@ -156,6 +156,12 @@ Live validation must still pass before image mode can be activated. If USDT
 reports `SAFETY usdt: BLOCKED`, keep it blocked; do not substitute fixtures or
 relax freshness, trading-state, source independence or quorum rules.
 
+TGJU can return a cached HTTP 200 response with an empty body. The Iranian FX
+fetcher retries that same source/path once with a fresh cache key; a second
+empty response raises an explicit source error. Nonempty incomplete/challenge
+pages still fail immediately, and independent market verification remains
+required. This transport recovery never substitutes rates from the mockups.
+
 ## Safe rollback
 
 No production rollback is needed for an isolated review. For an installed image
