@@ -19,7 +19,10 @@ ssh -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes "$remote" bas
 set -euo pipefail
 cd "$HOME"
 python3 -m py_compile alanchande-image-stage/market_images.py alanchande-image-stage/deploy_market_images.py
-/usr/bin/python3 -c 'import playwright.sync_api'
+image_python="$HOME/.venvs/alanchande-images/bin/python"
+test -x "$image_python" || { echo "Missing image-renderer Python venv" >&2; exit 1; }
+"$image_python" -c 'import playwright.sync_api'
+test -x /usr/bin/chromium || { echo "Missing /usr/bin/chromium" >&2; exit 1; }
 /usr/bin/python3 alanchande-image-stage/deploy_market_images.py
 /usr/bin/python3 alanchande-image-stage/deploy_market_images.py --apply
 cd "$HOME/telegram_bot_repo/channel_split"
