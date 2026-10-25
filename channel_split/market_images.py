@@ -90,11 +90,11 @@ def _fa_num(raw: str, *, percent: bool = False) -> str:
     return escape(value)
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=128)
 def _asset_data(filename: str) -> str:
     """Embed local artwork so the renderer and its isolated worker stay offline."""
     path = Path(__file__).with_name("market_image_assets") / filename
-    mime = "font/ttf" if path.suffix == ".ttf" else "image/png"
+    mime = {".ttf":"font/ttf", ".svg":"image/svg+xml", ".png":"image/png"}[path.suffix]
     return f"data:{mime};base64," + b64encode(path.read_bytes()).decode("ascii")
 
 
@@ -438,6 +438,9 @@ USDT_CSS = """
 def html_for_post(kind: str, text: str, *, now: datetime | None = None) -> str:
     if kind not in SUPPORTED_MARKETS:
         raise ValueError(f"Unsupported image template: {kind}")
+    if kind != "usdt":
+        from market_report_templates import render_report
+        return render_report(kind, text, now)
     tz = "Asia/Tehran" if kind in {"usdt","iran-fx","iran-gold"} else "Europe/Istanbul"
     supplied_time = now is not None
     if now is not None and now.tzinfo is None:
@@ -504,7 +507,7 @@ def _screenshot_html(html: str, target: Path) -> None:
         try:
             page = browser.new_page(
                 viewport={"width": 1200, "height": 1700},
-                device_scale_factor=2 if 'class="canvas usdt"' in html else 1,
+                device_scale_factor=2,
             )
             page.route("**/*", lambda route: route.abort())
             page.set_content(html, wait_until="load")
@@ -512,6 +515,9 @@ def _screenshot_html(html: str, target: Path) -> None:
             page.evaluate("""() => Promise.all([...document.images].map(i => i.decode()))""")
             _fit_dynamic_fields(page)
             _validate_layout(page)
+            if page.locator('.canvas.report').count():
+                from market_report_templates import validate_report_layout
+                validate_report_layout(page)
             page.locator(".canvas").screenshot(path=str(target))
         finally:
             browser.close()
@@ -534,6 +540,10 @@ def render_png(kind: str, approved_text: str, output: Path | str, *, demo: bool 
             "text-align:center;font-size:23px;line-height:40px;font-weight:800}</style>", 1)
         html = re.sub(r'(<div class="canvas [^\"]+">)',
                       r'\1<div class="demo-label">نمونه آزمایشی — قیمت‌ها واقعی نیستند</div>', html, count=1)
+        if kind != "usdt":
+            html = html.replace('.canvas{height:calc(var(--height) + 40px)}', '.canvas.report{height:calc(var(--height) + 40px)}')
+            html = html.replace('.demo-label{height:40px;', '.demo-label{height:40px;background:#fff4db;color:#715015;border-bottom:1px solid #e6c991;')
+            html = html.replace('background:#9b1c1c;color:#fff;', '')
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     if importlib.util.find_spec("playwright") and os.environ.get("ALANCHANDE_RENDER_FORCE_WORKER") != "1":
@@ -549,6 +559,8 @@ def render_png(kind: str, approved_text: str, output: Path | str, *, demo: bool 
             [str(worker_python), str(Path(__file__).resolve()), "--render-worker", str(target)],
             input=html,
             text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=75,

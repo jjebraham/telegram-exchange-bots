@@ -13,7 +13,7 @@ remote="kianirad2020@34.19.54.235"
 ssh -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes "$remote" \
   'mkdir -p "$HOME/alanchande-image-stage"'
 scp -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes \
-  channel_split/market_images.py channel_split/deploy_market_images.py channel_split/test_market_images.py \
+  channel_split/market_images.py channel_split/market_report_templates.py channel_split/deploy_market_images.py channel_split/test_market_images.py \
   "$remote":alanchande-image-stage/
 scp -r -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes \
   channel_split/market_image_assets "$remote":alanchande-image-stage/

@@ -16,6 +16,44 @@ from market_images import SUPPORTED_MARKETS, html_for_post, render_png, _jalali,
 SAMPLE_TIME = datetime(2026, 10, 25, 21, 30, tzinfo=ZoneInfo("Asia/Tehran"))
 
 
+from market_report_templates import flag_emoji
+
+SAMPLE_TIMES = {
+    "usdt": SAMPLE_TIME,
+    "iran-fx": datetime(2026,10,25,21,0,tzinfo=ZoneInfo("Asia/Tehran")),
+    "iran-gold": datetime(2026,10,25,9,35,tzinfo=ZoneInfo("Asia/Tehran")),
+    "turkey-gold": datetime(2026,10,25,11,20,tzinfo=ZoneInfo("Europe/Istanbul")),
+    "fx-pulse": datetime(2026,10,25,15,50,tzinfo=ZoneInfo("Europe/Istanbul")),
+}
+FX_SAMPLE_ROWS = (
+    ("USD","269,600","+0.41%","+15.12%"),
+    ("EUR","302,310","+0.55%","+13.31%"),
+    ("GBP","360,600","+0.53%","+16.59%"),
+    ("CHF","337,270","+0.56%","+15.60%"),
+    ("CAD","192,860","+0.54%","+16.67%"),
+    ("AUD","190,030","+0.57%","+15.52%"),
+    ("SEK","27,220","-0.08%","+15.50%"),
+    ("NOK","28,900","+0.52%","+17.24%"),
+    ("RUB","3,348","-0.63%","+20.65%"),
+    ("THB","7,992","+0.51%","+14.01%"),
+    ("SGD","211,195","+0.47%","+15.22%"),
+    ("HKD","34,400","+0.50%","+15.23%"),
+    ("AZN","159,160","+0.45%","+15.75%"),
+    ("DKK","40,410","+0.46%","+13.30%"),
+    ("AED","73,700","+0.60%","+15.83%"),
+    ("TRY","5,451","+0.43%","+13.19%"),
+    ("CNY","40,470","+0.58%","+15.89%"),
+    ("SAR","71,956","+0.59%","+15.51%"),
+    ("INR","2,836","+0.39%","+16.23%"),
+    ("MYR","66,120","+0.42%","+15.27%"),
+    ("AFN","4,175","-0.36%","+13.32%"),
+    ("KWD","870,250","+0.49%","+14.92%"),
+    ("BHD","717,030","+0.61%","+15.57%"),
+    ("OMR","701,230","+0.29%","+15.33%"),
+    ("QAR","74,125","—","+15.53%"),
+)
+
+
 SAMPLES = {
     "usdt": """💎 <b>قیمت تتر در صرافی‌های ایران</b>
 <pre>‎EXCHANGE       SELL      BUY    Δ24H     Δ1M
@@ -32,10 +70,8 @@ SAMPLES = {
 💰 بیشترین قیمت فروش: <b>Bitpin</b>　<code>269,266</code> تومان""",
     "iran-fx": (
         "💱 <b>نرخ ارز آزاد ایران</b>\n<pre>‎CURRENCY TOMAN Δ24H Δ1M\n"
-        + "\n".join(
-            "‎🇺🇸 " + code + " 269,600 +0.41% +15.12%"
-            for code in "USD EUR GBP CHF CAD AUD SEK NOK RUB THB SGD HKD AZN DKK AED TRY CNY SAR INR MYR AFN KWD BHD OMR QAR".split()
-        )
+        + "\n".join(f"‎{flag_emoji(code)} {code} {price} {day} {month}"
+                      for code, price, day, month in FX_SAMPLE_ROWS)
         + "</pre>"
     ),
     "iran-gold": """🪙 <b>طلا و سکه ایران</b>
@@ -46,17 +82,17 @@ SAMPLES = {
 🪙 <b>سکه گرمی</b>　<code>38,000,000</code>　+11.76%
 ✨ <b>طلا</b>
 ✨ <b>طلای ۱۸ عیار</b>　<code>26,063,300</code>　+8.04%
-⚖️ <b>مثقال طلا</b>　<code>112,901,000</code>　+8.04%""",
+⚖️ <b>مثقال طلا</b>　<code>112,901,000</code>　+8.17%""",
     "turkey-gold": """🥇 <b>قیمت طلای ترکیه | Kapalıçarşı</b>
 <pre>🌕GOLD       SELL       BUY     Δ24H
 🌕GRAM       6,458.99  6,451.39 0.00%
 🌕CEYREK    10,560.44 10,322.22 -3.49%
-🌕YARIM     21,120.88 20,579.93 0.00%
+🌕YARIM     21,120.88 20,579.93 +1.25%
 🌕TAM       42,113.58 41,288.88 —</pre>""",
     "fx-pulse": """📊 <b>نبض بازار ارز ترکیه | 24H</b>
 <pre>MARKET    RATE Δ24H
 🇺🇸USD/TL 49.7900 0.00%
-🇪🇺EUR/TL 55.5750 —</pre>""",
+🇪🇺EUR/TL 55.5750 -0.26%</pre>""",
 }
 
 
@@ -204,8 +240,8 @@ class TemplateTests(unittest.TestCase):
 
     def test_no_html_injection(self):
         dangerous = SAMPLES["iran-gold"].replace("سکه امامی", "<script>alert(1)</script>")
-        html = html_for_post("iran-gold", dangerous, now=self.now)
-        self.assertNotIn("<script>", html)
+        with self.assertRaises(ValueError):
+            html_for_post("iran-gold", dangerous, now=self.now)
 
     def test_png_render_if_requested(self):
         if __import__("os").environ.get("RENDER_PNG_TESTS") != "1":

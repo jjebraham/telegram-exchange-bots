@@ -1,65 +1,206 @@
-# AlanChande image publisher rollout
+# AlanChande image reports: review, deployment and rollback
 
-This branch adds dynamic, deterministic Persian/RTL PNG cards for five existing validated posts:
-- alanchande-usdt-exchanges
-- alanchande-iran-fx
-- alanchande-iran-gold
-- alanchande-turkey-gold
-- alanchande-fx-pulse
+All five templates render validated publisher output offline with Python,
+Playwright and Chromium. The four additional reference layouts are implemented
+in `market_report_templates.py`; the established USDT HTML is preserved exactly
+by a regression digest from commit `d9e4894`.
 
-Rates continue to come from the existing producer. The renderer parses its already-validated output, so sample illustrations never become production prices. Existing MARKET_SAFETY_MODE, publish history, and scheduled services are preserved.
+## Layouts and assets
+
+| Kind | Logical artboard | Main composition | Sample PNG |
+|---|---|---|---|
+| usdt | 1200 × 1500 at seven exchanges | Exchange table and four summary cards | 2400 × 3080 |
+| iran-fx | 1200 × 1600 | Right 13 / left 12 currency rows | 2400 × 3280 |
+| iran-gold | 1200 × 1200 at seven instruments | Five coin rows and two gold rows | 2400 × 2480 |
+| turkey-gold | 1200 × 1200 | Four sell/buy rows with Persian/Turkish names | 2400 × 2480 |
+| fx-pulse | 1200 × 1200 | Two stacked USD/TL and EUR/TL feature cards | 2400 × 2480 |
+
+Samples add a separate 40 CSS-pixel label row. The new four reports use a
+compact amber warning; no data or footer is covered. Production images have no
+sample label. USDT adjusts for five through eight validated exchange rows;
+Iranian gold adjusts when optional gold instruments are absent. Production
+images are never silently stretched or cropped to fit Telegram.
+
+The 25 locally bundled MIT-licensed SVG flags are selected by currency code,
+independently of incoming emoji. Fixture flags are also corrected. Detailed
+provenance, upstream URLs, hashes and the license are in
+`market_image_assets/flags/`. Vazirmatn and its SIL OFL license remain bundled.
+Gold illustrations and the faint circular A watermark are original inline
+SVGs. No external fonts, emoji rendering, asset downloads or image-generation
+service is required during publication.
+
+## Verified data contracts
+
+| Report | Producer fields preserved | Historical periods |
+|---|---|---|
+| USDT | `buy_toman` is the first numeric value (customer purchase); `sell_toman` second | Existing daily/monthly publisher fields |
+| Iranian FX | Toman value for each canonical currency, including unavailable slots | Explicit Δ24H and Δ1M from `build_iran_fx_post` |
+| Iranian gold | Publisher's toman price per exact instrument name | Producer Δ24H uses `load_iran_gold_near_24h`; monthly remains `—` |
+| Turkish gold | Producer SELL first, BUY second; red sell, green buy | Midpoint-based producer Δ24H from `load_turkey_gold_near_24h`; monthly remains `—` |
+| Turkey FX pulse | Producer's already-calculated Kapalıçarşı midpoint, exactly four decimals | Producer Δ24H uses bank-FX history; monthly remains `—` |
+
+The original gold/pulse mockups place some sample percentages in monthly
+columns. They do **not** define data semantics. Values are not moved between
+periods to match those pixels. Typed immutable payloads parse the existing
+publisher contracts strictly; no rate conversion, rounding, midpoint, history,
+freshness or quorum calculation is duplicated in the renderer.
+
+Unknown, duplicate, malformed or incomplete required rows fail closed. Missing
+values stay as dashes. All 25 FX slots are present, ordered canonically with USD
+through AZN on the right and DKK through QAR on the left. Unavailable FX values
+retain their slots and an explanatory note.
+
+Live header time comes from the publisher's clock for the correct city, or a
+dash if missing. The Jalali date is the local rendering date. Explicit
+timezone-aware test timestamps reproduce the supplied references. Teheran and
+Istanbul midnight boundaries are tested separately.
+
+Browser checks wait for fonts and images, fit unusually long approved strings
+inside their slots, then reject clipped fields or missing artwork before
+`sendPhoto`. The isolated worker receives UTF-8 explicitly on every platform.
+
+## Local validation and visual comparisons
+
+```sh
+python -m pip install 'playwright==1.57.0' Pillow
+python -m playwright install chromium
+RENDER_PNG_TESTS=1 python channel_split/test_market_images.py -v
+RENDER_PNG_TESTS=1 python channel_split/test_market_report_templates.py -v
+python channel_split/test_market_image_deploy.py -v
+python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
+python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
+python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v
+python -m unittest discover -s tests -p 'test_channel_split_*history.py' -v
+bash -n channel_split/deploy_images_via_ssh.sh
+
+# Five visibly illustrative PNGs, never sent:
+python channel_split/visual_market_images.py --kind all --output-dir image-previews
+
+# Four reference comparisons, with input directories named by template kind:
+python channel_split/visual_market_images.py --kind all \
+  --reference-dir /path/to/references --output-dir /path/to/review
+```
+
+The comparison input convention is `<kind>/approved-reference.png` and an
+optional `<kind>/before.png`. Each report gets its own aspect ratio, normalized
+reference overlay, difference image, before/after sheet and diagnostic JSON.
+Only the dedicated test-label row is excluded. No dynamic field is masked.
+Pixel errors cannot establish visual acceptance; inspect the actual images.
 
 ## GitHub Actions
 
-Run the workflow **AlanChande image publisher** at:
-https://github.com/jjebraham/telegram-exchange-bots/actions/workflows/alanchande-image-posts.yml
+`.github/workflows/alanchande-image-previews.yml` runs validation on feature
+branch pushes and pull requests, and supports manual runs. It uploads all five
+watermarked PNGs as the `alanchande-five-template-previews` artifact for 14 days.
+It has read-only repository permissions, no deployment step, and no bot/SSH
+secrets. This provides a review artifact without posting or activating anything.
 
-Select one of:
-- test-only: runs all five data, formatting, RTL screenshot tests on a GitHub-hosted runner; does not access your server.
-- preview: runs the tests, uploads selected code to Google Cloud 34.19.54.235 using SSH, verifies that the live publisher has the expected integration anchors, installs the opt-in renderer, generates data-validated previews and uploads them to **@alanchandetest**. The production channel remains in text mode.
-- activate: does everything in preview and then atomically sets ALANCHANDE_POST_FORMAT=image in the production server's protected channel_split/.env. Next existing scheduled AlanChande posts publish photos; Kiani and other messages remain text.
+The existing default-branch `.github/workflows/alanchande-image-posts.yml`
+remains the production deployment entry point. Its helper now transfers the
+new report module and complete artwork folder. Its original preview mode sends
+five photos and installs into the live publisher checkout; do not use it for a
+four-photo isolated review. Do not select `activate` without explicit approval.
 
-## Repository Secrets
+## Isolated four-photo review
 
-Create these under **Settings > Secrets and variables > Actions**:
+Stage the current source files and complete artwork folder together, outside
+the production checkout. Keep all credentials on the server in their existing
+protected environment. Do not copy `.env`, private keys or production databases
+into a package, repository or workflow artifact.
 
-1. **ALANCHANDE_DEPLOY_SSH_KEY** — private Ed25519 key authorized for kianirad2020@34.19.54.235. Never commit or paste it into issues or chat.
-2. **ALANCHANDE_DEPLOY_KNOWN_HOSTS** — verified SSH server public host key line for 34.19.54.235 (not an unverified fingerprint).
+These existing commands remain supported from a correctly staged directory:
 
-Do not put Telegram bot tokens in GitHub. The runner triggers an SSH command; the Telegram bot token remains in the server's protected channel_split/.env.
-
-## Server prerequisites
-
-- The existing production `/usr/bin/python3` remains unchanged and does **not** require Playwright.
-- Use a dedicated `~/.venvs/alanchande-images/bin/python` with `playwright==1.57.0`.
-- `/usr/bin/chromium` must be installed.
-- A Persian-capable font, ideally Noto Sans Arabic, should be installed.
-
-One-time setup on Google Cloud as `kianirad2020`:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y python3-venv fonts-noto-core
-mkdir -p "$HOME/.venvs"
-/usr/bin/python3 -m venv "$HOME/.venvs/alanchande-images"
-"$HOME/.venvs/alanchande-images/bin/python" -m pip install --disable-pip-version-check "playwright==1.57.0"
-"$HOME/.venvs/alanchande-images/bin/python" -c 'from playwright.sync_api import sync_playwright; print("Dedicated Playwright OK")'
-fc-match "Noto Sans Arabic"
+```sh
+/usr/bin/python3 manual_image_preview.py --kind iran-fx --sample --send-test
+/usr/bin/python3 manual_image_preview.py --kind iran-gold --sample --send-test
+/usr/bin/python3 manual_image_preview.py --kind turkey-gold --sample --send-test
+/usr/bin/python3 manual_image_preview.py --kind fx-pulse --sample --send-test
 ```
 
-Do not `sudo pip install`, do not change the Python executable used by the existing market publisher, and do not reinstall Chromium.
-- Existing channel_split/run_channel_split_production.sh, systemd units, and post safety scripts must remain configured.
-- The bot must be able to post to @alanchandetest before preview is run.
+`--output /path/to/proof.png` optionally selects the review PNG path. The
+destination remains hardcoded to `@alanchandetest`. Each invocation sends one
+photo. Maintain a per-template receipt/intent record to avoid duplicates if an
+upload result is uncertain; inspect the channel before retrying. The four-photo
+review must not invoke the five-photo production deployment helper.
 
-The deployment fails closed if the production file does not match expected code anchors or if the rendering/data-safety checks fail. It never runs git pull, git reset or git clean on the server.
+## Production readiness and guarded installation
 
-## Rollback
+**Do not install or activate production image publishing until the final five
+appearances have explicit user approval.** The review does not modify live
+source, credentials, schedules, market histories, channel settings, or services.
 
-On the server, edit channel_split/.env to set ALANCHANDE_POST_FORMAT=text. New oneshot publisher runs return to text. The installer also saves the previous publish_channels.py under ~/kiani-image-backups/<timestamp>/.
+Before any production installation, inspect its dirty checkout and preserve
+unrelated work:
 
-## Limitations
+```sh
+git -C /home/kianirad2020/telegram_bot_repo status --short
+```
 
-- Existing Iran gold, Turkish gold, and FX-pulse messages do not supply one-month history; the template shows "—" for missing Δ1M.
-- Historical prices in tests are sample-only and should never be sent as live market quotes.
-- The HTTP parser consumes the currently approved text payload and must be regression-tested when the upstream text format changes.
-- Do not activate without checking the five test-channel images and ensuring buy/sell semantics match the official rates.
+The renderer package must contain `market_images.py`,
+`market_report_templates.py`, `deploy_market_images.py`, and the full
+`market_image_assets/` folder. Run the guarded installer dry run first:
+
+```sh
+python deploy_market_images.py --repo /home/kianirad2020/telegram_bot_repo --upgrade-renderer
+# Only after approval, inspection and successful dry run:
+python deploy_market_images.py --repo /home/kianirad2020/telegram_bot_repo --upgrade-renderer --apply
+```
+
+Existing publisher integration must match its exact known anchors. A mismatch
+must be reviewed; do not force it, reset the checkout, or overwrite local edits.
+An upgrade leaves the publisher bytes intact and backs up the renderer,
+additional module and every required asset. It does not activate image mode,
+restart a service, send a photo, or touch a history database.
+
+Live validation must still pass before image mode can be activated. If USDT
+reports `SAFETY usdt: BLOCKED`, keep it blocked; do not substitute fixtures or
+relax freshness, trading-state, source independence or quorum rules.
+
+## Safe rollback
+
+No production rollback is needed for an isolated review. For an installed image
+publisher, return the next scheduled reports to text by changing only the
+`ALANCHANDE_POST_FORMAT` setting in the protected environment. This explicit
+manual rollback snippet preserves other entries, saves a mode-0600 backup, and
+atomically replaces the file without printing credentials:
+
+```python
+from pathlib import Path
+from datetime import datetime
+import os
+import re
+import tempfile
+
+path = Path('/home/kianirad2020/telegram_bot_repo/channel_split/.env')
+original = path.read_text(encoding='utf-8')
+backup = path.with_name('.env.before-text-rollback-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+with backup.open('x', encoding='utf-8') as output:
+    output.write(original)
+backup.chmod(0o600)
+lines = [line for line in original.splitlines()
+         if not re.match(r'^\s*(?:export\s+)?ALANCHANDE_POST_FORMAT\s*=', line)]
+lines.append('ALANCHANDE_POST_FORMAT=text')
+with tempfile.NamedTemporaryFile('w', dir=path.parent, delete=False, encoding='utf-8') as output:
+    output.write('\n'.join(lines) + '\n')
+    temporary = Path(output.name)
+temporary.chmod(0o600)
+os.replace(temporary, path)
+print('Text publishing selected; other settings preserved')
+```
+
+For a template-code rollback, use the **specific backup directory printed by
+the installer**, after selecting text mode. Restore `market_images.py`,
+`market_report_templates.py` if that backup includes it, and the matching
+`market_image_assets/` contents together. Do not restore a publisher backup over
+later unrelated changes. Do not remove market databases, reset Git, alter the
+other bots, or change credentials/channel permissions.
+
+## Visual limitations
+
+The supplied AI-generated references have no exact typeface or layered/vector
+source. The licensed font, reconstructed skyline/coins/bars/watermark and SVG
+flags have small shape/spacing differences. Some historical mockup percentages
+must differ because their apparent period is not supported by the producer.
+Zero and missing movements remain semantically neutral. Sample values and
+timestamps are illustrative. Telegram can resize/recompress photos; acceptance
+must include the actual test-channel images, not just the original PNGs.

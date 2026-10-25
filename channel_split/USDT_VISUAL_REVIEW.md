@@ -1,8 +1,8 @@
 # USDT reference implementation and visual acceptance
 
-This change rebuilds only the USDT infographic. The remaining four templates
-retain their existing layouts until the USDT appearance is approved and their
-own original references are supplied.
+This document covers the USDT infographic implementation. The four additional
+reference templates are now covered in `IMAGE_POST_ROLLOUT.md`. Production
+activation still requires explicit visual approval.
 
 ## Reference assessment and implementation choice
 

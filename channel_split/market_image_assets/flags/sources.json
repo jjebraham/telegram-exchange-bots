@@ -1,0 +1,102 @@
+{
+  "us": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/us.svg",
+    "sha256": "e7be4240cf57987926673708f09233be1ab6bdf35acc7b86bd32a263f197a2a7"
+  },
+  "eu": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/eu.svg",
+    "sha256": "67040ccd286857e513262bc59a6825ea8520b3e6990e42f1075712c072460c09"
+  },
+  "gb": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/gb.svg",
+    "sha256": "c8be1e7208798a4ae692ee1e937065d498bb29e741943f6172b29118b8ed8066"
+  },
+  "ch": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/ch.svg",
+    "sha256": "ac676cd39d7032988598ef2dd73f6bebcd767738e3e469705d6a437835ac485c"
+  },
+  "ca": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/ca.svg",
+    "sha256": "345ec9dac057e203f1331b2d3f9f473789864edaee1182a26bc261356bcf72f1"
+  },
+  "au": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/au.svg",
+    "sha256": "cbb2206c5e59a25d79228306af973666a191e163f0ae337681f447977e6edb18"
+  },
+  "se": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/se.svg",
+    "sha256": "b3b5071e6c1d4a0e3db828bab5c7dfd68d0e90fcf3b25b15e9a2c4f96c1f79c9"
+  },
+  "no": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/no.svg",
+    "sha256": "ceea17af051dceefd5759a824213eb40ac8a8095aa88a6874a7bbc8de637357a"
+  },
+  "ru": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/ru.svg",
+    "sha256": "7100aaae51ff3b6a2bf0ca932b3bc518bdc760814725e7cca31d821a26c3dd7c"
+  },
+  "th": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/th.svg",
+    "sha256": "329cc0d520536d6eb4b9304105f23650c2d02bbdba8f8696e996dbf166de6f2e"
+  },
+  "sg": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/sg.svg",
+    "sha256": "25de9044c2e2775f7ccf9c1df02dd02342f915715b22c43248452b7ae24079a5"
+  },
+  "hk": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/hk.svg",
+    "sha256": "d9d142b2b97ec3b8190bff3802072c1b4f15573a679eead89a0ce59986dcad0c"
+  },
+  "az": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/az.svg",
+    "sha256": "33ad245b2125c36fbf0f863b0edd5c85cbef37587900e101db3a615870504502"
+  },
+  "dk": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/dk.svg",
+    "sha256": "d2847c0bd7a1fb97977ee51f2f618c5ebc5898dd66ef9804f187613c27bdca1a"
+  },
+  "ae": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/ae.svg",
+    "sha256": "3bc52a4aac7c6c68cd7c0a04013fa14f715abfe6958e7a6e3194f0793c9eb816"
+  },
+  "tr": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/tr.svg",
+    "sha256": "256a1d6afbedb9f731566982331a1cd1ad14aba211b8a61d338855879505e74f"
+  },
+  "cn": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/cn.svg",
+    "sha256": "981da9bdf82d48e31691f20578cefcb26cf7d0bd95e4ebd5c0df00bdfe988c1a"
+  },
+  "sa": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/sa.svg",
+    "sha256": "5738c8cfca5fea63587cbcf69237996c8ce6283f8016853150686f37311b620e"
+  },
+  "in": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/in.svg",
+    "sha256": "91185efa1a9b52cdc0e470712518efeefc4e4d6a6555bae9de997ba71885bb98"
+  },
+  "my": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/my.svg",
+    "sha256": "bb30e84a099d2d9dc286ab091bdd40ae7a8e332eb49827f2df4f11803e613667"
+  },
+  "af": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/af.svg",
+    "sha256": "313a7dd89f3d4bdceae673908ede1bca4a2f1aa0ea3562d8e96fe430d3b4c690"
+  },
+  "kw": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/kw.svg",
+    "sha256": "172a4281fdaf4b168471afcffc9e9ea277d6b5e54acc1a18b2f8ddc0a255cd7c"
+  },
+  "bh": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/bh.svg",
+    "sha256": "7a519f58c9007731d70a975a48cc81fcf516ab52ab972f9739eace370431e0c2"
+  },
+  "om": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/om.svg",
+    "sha256": "3204f5aa802cf3b2b782ba0ddfd798b42c0ba7c3125606245ac34bbb1cf26cc1"
+  },
+  "qa": {
+    "source": "https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/qa.svg",
+    "sha256": "fb955ef352ff3ba1ea980090c31d5cf15257729d32949d04b18402651e93b986"
+  }
+}

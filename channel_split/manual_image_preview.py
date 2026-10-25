@@ -39,7 +39,7 @@ def main() -> int:
     if not publisher.is_file():
         raise SystemExit("STOP: live publisher was not found")
     if args.sample:
-        from test_market_images import SAMPLES, SAMPLE_TIME
+        from test_market_images import SAMPLES, SAMPLE_TIMES
         approved_text = SAMPLES[args.kind]
         print("DESIGN DEMO: the prices below are illustrative, not live market data.")
     else:
@@ -67,7 +67,7 @@ def main() -> int:
     filename = f"{args.kind}-{'sample' if args.sample else 'live'}-manual.png"
     target = args.output or Path.home() / "alanchande-image-previews" / filename
     render_png(args.kind, approved_text, target, demo=args.sample,
-               now=SAMPLE_TIME if args.sample else None)
+               now=SAMPLE_TIMES[args.kind] if args.sample else None)
     print(f"Rendered: {target} ({target.stat().st_size:,} bytes)")
 
     if not args.send_test:

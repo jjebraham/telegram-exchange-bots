@@ -41,3 +41,16 @@ Vazirmatn is a reproducible, licensed approximation of the reference's unknown
 font. Its letterforms cannot be promised to be pixel-identical. The skyline,
 calendar, clock, summary icons, and Telegram symbol are simple original inline
 SVG reconstructions, not external font glyphs or downloaded proprietary assets.
+
+## Four additional report templates
+
+`flags/` contains the 25 required 4:3 SVG flags from the **flag-icons** project
+by Panayiotis Lipiridis, distributed under the MIT license included in
+`flags/LICENSE.txt`. Upstream source URLs and SHA-256 digests of the downloaded
+files are recorded in `flags/sources.json`. The renderer derives each filename
+from a canonical validated currency code; incoming flag emoji are ignored.
+Upstream: https://github.com/lipis/flag-icons
+
+Gold coins, gold bars, and the faint central circular A watermark are original
+inline SVG reconstructions in `market_report_templates.py`. They contain no
+market data or dates and require no additional icon font or asset license.
