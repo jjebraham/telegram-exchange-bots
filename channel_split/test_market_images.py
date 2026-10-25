@@ -102,5 +102,21 @@ class TemplateTests(unittest.TestCase):
                     self.assertGreater(target.stat().st_size, 5000)
 
 
+    def test_isolated_python_worker(self):
+        if __import__("os").environ.get("RENDER_PNG_TESTS") != "1":
+            self.skipTest("Enable RENDER_PNG_TESTS=1 for browser screenshots")
+        import os
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "iran-gold-worker.png"
+            with patch.dict(os.environ, {
+                "ALANCHANDE_RENDER_FORCE_WORKER": "1",
+                "ALANCHANDE_RENDER_PYTHON": sys.executable,
+            }):
+                render_png("iran-gold", SAMPLES["iran-gold"], target)
+            self.assertGreater(target.stat().st_size, 5000)
+
+
 if __name__ == "__main__":
     unittest.main()
