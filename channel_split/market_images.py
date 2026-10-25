@@ -6,6 +6,8 @@ from publish_channels.py. It cannot fetch rates or weaken the publisher's safety
 from __future__ import annotations
 
 from datetime import datetime
+from base64 import b64encode
+from functools import lru_cache
 from decimal import Decimal
 from html import escape, unescape
 from pathlib import Path
@@ -88,45 +90,59 @@ def _fa_num(raw: str, *, percent: bool = False) -> str:
     return escape(value)
 
 
+@lru_cache(maxsize=32)
+def _asset_data(filename: str) -> str:
+    """Embed local artwork so the renderer and its isolated worker stay offline."""
+    path = Path(__file__).with_name("market_image_assets") / filename
+    mime = "font/ttf" if path.suffix == ".ttf" else "image/png"
+    return f"data:{mime};base64," + b64encode(path.read_bytes()).decode("ascii")
+
+
 def _badge_icon(exchange: str) -> str:
-    # Stable, intentionally generic brand-color monograms, not counterfeit logos.
-    marks = {
-        "Wallex": ("#1477e8", "W"), "Nobitex": ("#6f42d4", "N"),
-        "Ramzinex": ("#232c76", "R"), "Bitpin": ("#0c9c65", "B"),
-        "Tabdeal": ("#f5ba21", "T"), "Exir": ("#1e72e8", "X"),
-        "AbanTether": ("#28aeb9", "A"), "Raastin": ("#079d71", "R"),
-    }
-    bg, glyph = marks[exchange]
-    fg = "#101b36" if exchange == "Tabdeal" else "#ffffff"
-    return (
-        '<span class="exchange-badge" aria-hidden="true" '
-        f'style="background:{bg};color:{fg}">{glyph}</span>'
-    )
+    # Approved-reference artwork; provenance and name-only fallback are documented.
+    filename = exchange.lower() + ".png"
+    if not (Path(__file__).with_name("market_image_assets") / filename).is_file():
+        return ""
+    return f'<img class="exchange-logo" src="{_asset_data(filename)}" alt="" aria-hidden="true">'
+
+
+def _usdt_percent(raw: str) -> str:
+    if raw == "—":
+        return '<span class="muted num">—</span>'
+    value = raw.replace("−", "-")
+    style = "up" if value.startswith("+") else "down" if value.startswith("-") else "muted"
+    sign = value[0] if value.startswith(("+", "-")) else ""
+    magnitude = value[len(sign):].removesuffix("%")
+    # Separate isolated runs prevent RTL punctuation from moving the sign/percent.
+    return (f'<span class="{style} num percentage" dir="ltr">'
+            f'<span class="sign">{escape(sign.replace("-", "−"))}</span>'
+            f'<span>{_fa_num(magnitude, percent=True)}</span><span>٪</span></span>')
 
 
 def _usdt(text: str) -> str:
-    """Build the illustrated poster using the ALREADY VALIDATED publisher values."""
+    """Read publisher BUY/SELL values in their existing positional convention.
+
+    The upstream pre header says SELL/BUY, but its first value is buy_toman
+    (the customer's purchase) and second is sell_toman. Never swap/recalculate.
+    """
     pattern = re.compile(rf"^(.+?)\s+({RATE})\s+({RATE})\s+({PCT})\s+({PCT})$")
-    rows = []
+    rows, seen = [], set()
     for line in _pre(text):
         match = pattern.fullmatch(line)
         if not match:
             raise ValueError(f"Malformed USDT row: {line!r}")
         name, buy, sell, day, month = match.groups()
-        if name not in EXCHANGES:
-            raise ValueError(f"Unrecognized exchange: {name}")
-        formatted = []
-        for value in (day, month):
-            style = "up" if value.startswith("+") else "down" if value.startswith(("-", "−")) else "muted"
-            formatted.append(f'<span class="{style} num" dir="ltr">{_fa_num(value, percent=True)}</span>')
+        if name not in EXCHANGES or name in seen:
+            raise ValueError(f"Unknown or repeated exchange: {name}")
+        seen.add(name)
         rows.append(
-            '<tr><td><div class="exchange-name">'
+            f'<tr data-exchange="{name}"><td><div class="exchange-name">'
             f'{_badge_icon(name)}<strong>{escape(EXCHANGES[name])}</strong></div></td>'
             f'<td><span class="buy num" dir="ltr">{_fa_num(buy)}</span></td>'
             f'<td><span class="sell num" dir="ltr">{_fa_num(sell)}</span></td>'
-            f'<td>{formatted[0]}</td><td>{formatted[1]}</td></tr>'
+            f'<td>{_usdt_percent(day)}</td><td>{_usdt_percent(month)}</td></tr>'
         )
-    if not 5 <= len(rows) <= 12:
+    if not 5 <= len(rows) <= len(EXCHANGES):
         raise ValueError("USDT source count outside expected range")
     table = (
         '<section class="usdt-table"><table><thead><tr>'
@@ -135,35 +151,41 @@ def _usdt(text: str) -> str:
         '</tr></thead><tbody>' + "".join(rows) + '</tbody></table></section>'
     )
     summaries = []
-    configs = (
-        ("میانگین قیمت خرید", "avg-buy", "▥"),
-        ("میانگین قیمت فروش", "avg-sell", "▥"),
-        ("کمترین قیمت خرید", "lowest-buy", "↘"),
-        ("بیشترین قیمت فروش", "highest-sell", "↗"),
-    )
-    for label, variant, symbol in configs:
+    for label, variant in (
+        ("میانگین قیمت خرید", "avg-buy"),
+        ("میانگین قیمت فروش", "avg-sell"),
+        ("کمترین قیمت خرید", "lowest-buy"),
+        ("بیشترین قیمت فروش", "highest-sell"),
+    ):
         match = re.search(
-            rf"{re.escape(label)}:\s*(?:<b>([^<]+)</b>\s*)?<code>([^<]+)</code>",
-            text,
-        )
-        if not match:
-            raise ValueError(f"Missing approved USDT summary: {label}")
-        exchange, price = match.groups()
-        source_label = EXCHANGES.get(exchange, exchange) if exchange else ""
-        unit = '<span class="unit">تومان</span>'
-        brand = f'<span class="summary-brand">{escape(source_label)}</span>' if source_label else ""
+            rf"{re.escape(label)}:\s*(?:<b>([^<]+)</b>\s*)?<code>([^<]+)</code>", text)
+        if match:
+            exchange, price = match.groups()
+            if not re.fullmatch(RATE, price):
+                raise ValueError(f"Malformed USDT summary: {label}")
+            if exchange:
+                # Real publisher summaries use Persian names; table rows use
+                # Latin display codes. Normalize names, never their values.
+                key = exchange.replace("\u200c", "").replace(" ", "")
+                exchange = next((code for code, name in EXCHANGES.items()
+                                 if key in {code, name.replace("\u200c", "").replace(" ", "")}), None)
+                if exchange not in seen:
+                    raise ValueError("USDT summary names an exchange absent from the table")
+        else:
+            # Upstream legitimately omits sell summaries when sell data is absent.
+            if variant in {"avg-buy", "lowest-buy"}:
+                raise ValueError(f"Missing approved USDT summary: {label}")
+            exchange, price = None, "—"
+        brand = f'<span class="summary-brand">{escape(EXCHANGES[exchange])}</span>' if exchange else ""
+        icon = SUMMARY_BARS if variant.startswith("avg") else SUMMARY_DOWN if variant == "lowest-buy" else SUMMARY_UP
         summaries.append(
             f'<div class="usdt-summary {variant}">'
             f'<div class="summary-label">{escape(label)}</div>'
-            f'<div class="summary-price"><span class="num" dir="ltr">{_fa_num(price)}</span>{unit}</div>'
-            f'<span class="summary-icon" aria-hidden="true">{symbol}</span>{brand}</div>'
-        )
-    # RTL CSS grid displays item 1 at right, item 2 at left, matching the design.
-    return (
-        '<div class="usdt-body">' + table
-        + '<section class="usdt-summary-grid">' + "".join(summaries)
-        + '</section></div>'
-    )
+            f'<div class="summary-price"><span class="num" dir="ltr">{_fa_num(price)}</span>'
+            '<span class="unit">تومان</span></div>'
+            f'<span class="summary-icon" aria-hidden="true">{icon}</span>{brand}</div>')
+    return ('<div class="usdt-body">' + table
+            + '<section class="usdt-summary-grid">' + "".join(summaries) + '</section></div>')
 
 
 
@@ -289,107 +311,149 @@ td:first-child,th:first-child{width:28%;text-align:right;padding-right:18px}
 """
 
 
-# Dedicated illustrated look for the USDT report. Other four layouts stay unchanged.
-USDT_TETHER_ICON = """<svg class="tether-icon" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"
-  aria-hidden="true"><defs><linearGradient id="coin" x1="0" y1="0" x2="1" y2="1">
-  <stop stop-color="#54dac3"/><stop offset="1" stop-color="#04977f"/></linearGradient></defs>
-  <circle cx="60" cy="60" r="52" fill="url(#coin)" stroke="#0d927b" stroke-width="3"/>
-  <circle cx="60" cy="60" r="43" fill="none" stroke="#91f2de" stroke-opacity=".65" stroke-width="2"/>
-  <path d="M30 34 H90 V47 H68 V66 C83 65 92 62 96 60 V71 C88 75 76 77 68 77 V93 H52 V77 C42 77 31 75 23 71 V60 C31 64 41 65 52 66 V47 H30Z"
-   fill="#fff"/><ellipse cx="60" cy="66" rx="36" ry="8" stroke="white" stroke-width="4" fill="none"/>
-</svg>"""
+# Decorative SVGs contain no market values. All text and data remain HTML.
+SUMMARY_BARS = '<svg viewBox="0 0 48 48"><rect x="9" y="28" width="7" height="14" rx="2"/><rect x="21" y="17" width="7" height="25" rx="2"/><rect x="33" y="6" width="7" height="36" rx="2"/></svg>'
+SUMMARY_UP = '<svg viewBox="0 0 48 48"><path d="M9 37l12-15 8 6L40 12M26 12h14v14" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+SUMMARY_DOWN = '<svg viewBox="0 0 48 48"><path d="M12 9l25 30M23 39h14V25" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+USDT_CLOCK = '<svg viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="23" fill="none" stroke="#cdd9ff" stroke-width="4"/><circle cx="26" cy="26" r="19" fill="none" stroke="#fff" stroke-opacity=".5"/><path d="M26 11v15l10 9" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/></svg>'
+USDT_CAL = '<svg viewBox="0 0 42 48" aria-hidden="true"><defs><linearGradient id="calendar" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#b7cbff"/></linearGradient></defs><rect x="3" y="8" width="36" height="37" rx="5" fill="url(#calendar)"/><rect x="8" y="19" width="26" height="21" rx="1" fill="#3541b3"/><path d="M12 4v10M30 4v10" stroke="#dce7ff" stroke-width="5" stroke-linecap="round"/><path d="M12 24h3m4 0h3m4 0h3M12 30h3m4 0h3m4 0h3M12 36h3m4 0h3m4 0h3" stroke="#fff" stroke-width="3"/></svg>'
+USDT_INFO = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="white"/><path d="M12 10v8M12 5v2" stroke="#4446c4" stroke-width="3"/></svg>'
+USDT_TELEGRAM = '<svg class="telegram-mark" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="tg" x2="0" y2="1"><stop stop-color="#44c8ec"/><stop offset="1" stop-color="#1589c4"/></linearGradient></defs><circle cx="32" cy="32" r="31" fill="url(#tg)"/><path d="M12 30l38-15-7 36-13-10-7 6 1-12 18-13-22 10z" fill="white"/><path d="M24 35l18-13-13 18-6 7z" fill="#b0e4f5"/></svg>'
+USDT_HEADER_DECOR = '''<svg class="header-landscape" viewBox="0 0 440 130" aria-hidden="true">
+<defs><pattern id="windows" width="7" height="9" patternUnits="userSpaceOnUse"><path d="M2 1v3" stroke="#6670d4" stroke-width="1.8"/></pattern></defs>
+<path d="M4 130v-24h22v24h16V80h23v50h27V94h22v36h12V76h26v54h17V88h26v42h15V65h12v65h14v-29h21v29h7V92h26v38h13V80h8V65h17v65h17v-21h26v21h16v-12h24v12z" fill="#172780"/>
+<path d="M43 80h22v50H43zm83-4h26v54h-26zm44 12h25v42h-25zm94 4h26v38h-26zm39-12h8V65h17v65h-25z" fill="url(#windows)"/>
+<path d="M217 130V67l-10-12 15-19 15 19-10 12v63z" fill="#172780"/>
+<path d="M222 36V5M208 55h28M211 50h22M214 45h16M217 40h10" stroke="#172780" stroke-width="1.3"/>
+</svg>'''
 
-USDT_HEADER_DECOR = """<div class="header-landscape" aria-hidden="true">
- <span class="tower"></span><span class="building b1"></span><span class="building b2"></span>
- <span class="building b3"></span><span class="building b4"></span><span class="building b5"></span>
- </div>"""
-USDT_CLOCK = """<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="12" fill="none" stroke="currentColor" stroke-width="2.4"/>
-<path d="M16 8v9l6 4" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round"/></svg>"""
-USDT_CAL = """<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="7" width="22" height="20" rx="3" stroke="currentColor" stroke-width="2.4" fill="none"/>
-<path d="M5 13h22M11 4v7M21 4v7" stroke="currentColor" stroke-width="2.3"/>
-<rect x="11" y="17" width="4" height="4" rx="1" fill="currentColor"/></svg>"""
+
+def _font_css() -> str:
+    return ('@font-face{font-family:AlanVazir;src:url("' + _asset_data('vazirmatn.ttf')
+            + '") format("truetype");font-weight:100 900;font-display:block}')
+
+
+def _validate_layout(page) -> None:
+    """Fail closed before a photo is sent if any USDT dynamic field is clipped."""
+    if not page.locator('.canvas.usdt').count():
+        return
+    errors = page.evaluate('''() => {
+      const errors=[];
+      const canvas=document.querySelector('.canvas').getBoundingClientRect();
+      for(const e of document.querySelectorAll('.usdt th,.usdt td,.summary-label,.summary-price,.summary-brand,.header-date,.header-time,.title h1,.subtitle,.footer,.demo-label,.usdt .num')) {
+        const r=e.getBoundingClientRect();
+        const clipped=['hidden','clip'].includes(getComputedStyle(e).overflowY);
+        if(r.left<canvas.left-.5 || r.right>canvas.right+.5 || r.bottom>canvas.bottom+.5 || e.scrollWidth>e.clientWidth+1 || (clipped && e.scrollHeight>e.clientHeight+1)) errors.push(e.className || e.tagName);
+        const card=e.closest('.usdt-summary');
+        if(card && e!==card) {
+          const c=card.getBoundingClientRect();
+          if(r.left<c.left || r.right>c.right || r.top<c.top || r.bottom>c.bottom) errors.push('summary field outside card');
+        }
+      }
+      const body=document.querySelector('.usdt-body').getBoundingClientRect();
+      const footer=document.querySelector('.footer').getBoundingClientRect();
+      if(body.bottom>footer.top) errors.push('body overlaps footer');
+      for(const image of document.images) if(!image.complete || !image.naturalWidth) errors.push('missing artwork');
+      if(!document.fonts.check('900 40px AlanVazir')) errors.push('missing Persian font');
+      return errors;
+    }''')
+    if errors:
+        raise RuntimeError('USDT layout overflow or missing asset: ' + ', '.join(errors))
+
+
+def _fit_dynamic_fields(page) -> None:
+    """Allow unusually long approved values without changing their characters."""
+    page.evaluate('''() => {
+      for(const e of document.querySelectorAll('.usdt-table td .num,.usdt-summary .summary-price .num')) {
+        const container=e.closest('td') || e.parentElement;
+        const style=getComputedStyle(container);
+        let available=container.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+        if(!e.closest('td')) available-=container.querySelector('.unit').getBoundingClientRect().width+parseFloat(style.gap);
+        const width=e.getBoundingClientRect().width;
+        if(width>available) e.style.fontSize=(parseFloat(getComputedStyle(e).fontSize)*available/width-.5)+'px';
+      }
+    }''')
+
 
 USDT_CSS = """
-/* Specific illustration design, based on approved AlanChande sample. */
-.usdt.canvas{background:#fff}
-.usdt .header{background:linear-gradient(112deg,#3249c1,#4b39b4 75%,#4f45bb);
- height:123px;font-size:33px;position:relative;isolation:isolate;overflow:hidden;
- padding:0 40px}
-.usdt .header>.header-date,.usdt .header>.header-time{z-index:2;display:flex;align-items:center;gap:14px;white-space:nowrap}
-.usdt .header .time{font-size:50px;font-weight:900;color:#ffe47a;direction:ltr;unicode-bidi:isolate}
-.usdt .header small{font-size:25px}
-.usdt .header svg{height:42px;width:42px;color:#f3f4ff;flex-shrink:0}
-.usdt .header-landscape{position:absolute;inset:5px 250px 0;opacity:.19;z-index:0;pointer-events:none}
-.usdt .header-landscape .building{position:absolute;bottom:0;width:54px;background:#17236b}
-.usdt .header-landscape .b1{height:28px;right:3%}.usdt .header-landscape .b2{height:43px;right:20%}
-.usdt .header-landscape .b3{height:35px;left:12%}.usdt .header-landscape .b4{height:30px;left:35%}
-.usdt .header-landscape .b5{height:55px;left:46%}
-.usdt .header-landscape .tower{position:absolute;bottom:0;left:52%;height:94px;width:9px;background:#17236b}
-.usdt .header-landscape .tower:before{content:"";position:absolute;top:17px;left:-18px;width:46px;height:18px;border-radius:55% 55% 35% 35%;background:#17236b}
-.usdt .header-landscape .tower:after{content:"";position:absolute;top:-4px;left:3px;border-left:2px solid #17236b;height:20px}
-.usdt .stripe{height:10px;background:linear-gradient(90deg,#f4837b 0 51%,#7bdde2 51%)}
-.usdt .title{min-height:166px;padding:20px 38px;border-bottom:3px solid #5448cc;gap:14px}
-.usdt .title .subtitle{font-size:25px;color:#5a5874;white-space:nowrap}
-.usdt .title .hero-group{display:flex;align-items:center;gap:10px;direction:rtl}
-.usdt .title h1{font-size:57px;line-height:1.55;font-weight:900;border:0;padding:0;
-background:linear-gradient(90deg,#111034,#4238b7 50%,#6656e2);
-color:transparent;-webkit-background-clip:text;background-clip:text;white-space:nowrap}
-.usdt .tether-icon{width:112px;height:112px;flex-shrink:0;filter:drop-shadow(0 5px 4px #9bbfb85f)}
-.usdt .main{padding:22px 21px 18px;display:block;position:relative}
-.usdt .main:before{content:"";position:absolute;inset:110px 170px 230px;border:35px solid #4e45c4;
-border-radius:50%;opacity:.026;pointer-events:none}
-.usdt .usdt-body{position:relative;z-index:1;display:flex;flex-direction:column;gap:21px}
-.usdt-table table{table-layout:fixed;border:2px solid #dde2f4;border-radius:21px;border-spacing:0;overflow:hidden}
-.usdt-table th{font-size:23px;font-weight:800;color:#454364;background:#eff0fb;height:73px;padding:11px 8px}
-.usdt-table th:first-child,.usdt-table td:first-child{width:24%;padding-right:26px;text-align:right}
-.usdt-table th:nth-child(2),.usdt-table th:nth-child(3){width:18%}
-.usdt-table th:nth-child(4),.usdt-table th:nth-child(5){width:20%}
-.usdt-table td{height:86px;padding:8px 5px;font-size:30px;font-weight:900;border-bottom:1px solid #e1e5f4}
-.usdt-table td:first-child{padding-right:18px}
-.usdt-table tbody tr:nth-child(2n) td{background:#fff}
-.usdt-table tbody tr:nth-child(2n+1) td{background:#fff}
-.usdt-table .exchange-name{display:flex;align-items:center;gap:13px;font-size:25px}
-.usdt-table .exchange-name strong{font-weight:900;white-space:nowrap}
-.usdt-table .exchange-badge{width:45px;height:45px;border-radius:11px;display:grid;place-items:center;
- font:900 25px Arial,sans-serif;box-shadow:0 3px 6px #18324a1c;flex-shrink:0}
-.usdt-table .num{display:inline-block;unicode-bidi:isolate;font-family:"Noto Sans Arabic","DejaVu Sans",sans-serif;
- font-weight:900;white-space:nowrap;font-size:31px;letter-spacing:-.3px}
-.usdt-table .buy{color:#ce0a35}.usdt-table .sell{color:#151537}
-.usdt-table .up{color:#007c39}.usdt-table .down{color:#ce143a}.usdt-table .muted{color:#9394a7}
-.usdt-summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;direction:rtl}
-.usdt-summary{height:156px;position:relative;border-radius:19px;border:2px solid #dce3fd;
- background:linear-gradient(115deg,#f0f4ff,#fbfcff);padding:18px 24px 12px 18px;overflow:hidden}
-.usdt-summary .summary-label{font-size:24px;font-weight:750;color:#4a4467}
-.usdt-summary .summary-price{display:flex;align-items:baseline;justify-content:flex-start;gap:14px;margin-top:2px}
-.usdt-summary .summary-price .num{font:900 49px "Noto Sans Arabic","DejaVu Sans",sans-serif;color:#14163c}
-.usdt-summary .unit{font-size:20px;color:#3e3a60}
-.usdt-summary .summary-icon{position:absolute;left:21px;top:20px;width:58px;height:58px;border-radius:50%;
-display:grid;place-items:center;font-size:38px;font-weight:900;background:#dce7ff;color:#444cc6}
-.usdt-summary .summary-brand{position:absolute;left:24px;bottom:16px;font-size:20px;font-weight:750;color:#1a7247}
-.usdt-summary.avg-buy,.usdt-summary.lowest-buy{background:linear-gradient(110deg,#fff0f4,#fffafb);border-color:#ffc8da}
-.usdt-summary.avg-buy .summary-icon,.usdt-summary.lowest-buy .summary-icon{background:#ffc9d7;color:#d01643}
-.usdt-summary.avg-buy .summary-price .num,.usdt-summary.lowest-buy .summary-price .num{color:#ce0d38}
-.usdt-summary.highest-sell{background:linear-gradient(100deg,#ecfff5,#fafffd);border-color:#b7e8cd}
-.usdt-summary.highest-sell .summary-icon{background:#b6ecd0;color:#087a45}
-.usdt-summary.highest-sell .summary-price .num{color:#087a45}
-.usdt .footer{height:92px;background:linear-gradient(100deg,#3449c4,#4b3ab8);font-size:21px;padding:0 42px}
-.usdt .footer b{font-size:30px}
-.usdt .footer .telegram-mark{width:35px;height:35px;border-radius:50%;display:inline-grid;place-items:center;
-background:#23a9dc;font-size:24px;color:#fff}
-.usdt .footer .handle{display:flex;align-items:center;gap:12px;direction:ltr}
+.usdt.canvas{font-family:AlanVazir,sans-serif;color:#10113c;background:white}
+.usdt>.stripe{display:none}
+.usdt .header{height:132px;position:relative;isolation:isolate;overflow:hidden;padding:12px 58px 0;
+ background:linear-gradient(100deg,#657efb,#4a7df0);font-size:36px;font-weight:800;line-height:1.3}
+.usdt .header:before{content:"";position:absolute;z-index:-1;inset:11px 12px 0;border-radius:28px 28px 18px 18px;
+ background:linear-gradient(110deg,#3436b2,#2846af 55%,#3639b3)}
+.usdt .header>.header-date,.usdt .header>.header-time{position:relative;z-index:2;display:flex;align-items:center;gap:18px;white-space:nowrap}
+.usdt .header .time{font-size:54px;font-weight:900;color:#ffdb60;direction:ltr;unicode-bidi:isolate}
+.usdt .header-time{direction:ltr;flex-direction:row;border-right:2px solid #ffffff65;padding-right:38px}
+.usdt .header-time .time{order:1}.usdt .header-time small{order:2}.usdt .header-time svg{order:0}
+.usdt .header small{font-size:31px;font-weight:750;color:white}
+.usdt .header svg{height:48px;width:48px;flex-shrink:0}
+.usdt .header svg.header-landscape{position:absolute;z-index:0;width:440px;height:132px;left:385px;bottom:0;opacity:.28}
+.usdt .title{height:186px;min-height:186px;border:0;padding:0 25px 0 36px;display:grid;grid-template-columns:176px 1fr 166px;gap:12px;align-items:center}
+.usdt .hero-group{display:contents}
+.usdt .title h1{font-size:64px;line-height:1.5;font-weight:900;border:0;padding:0;margin:0 -1% 0 0;width:102%;transform:scaleX(.98);letter-spacing:-2.7px;white-space:nowrap;color:#10113c;text-align:center}
+.usdt .title h1 span{font-size:80px;background:linear-gradient(0deg,#3334b6,#5b59e3);background-clip:text;color:transparent}
+.usdt .title .subtitle{font-size:26px;font-weight:750;color:#4d4c77;align-self:center;position:relative;padding-bottom:18px;white-space:nowrap}
+.usdt .title .subtitle:after{content:"";width:78px;height:5px;position:absolute;bottom:0;left:0;background:#7d72ff;border-radius:3px}
+.usdt .tether-icon{width:188px;height:170px;object-fit:contain;justify-self:end}
+.usdt .main{padding:0 20px 20px;display:block;flex:1;min-height:0}
+.usdt .usdt-body{display:flex;flex-direction:column;gap:22px}
+.usdt-table table{border:2px solid #e2e3f5;border-radius:20px;table-layout:fixed;overflow:hidden}
+.usdt-table th{height:72px;font-size:28px;font-weight:800;color:#222151;background:linear-gradient(110deg,#eff0fc,#eaeaf7);padding:8px 4px;line-height:1.4;white-space:nowrap}
+.usdt-table th:first-child,.usdt-table td:first-child{width:22%;padding-right:24px;text-align:right}
+.usdt-table th:not(:first-child){width:19.5%}
+.usdt-table td{height:90px;padding:6px 4px;border-bottom:1px solid #dedff0;background:white;line-height:1.4}
+.usdt-table tr:nth-child(even) td{background:#fff}
+.usdt-table .exchange-name{display:flex;align-items:center;gap:16px;font-size:33px;font-weight:850;white-space:nowrap}
+.usdt-table .exchange-name strong{font-weight:850}
+.usdt-table .exchange-logo{width:61px;height:61px;object-fit:contain;flex-shrink:0}
+.usdt .num{font-family:AlanVazir,sans-serif;font-weight:900;white-space:nowrap;unicode-bidi:isolate;display:inline-block}
+.usdt-table .num{font-size:44px;letter-spacing:-.8px}
+.usdt-table .percentage{font-size:41px;display:inline-flex;direction:ltr;align-items:baseline;gap:0;letter-spacing:-1px}
+.usdt-table .buy{color:#db0632}.usdt-table .sell{color:#10113c}
+.usdt-table .up{color:#008036}.usdt-table .down{color:#e30a33}.usdt-table .muted{color:#737197}
+.usdt-summary-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:165px 165px;gap:20px 24px;direction:rtl}
+.usdt-summary{position:relative;border-radius:18px;border:1.5px solid #cbd9ff;background:linear-gradient(110deg,#eff3ff,#f9faff);padding:22px 26px;overflow:visible;color:#181a65}
+.usdt-summary .summary-label{font-size:27px;font-weight:800;color:#454374;text-align:center;margin:8px 80px 0 10px;line-height:1.4;white-space:nowrap}
+.usdt-summary .summary-price{position:absolute;bottom:19px;left:32px;right:132px;display:flex;direction:rtl;align-items:baseline;justify-content:center;gap:14px;line-height:1.15;white-space:nowrap}
+.usdt-summary .summary-price .num{font-size:67px;letter-spacing:-1.4px;flex-shrink:0}
+.usdt-summary .unit{font-size:25px;font-weight:700;color:#454374}
+.usdt-summary .summary-icon{position:absolute;left:29px;top:20px;width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(120deg,#dfe7ff,#d6dfff);color:#4c4de0}
+.usdt-summary .summary-icon svg{width:43px;height:43px;fill:currentColor}
+.usdt-summary .summary-brand{position:absolute;right:40px;bottom:26px;font-size:27px;font-weight:850;line-height:1.4;white-space:nowrap}
+.usdt-summary.avg-buy,.usdt-summary.lowest-buy{background:linear-gradient(110deg,#fff0f4,#fff8fa);border-color:#ffbdd1;color:#db0632}
+.usdt-summary.avg-buy .summary-icon,.usdt-summary.lowest-buy .summary-icon{background:linear-gradient(120deg,#ffd5df,#ffbfce);color:#df0038}
+.usdt-summary.highest-sell{background:linear-gradient(110deg,#effbf5,#f7fcf9);border-color:#b0e7c8;color:#007b35}
+.usdt-summary.highest-sell .summary-icon{background:linear-gradient(120deg,#d6f6e4,#b9ebce);color:#00813c}
+.usdt-summary.lowest-buy .summary-price,.usdt-summary.highest-sell .summary-price{right:164px;left:30px}
+.usdt .footer{height:84px;background:linear-gradient(110deg,#333ac4,#3b3cb6);padding:0 44px;font-size:21px;border-top:3px solid #a6a7ef;flex-shrink:0;font-weight:450}
+.usdt .footer b{font:500 27px Arial,sans-serif;color:white}
+.usdt .footer .telegram-mark{width:58px;height:58px;flex-shrink:0}
+.usdt .footer .handle{display:flex;direction:ltr;align-items:center;gap:16px;border-right:1px solid #ffffff60;padding-right:35px}
+.usdt .footer .disclaimer{display:flex;align-items:center;gap:12px}
+.usdt .footer .disclaimer svg{width:23px;height:23px;order:1;flex-shrink:0}
 """
+
 
 def html_for_post(kind: str, text: str, *, now: datetime | None = None) -> str:
     if kind not in SUPPORTED_MARKETS:
         raise ValueError(f"Unsupported image template: {kind}")
     tz = "Asia/Tehran" if kind in {"usdt","iran-fx","iran-gold"} else "Europe/Istanbul"
+    supplied_time = now is not None
+    if now is not None and now.tzinfo is None:
+        raise ValueError("An explicit rendering timestamp must include its timezone")
     now = now.astimezone(ZoneInfo(tz)) if now else datetime.now(ZoneInfo(tz))
     date = _jalali(now).translate(PERSIAN_DIGITS)
     time = now.strftime("%H:%M").translate(PERSIAN_DIGITS)
+    if kind == "usdt" and not supplied_time:
+        publisher_clock = re.search(r"🕒\s*<code>((?:[01]\d|2[0-3]):[0-5]\d)</code>\s*تهران", text)
+        # The production publisher supplies its own timestamp. Missing data is
+        # never presented as a newly observed market time.
+        time = publisher_clock.group(1).translate(PERSIAN_DIGITS) if publisher_clock else "—"
     city = "تهران" if tz == "Asia/Tehran" else "استانبول"
     content = {"usdt":_usdt,"iran-fx":_iran_fx,"iran-gold":_iran_gold,
                "turkey-gold":_turkey_gold,"fx-pulse":_pulse}[kind](text)
-    heights = {"usdt":1500,"iran-fx":1580,"iran-gold":1280,"turkey-gold":1280,"fx-pulse":1180}
+    heights = {"usdt":1500 + 90 * (content.count('data-exchange=') - 7),"iran-fx":1580,"iran-gold":1280,"turkey-gold":1280,"fx-pulse":1180}
     subtitle = {"usdt":"ارقام به تومان","iran-fx":"ارقام به تومان",
                 "iran-gold":"قیمت بازار · ارقام به تومان",
                 "turkey-gold":"بازار Kapalıçarşı · لیر ترکیه",
@@ -402,20 +466,21 @@ def html_for_post(kind: str, text: str, *, now: datetime | None = None) -> str:
             f'<small>{city}</small>{USDT_CLOCK}</span></header>'
         )
         heading = (
-            f'<section class="title"><div class="hero-group">{USDT_TETHER_ICON}'
-            f'<h1>{escape(TITLES[kind])}</h1></div>'
+            f'<section class="title"><div class="hero-group"><img class="tether-icon" '
+            f'src="{_asset_data("tether-art.png")}" alt="">'
+            '<h1><span>قیمت تتر</span> در صرافی‌های ایران</h1></div>'
             f'<div class="subtitle">{escape(subtitle)}</div></section>'
         )
         footer = (
-            '<span>ⓘ قیمت‌ها صرفاً جهت اطلاع‌رسانی است.</span>'
-            '<span class="handle"><span class="telegram-mark">➤</span>'
+            f'<span class="disclaimer">{USDT_INFO}قیمت‌ها صرفاً جهت اطلاع‌رسانی است.</span>'
+            f'<span class="handle">{USDT_TELEGRAM}'
             '<b dir="ltr">@alanchande_com</b></span>'
         )
     else:
         head = f'<header class="header"><span>{escape(date)}</span><span class="time">{escape(time)} <small>{city}</small></span></header>'
         heading = f'<section class="title"><h1>{escape(TITLES[kind])}</h1><div class="subtitle">{escape(subtitle)}</div></section>'
         footer = '<span>قیمت‌ها صرفاً جهت اطلاع‌رسانی است.</span><b dir="ltr">@alanchande_com</b>'
-    stylesheet = CSS + (USDT_CSS if kind == "usdt" else "")
+    stylesheet = CSS + (_font_css() + USDT_CSS if kind == "usdt" else "")
     return (f'<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><style>'
             f':root{{--height:{heights[kind]}px}}{stylesheet}</style></head><body><div class="canvas {kind}">'
             f'{head}<div class="stripe"></div>{heading}<main class="main">'
@@ -438,32 +503,37 @@ def _screenshot_html(html: str, target: Path) -> None:
         )
         try:
             page = browser.new_page(
-                viewport={"width": 1200, "height": 1700}, device_scale_factor=1
+                viewport={"width": 1200, "height": 1700},
+                device_scale_factor=2 if 'class="canvas usdt"' in html else 1,
             )
+            page.route("**/*", lambda route: route.abort())
             page.set_content(html, wait_until="load")
             page.evaluate("document.fonts.ready")
+            page.evaluate("""() => Promise.all([...document.images].map(i => i.decode()))""")
+            _fit_dynamic_fields(page)
+            _validate_layout(page)
             page.locator(".canvas").screenshot(path=str(target))
         finally:
             browser.close()
 
 
-def render_png(kind: str, approved_text: str, output: Path | str, *, demo: bool = False) -> Path:
+def render_png(kind: str, approved_text: str, output: Path | str, *, demo: bool = False, now: datetime | None = None) -> Path:
     """Render a verified rate card. Keep publisher's system Python unchanged."""
     import importlib.util
     import subprocess
     import sys
 
-    html = html_for_post(kind, approved_text)
+    html = html_for_post(kind, approved_text, now=now)
     if demo:
         # A visible test-only disclaimer inside image bytes; cannot be mistaken
         # for a live-price screenshot when forwarded without its Telegram caption.
         html = html.replace(
             "</style>",
-            """.canvas{position:relative}.canvas:after{content:'نمونه آزمایشی — قیمت‌ها واقعی نیستند';
-            position:absolute;z-index:999;bottom:94px;left:0;right:0;background:#9b1c1c;
-            padding:13px;text-align:center;color:white;font-size:29px;font-weight:900}</style>""",
-            1,
-        )
+            ".canvas{height:calc(var(--height) + 40px)}"
+            ".demo-label{height:40px;flex-shrink:0;background:#9b1c1c;color:#fff;"
+            "text-align:center;font-size:23px;line-height:40px;font-weight:800}</style>", 1)
+        html = re.sub(r'(<div class="canvas [^\"]+">)',
+                      r'\1<div class="demo-label">نمونه آزمایشی — قیمت‌ها واقعی نیستند</div>', html, count=1)
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     if importlib.util.find_spec("playwright") and os.environ.get("ALANCHANDE_RENDER_FORCE_WORKER") != "1":

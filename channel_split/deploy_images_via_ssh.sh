@@ -15,6 +15,8 @@ ssh -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes "$remote" \
 scp -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes \
   channel_split/market_images.py channel_split/deploy_market_images.py channel_split/test_market_images.py \
   "$remote":alanchande-image-stage/
+scp -r -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes \
+  channel_split/market_image_assets "$remote":alanchande-image-stage/
 ssh -i "$HOME/.ssh/alanchande_deploy" -o StrictHostKeyChecking=yes "$remote" bash -se <<'REMOTE'
 set -euo pipefail
 cd "$HOME"
@@ -23,8 +25,8 @@ image_python="$HOME/.venvs/alanchande-images/bin/python"
 test -x "$image_python" || { echo "Missing image-renderer Python venv" >&2; exit 1; }
 "$image_python" -c 'import playwright.sync_api'
 test -x /usr/bin/chromium || { echo "Missing /usr/bin/chromium" >&2; exit 1; }
-/usr/bin/python3 alanchande-image-stage/deploy_market_images.py
-/usr/bin/python3 alanchande-image-stage/deploy_market_images.py --apply
+/usr/bin/python3 alanchande-image-stage/deploy_market_images.py --upgrade-renderer
+/usr/bin/python3 alanchande-image-stage/deploy_market_images.py --upgrade-renderer --apply
 cd "$HOME/telegram_bot_repo/channel_split"
 mkdir -p "$HOME/alanchande-image-previews"
 export ALANCHANDE_IMAGE_PREVIEW_DIR="$HOME/alanchande-image-previews"

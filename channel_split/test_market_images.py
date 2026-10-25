@@ -7,9 +7,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import sys
 import unittest
+import re
+from decimal import Decimal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from market_images import SUPPORTED_MARKETS, html_for_post, render_png, _jalali
+from market_images import SUPPORTED_MARKETS, html_for_post, render_png, _jalali, _fa_num, _usdt_percent
+
+SAMPLE_TIME = datetime(2026, 10, 25, 21, 30, tzinfo=ZoneInfo("Asia/Tehran"))
 
 
 SAMPLES = {
@@ -76,13 +80,114 @@ class TemplateTests(unittest.TestCase):
     def test_illustrated_usdt_template(self):
         html = html_for_post("usdt", SAMPLES["usdt"], now=self.now)
         for expected in (
-            "tether-icon", "exchange-badge", "usdt-summary-grid",
+            "tether-icon", "exchange-logo", "usdt-summary-grid",
             "avg-buy", "avg-sell", "lowest-buy", "highest-sell",
-            "۲۶۸,۵۰۰", "۲۶۹,۲۶۶", "−", "نوبیتکس", "راستین",
+            "۲۶۸,۵۰۰", "۲۶۹,۲۶۶", "−", "نوبیتکس", "راستین", "AlanVazir",
         ):
-            if expected == "−":
-                continue
             self.assertIn(expected, html)
+
+    def test_numeral_and_percentage_formatting_preserves_values(self):
+        self.assertEqual(_fa_num("269,545"), "۲۶۹,۵۴۵")
+        self.assertEqual(_fa_num("—"), "—")
+        self.assertEqual(_fa_num("+0.28%", percent=True), "+۰٫۲۸٪")
+        for raw, style, sign, digits in (
+            ("+0.28%", "up", "+", "۰٫۲۸"),
+            ("-0.07%", "down", "−", "۰٫۰۷"),
+            ("−12.34%", "down", "−", "۱۲٫۳۴"),
+            ("0.00%", "muted", "", "۰٫۰۰"),
+        ):
+            with self.subTest(raw=raw):
+                html = _usdt_percent(raw)
+                self.assertIn(f'class="{style} num percentage"', html)
+                self.assertIn(f'<span class="sign">{sign}</span>', html)
+                self.assertIn(digits, html)
+        self.assertEqual(_usdt_percent("—"), '<span class="muted num">—</span>')
+
+    def test_real_publisher_contract_including_persian_summary_names(self):
+        from hybrid_usdt_compare import HybridUsdtQuote, build_hybrid_usdt_post
+        names = ("نوبیتکس", "والکس", "تبدیل", "رمزینکس", "بیت پین")
+        quotes = [HybridUsdtQuote(name, Decimal(269100 + i), Decimal(268900 + i), None, "fixture")
+                  for i, name in enumerate(names)]
+        approved = build_hybrid_usdt_post(quotes)
+        html = html_for_post("usdt", approved, now=self.now)
+        rows = re.findall(r'<tr data-exchange="[^"]+">(.*?)</tr>', html)
+        self.assertEqual(len(rows), 5)
+        for i, row in enumerate(rows):
+            self.assertIn(f'class="buy num" dir="ltr">{_fa_num(f"{269100+i:,}")}', row)
+            self.assertIn(f'class="sell num" dir="ltr">{_fa_num(f"{268900+i:,}")}', row)
+        self.assertIn('summary-brand">نوبیتکس', html)
+        self.assertIn('summary-brand">بیت‌پین', html)
+
+    def test_absent_sell_data_stays_missing(self):
+        from hybrid_usdt_compare import HybridUsdtQuote, build_hybrid_usdt_post
+        quotes = [HybridUsdtQuote(name, Decimal(269100), None, None, "fixture")
+                  for name in ("نوبیتکس", "والکس", "تبدیل", "رمزینکس", "بیت پین")]
+        html = html_for_post("usdt", build_hybrid_usdt_post(quotes), now=self.now)
+        self.assertEqual(html.count('class="sell num" dir="ltr">—'), 5)
+        for variant in ("avg-sell", "highest-sell"):
+            card = html.split(f'class="usdt-summary {variant}"', 1)[1].split('</div></div>', 1)[0]
+            self.assertIn('dir="ltr">—', card)
+
+    def test_reject_duplicate_exchange_and_invalid_summary(self):
+        for corrupt in (
+            SAMPLES['usdt'].replace('Wallex ', 'Nobitex '),
+            SAMPLES['usdt'].replace('<b>Exir</b>', '<b>Unknown</b>'),
+            SAMPLES['usdt'].replace('<code>269,128</code>', '<code>not-a-price</code>'),
+        ):
+            with self.assertRaises(ValueError):
+                html_for_post('usdt', corrupt, now=self.now)
+
+    def test_approved_timestamp_and_missing_timestamp(self):
+        html = html_for_post('usdt', SAMPLES['usdt'] + '\n🕒 <code>07:09</code> تهران')
+        self.assertIn('class="time" dir="ltr">۰۷:۰۹', html)
+        html = html_for_post('usdt', SAMPLES['usdt'])
+        self.assertIn('class="time" dir="ltr">—', html)
+        with self.assertRaises(ValueError):
+            html_for_post('usdt', SAMPLES['usdt'], now=datetime(2026, 10, 25))
+
+    def test_repeatable_sample_and_no_external_assets(self):
+        html = html_for_post('usdt', SAMPLES['usdt'], now=SAMPLE_TIME)
+        self.assertEqual(html, html_for_post('usdt', SAMPLES['usdt'], now=SAMPLE_TIME))
+        self.assertNotIn('src="http', html)
+        self.assertNotIn('url("http', html)
+
+    def test_variable_row_count_layout_and_demo_banner(self):
+        if __import__('os').environ.get('RENDER_PNG_TESTS') != '1':
+            self.skipTest('Enable RENDER_PNG_TESTS=1 for browser layout checks')
+        from playwright.sync_api import sync_playwright
+        from market_images import _fit_dynamic_fields, _validate_layout
+        import tempfile
+        import struct
+        import shutil
+        import os
+        rows = re.search(r'(<pre>[^\n]+\n)(.*?)(</pre>)', SAMPLES['usdt'], re.S)
+        original_rows = rows.group(2).splitlines()
+        original_rows.append('‎AbanTether 999,999,999 999,999,998 +123.45% −12.34%')
+        with sync_playwright() as playwright:
+            executable = os.environ.get('ALANCHANDE_CHROMIUM_PATH') or shutil.which('chromium') or shutil.which('google-chrome')
+            browser = playwright.chromium.launch(executable_path=executable, args=['--no-sandbox'])
+            try:
+                for count in range(5, 9):
+                    sample = SAMPLES['usdt'][:rows.start(2)] + '\n'.join(original_rows[:count]) + SAMPLES['usdt'][rows.end(2):]
+                    # Five-row variant excludes Exir/Bitpin; keep fixture summaries
+                    # associated with rows actually present.
+                    sample = sample.replace('<b>Exir</b>', '<b>Nobitex</b>').replace('<b>Bitpin</b>', '<b>Wallex</b>')
+                    with self.subTest(rows=count):
+                        page = browser.new_page(viewport={'width':1200, 'height':1800})
+                        page.route('**/*', lambda route: route.abort())
+                        page.set_content(html_for_post('usdt', sample, now=SAMPLE_TIME))
+                        page.evaluate('document.fonts.ready')
+                        _fit_dynamic_fields(page)
+                        _validate_layout(page)
+                        self.assertEqual(page.locator('tbody tr').count(), count)
+                        self.assertEqual(page.locator('.canvas').bounding_box()['height'], 1500 + 90 * (count-7))
+                        page.close()
+            finally:
+                browser.close()
+        with tempfile.TemporaryDirectory() as directory:
+            target = render_png('usdt', SAMPLES['usdt'], Path(directory)/'demo.png', demo=True, now=SAMPLE_TIME)
+            width, height = struct.unpack('>II', target.read_bytes()[16:24])
+            self.assertEqual((width,height), (2400,3080))
 
     def test_reject_incomplete_usdt(self):
         with self.assertRaises(ValueError):

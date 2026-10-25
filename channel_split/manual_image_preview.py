@@ -31,6 +31,7 @@ def main() -> int:
     parser.add_argument("--kind", choices=tuple(POSTS), default="usdt")
     parser.add_argument("--send-test", action="store_true", help="Upload exactly ONE photo to @alanchandetest")
     parser.add_argument("--sample", action="store_true", help="Use DEMO data, visibly watermarked, no live market validation")
+    parser.add_argument("--output", type=Path, help="Optional review PNG path; does not change the fixed TEST destination")
     args = parser.parse_args()
 
     live = Path.home() / "telegram_bot_repo/channel_split"
@@ -38,7 +39,7 @@ def main() -> int:
     if not publisher.is_file():
         raise SystemExit("STOP: live publisher was not found")
     if args.sample:
-        from test_market_images import SAMPLES
+        from test_market_images import SAMPLES, SAMPLE_TIME
         approved_text = SAMPLES[args.kind]
         print("DESIGN DEMO: the prices below are illustrative, not live market data.")
     else:
@@ -64,8 +65,9 @@ def main() -> int:
         print("Market-safety decision: VERIFIED")
 
     filename = f"{args.kind}-{'sample' if args.sample else 'live'}-manual.png"
-    target = Path.home() / "alanchande-image-previews" / filename
-    render_png(args.kind, approved_text, target, demo=args.sample)
+    target = args.output or Path.home() / "alanchande-image-previews" / filename
+    render_png(args.kind, approved_text, target, demo=args.sample,
+               now=SAMPLE_TIME if args.sample else None)
     print(f"Rendered: {target} ({target.stat().st_size:,} bytes)")
 
     if not args.send_test:

@@ -2,7 +2,8 @@
 """Guarded, idempotent deployment patch for five AlanChande market image posts.
 
 Does not activate image mode, restart services, publish messages or touch DBs.
-Only the server checkout's publish_channels.py and market_images.py are changed.
+Only the server checkout's publisher integration, renderer, and bundled artwork
+are changed. An upgrade leaves the installed publisher file byte-for-byte intact.
 """
 from __future__ import annotations
 
@@ -16,15 +17,24 @@ import sys
 parser = argparse.ArgumentParser()
 parser.add_argument("--repo", default="/home/kianirad2020/telegram_bot_repo")
 parser.add_argument("--apply", action="store_true")
+parser.add_argument("--upgrade-renderer", action="store_true",
+                    help="Update artwork/renderer only when the installed publisher integration matches exactly")
+parser.add_argument("--backup-dir", type=Path, default=Path.home() / "kiani-image-backups")
 args = parser.parse_args()
 
 repo = Path(args.repo).expanduser().resolve()
 main = repo / "channel_split/publish_channels.py"
 renderer = repo / "channel_split/market_images.py"
 source = Path(__file__).resolve().with_name("market_images.py")
+source_assets = source.with_name("market_image_assets")
+target_assets = renderer.with_name("market_image_assets")
 
 if not main.is_file() or not source.is_file():
     sys.exit("STOP: missing production publisher or image module")
+asset_names = ("vazirmatn.ttf", "vazirmatn-OFL.txt", "SOURCES.md", "tether-art.png",
+               "nobitex.png", "wallex.png", "tabdeal.png", "ramzinex.png", "raastin.png", "exir.png", "bitpin.png")
+if not all((source_assets / name).is_file() for name in asset_names):
+    sys.exit("STOP: bundled renderer artwork or OFL font license is missing")
 original = main.read_text(encoding="utf-8")
 
 anchors = [
@@ -76,16 +86,25 @@ anchors = [
 ]
 
 if "from market_images import SUPPORTED_MARKETS" in original:
-    if not renderer.is_file() or renderer.read_bytes() != source.read_bytes():
-        sys.exit("STOP: another image-publisher version already installed; review changes manually")
-    print("PASS: exact image publisher version already installed; no changes necessary")
-    raise SystemExit(0)
-patched = original
-for old, new in anchors:
-    matches = patched.count(old)
-    if matches != 1:
-        sys.exit(f"STOP: expected one matching publisher anchor, found {matches}: {old[:90]!r}")
-    patched = patched.replace(old, new, 1)
+    # Never re-patch or replace a publisher whose integration was modified.
+    if any(original.count(new) != 1 for old, new in anchors):
+        sys.exit("STOP: installed image-publisher integration differs; review changes manually")
+    exact_assets = all((target_assets / name).is_file()
+                       and (target_assets / name).read_bytes() == (source_assets / name).read_bytes()
+                       for name in asset_names)
+    if renderer.is_file() and renderer.read_bytes() == source.read_bytes() and exact_assets:
+        print("PASS: exact image publisher and assets already installed; no changes necessary")
+        raise SystemExit(0)
+    if not args.upgrade_renderer:
+        sys.exit("STOP: another renderer version installed; use --upgrade-renderer after review")
+    patched = original
+else:
+    patched = original
+    for old, new in anchors:
+        matches = patched.count(old)
+        if matches != 1:
+            sys.exit(f"STOP: expected one matching publisher anchor, found {matches}: {old[:90]!r}")
+        patched = patched.replace(old, new, 1)
 ast.parse(patched)
 ast.parse(source.read_text(encoding="utf-8"))
 
@@ -93,15 +112,24 @@ if not args.apply:
     print("PASS: publisher patch anchors and Python AST validated (dry run)")
     raise SystemExit(0)
 
-backup = Path.home() / "kiani-image-backups" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+backup = args.backup_dir.expanduser().resolve() / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 backup.mkdir(parents=True, exist_ok=False)
 shutil.copy2(main, backup / main.name)
 if renderer.exists():
     shutil.copy2(renderer, backup / renderer.name)
+existing_assets = {name for name in asset_names if (target_assets / name).is_file()}
+if existing_assets:
+    (backup / "market_image_assets").mkdir()
+    for name in existing_assets:
+        shutil.copy2(target_assets / name, backup / "market_image_assets" / name)
 
 try:
+    target_assets.mkdir(exist_ok=True)
+    for name in asset_names:
+        shutil.copy2(source_assets / name, target_assets / name)
     shutil.copy2(source, renderer)
-    main.write_text(patched, encoding="utf-8")
+    if patched != original:
+        main.write_text(patched, encoding="utf-8")
     ast.parse(main.read_text(encoding="utf-8"))
 except Exception:
     shutil.copy2(backup/main.name, main)
@@ -109,9 +137,15 @@ except Exception:
         shutil.copy2(backup/renderer.name, renderer)
     elif renderer.exists():
         renderer.unlink()
+    for name in asset_names:
+        if name in existing_assets:
+            shutil.copy2(backup / "market_image_assets" / name, target_assets / name)
+        elif (target_assets / name).is_file():
+            (target_assets / name).unlink()
     raise
 
 print("PATCHED:", main)
 print("COPIED:", renderer)
+print("ASSETS:", target_assets)
 print("BACKUP:", backup)
 print("SAFE DEFAULT: ALANCHANDE_POST_FORMAT=text (unless already changed on server)")
