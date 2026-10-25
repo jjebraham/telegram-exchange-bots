@@ -41,6 +41,25 @@ jobs:
         env:
           RENDER_PNG_TESTS: "1"
         run: python channel_split/test_market_images.py
+      - name: Render sample images for visual review
+        run: |
+          mkdir -p image-previews
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path('channel_split').resolve()))
+          from market_images import render_png
+          from test_market_images import SAMPLES
+          for kind, sample in SAMPLES.items():
+              result = render_png(kind, sample, Path('image-previews') / f'{kind}.png', demo=True)
+              print(kind, result.stat().st_size, 'bytes')
+          PY
+      - name: Attach sample images (illustrative prices only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: alanchande-design-previews
+          path: image-previews/*.png
+          retention-days: 7
 
   deploy:
     needs: validate
