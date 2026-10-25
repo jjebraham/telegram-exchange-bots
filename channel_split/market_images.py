@@ -253,23 +253,63 @@ def html_for_post(kind: str, text: str, *, now: datetime | None = None) -> str:
             f'</footer></div></body></html>')
 
 
-def render_png(kind: str, approved_text: str, output: Path | str) -> Path:
-    """Render approved post locally. Requires chromium and Python playwright."""
-    html = html_for_post(kind, approved_text)
-    target = Path(output)
-    target.parent.mkdir(parents=True, exist_ok=True)
+def _screenshot_html(html: str, target: Path) -> None:
+    """Browser-only worker; called under a dedicated image-rendering venv if necessary."""
     from playwright.sync_api import sync_playwright
-    executable = os.environ.get("ALANCHANDE_CHROMIUM_PATH") or shutil.which("chromium") or shutil.which("google-chrome") or None
+    executable = (
+        os.environ.get("ALANCHANDE_CHROMIUM_PATH")
+        or shutil.which("chromium")
+        or shutil.which("google-chrome")
+        or None
+    )
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, executable_path=executable, args=["--no-sandbox"])
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable, args=["--no-sandbox"]
+        )
         try:
-            page = browser.new_page(viewport={"width":1200,"height":1700}, device_scale_factor=1)
+            page = browser.new_page(
+                viewport={"width": 1200, "height": 1700}, device_scale_factor=1
+            )
             page.set_content(html, wait_until="load")
             page.evaluate("document.fonts.ready")
             page.locator(".canvas").screenshot(path=str(target))
         finally:
             browser.close()
-    if not 5_000 <= target.stat().st_size <= 9_500_000:
+
+
+def render_png(kind: str, approved_text: str, output: Path | str) -> Path:
+    """Render a verified rate card. Keep publisher's system Python unchanged."""
+    import importlib.util
+    import subprocess
+    import sys
+
+    html = html_for_post(kind, approved_text)
+    target = Path(output).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if importlib.util.find_spec("playwright"):
+        _screenshot_html(html, target)
+    else:
+        worker_python = Path(
+            os.environ.get("ALANCHANDE_RENDER_PYTHON", "")
+            or (Path.home() / ".venvs/alanchande-images/bin/python")
+        )
+        if not worker_python.is_file():
+            raise RuntimeError("Dedicated AlanChande image renderer venv is missing")
+        result = subprocess.run(
+            [str(worker_python), str(Path(__file__).resolve()), "--render-worker", str(target)],
+            input=html,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=75,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Dedicated image renderer failed (no Telegram photo sent): "
+                + result.stderr[-600:]
+            )
+    if not target.is_file() or not 5_000 <= target.stat().st_size <= 9_500_000:
         raise RuntimeError("PNG size is outside Telegram sendPhoto range")
     return target
 
@@ -296,3 +336,12 @@ def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: st
     if not result.get("ok") or not isinstance(result.get("result"),dict) or "message_id" not in result["result"]:
         raise RuntimeError("Telegram sendPhoto did not return a message ID")
     return result
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 3 or sys.argv[1] != "--render-worker":
+        raise SystemExit("Usage: market_images.py --render-worker OUTPUT.png")
+    output = Path(sys.argv[2]).resolve()
+    if not output.parent.is_dir():
+        raise SystemExit("Output directory does not exist")
+    _screenshot_html(sys.stdin.read(), output)
