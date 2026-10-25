@@ -1,6 +1,10 @@
 name: AlanChande image publisher
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/alanchande-image-posts.yml
   workflow_dispatch:
     inputs:
       stage:
