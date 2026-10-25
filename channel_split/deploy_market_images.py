@@ -76,7 +76,10 @@ anchors = [
 ]
 
 if "from market_images import SUPPORTED_MARKETS" in original:
-    sys.exit("STOP: image publisher patch already installed; inspect before rerunning")
+    if not renderer.is_file() or renderer.read_bytes() != source.read_bytes():
+        sys.exit("STOP: another image-publisher version already installed; review changes manually")
+    print("PASS: exact image publisher version already installed; no changes necessary")
+    raise SystemExit(0)
 patched = original
 for old, new in anchors:
     matches = patched.count(old)
