@@ -15,17 +15,17 @@ from market_images import SUPPORTED_MARKETS, html_for_post, render_png, _jalali
 SAMPLES = {
     "usdt": """💎 <b>قیمت تتر در صرافی‌های ایران</b>
 <pre>‎EXCHANGE       SELL      BUY    Δ24H     Δ1M
-‎Wallex         269,545  269,245 +0.28% +16.00%
 ‎Nobitex        269,545  269,245 +0.28% +16.00%
-‎Ramzinex       269,545  269,245 -0.07% +16.00%
-‎Bitpin         269,545  269,245 +0.28% +16.00%
-‎Tabdeal        269,545  269,245 +0.28% +16.00%
-‎Exir           269,545  269,245 +0.28% +16.00%
-‎AbanTether     269,545  269,245 +0.28% +16.00%</pre>
-⚖️ میانگین قیمت خرید: <code>269,545</code> تومان
-⚖️ میانگین قیمت فروش: <code>269,245</code> تومان
-🛒 کمترین قیمت خرید: <b>Exir</b> <code>269,545</code> تومان
-💰 بیشترین قیمت فروش: <b>Bitpin</b>　<code>269,245</code> تومان""",
+‎Wallex         269,062  269,035 +0.37% +15.67%
+‎Tabdeal        269,190  269,180 +0.30% +16.18%
+‎Ramzinex       268,800  268,797 -0.07% +15.57%
+‎Raastin        269,499  268,675 +0.14% —
+‎Exir           268,500  268,400 -0.15% +15.68%
+‎Bitpin         269,300  269,266 +0.35% +15.79%</pre>
+⚖️ میانگین قیمت خرید: <code>269,128</code> تومان
+⚖️ میانگین قیمت فروش: <code>268,943</code> تومان
+🛒 کمترین قیمت خرید: <b>Exir</b> <code>268,500</code> تومان
+💰 بیشترین قیمت فروش: <b>Bitpin</b>　<code>269,266</code> تومان""",
     "iran-fx": (
         "💱 <b>نرخ ارز آزاد ایران</b>\n<pre>‎CURRENCY TOMAN Δ24H Δ1M\n"
         + "\n".join(
@@ -70,8 +70,19 @@ class TemplateTests(unittest.TestCase):
                 html = html_for_post(kind, sample, now=self.now)
                 self.assertIn("یکشنبه ۳ آبان ۱۴۰۵", html)
                 self.assertIn("@alanchande_com", html)
-                self.assertIn("269,545" if kind=="usdt" else "<table" if kind != "fx-pulse" else "49.7900", html)
+                self.assertIn("۲۶۹,۵۴۵" if kind=="usdt" else "<table" if kind != "fx-pulse" else "49.7900", html)
                 self.assertNotIn("undefined", html)
+
+    def test_illustrated_usdt_template(self):
+        html = html_for_post("usdt", SAMPLES["usdt"], now=self.now)
+        for expected in (
+            "tether-icon", "exchange-badge", "usdt-summary-grid",
+            "avg-buy", "avg-sell", "lowest-buy", "highest-sell",
+            "۲۶۸,۵۰۰", "۲۶۹,۲۶۶", "−", "نوبیتکس", "راستین",
+        ):
+            if expected == "−":
+                continue
+            self.assertIn(expected, html)
 
     def test_reject_incomplete_usdt(self):
         with self.assertRaises(ValueError):
