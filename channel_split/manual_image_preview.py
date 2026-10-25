@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Manually publish ONE approved AlanChande image to @alanchandetest.
+
+Does not install, edit, restart, or alter production scheduling. Uses the
+existing production publisher in read-only --dry-run mode, checks VERIFIED
+market-safety assessment and uploads exactly one live-data image.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+from market_images import TITLES, render_png, telegram_send_photo
+
+POSTS = {
+    "usdt": "alanchande-usdt-exchanges",
+    "iran-fx": "alanchande-iran-fx",
+    "iran-gold": "alanchande-iran-gold",
+    "turkey-gold": "alanchande-turkey-gold",
+    "fx-pulse": "alanchande-fx-pulse",
+}
+DEST = "@alanchandetest"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--kind", choices=tuple(POSTS), default="usdt")
+    parser.add_argument("--send-test", action="store_true", help="Upload exactly ONE photo to @alanchandetest")
+    args = parser.parse_args()
+
+    live = Path.home() / "telegram_bot_repo/channel_split"
+    publisher = live / "publish_channels.py"
+    if not publisher.is_file():
+        raise SystemExit("STOP: live publisher was not found")
+    env = os.environ.copy()
+    env["MARKET_SAFETY_MODE"] = "enforce"
+    env["MARKET_HISTORY_DB"] = "market_history_production.sqlite3"
+    env.pop("ALANCHANDE_IMAGE_PREVIEW_DIR", None)
+
+    result = subprocess.run(
+        ["/usr/bin/python3", str(publisher), "--post", POSTS[args.kind], "--dry-run"],
+        cwd=live,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=160,
+        check=False,
+    )
+    if result.returncode:
+        print(result.stderr[-1200:], file=sys.stderr)
+        raise SystemExit("STOP: live market data/verification unavailable; no photo sent")
+
+    safety = re.search(
+        rf"(?m)^SAFETY {re.escape(args.kind)}:\s+(\S+)",
+        result.stdout,
+    )
+    if safety is None or safety.group(1) != "VERIFIED":
+        decision = safety.group(1) if safety else "not found"
+        raise SystemExit(f"STOP: {args.kind} safety decision {decision}; no photo sent")
+
+    marker = "===== ALANCHANDE_CHANNEL_ID (bot: ALANCHANDE_TELEGRAM_BOT_TOKEN) =====\n"
+    if result.stdout.count(marker) != 1:
+        raise SystemExit("STOP: exact AlanChande publisher output missing or ambiguous")
+    approved_text = result.stdout.split(marker, 1)[1].strip()
+    target = Path.home() / "alanchande-image-previews" / f"{args.kind}-manual.png"
+    render_png(args.kind, approved_text, target)
+    print(f"Rendered: {target} ({target.stat().st_size:,} bytes)")
+    print("Market-safety decision: VERIFIED")
+
+    if not args.send_test:
+        print("Not sent. Add --send-test to post ONE photo to @alanchandetest.")
+        return 0
+
+    # Reuse the existing secret loader without exposing the token or changing
+    # channel configuration. The public destination remains hardcoded to TEST.
+    sys.path.insert(0, str(live))
+    from publish_channels import _load_local_env
+    _load_local_env()
+    token = os.environ.get("ALANCHANDE_TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        raise SystemExit("STOP: existing AlanChande bot token unavailable; no photo sent")
+
+    response = telegram_send_photo(
+        token, DEST, target,
+        f"🧪 پیش‌نمایش آزمایشی — {TITLES[args.kind]}\nقیمت‌ها صرفاً جهت اطلاع‌رسانی است.",
+    )
+    message_id = int(response["result"]["message_id"])
+    print(f"SUCCESS: ONE photo posted to {DEST}; message ID={message_id}")
+    print(f"https://t.me/alanchandetest/{message_id}")
+    print("No changes to @alanchande_com or existing schedules")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
