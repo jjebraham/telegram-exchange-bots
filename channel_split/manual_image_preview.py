@@ -53,11 +53,11 @@ def main() -> int:
         if result.returncode:
             print(result.stderr[-1200:], file=sys.stderr)
             raise SystemExit("STOP: live market verification unavailable; no photo sent")
-        safety = re.search(rf"(?m)^SAFETY {re.escape(args.kind)}:\\s+(\\S+)", result.stdout)
+        safety = re.search(rf"(?m)^SAFETY {re.escape(args.kind)}:\s+(\S+)", result.stdout)
         if safety is None or safety.group(1) != "VERIFIED":
             decision = safety.group(1) if safety else "not found"
             raise SystemExit(f"STOP: {args.kind} safety decision {decision}; no photo sent")
-        marker = "===== ALANCHANDE_CHANNEL_ID (bot: ALANCHANDE_TELEGRAM_BOT_TOKEN) =====\\n"
+        marker = "===== ALANCHANDE_CHANNEL_ID (bot: ALANCHANDE_TELEGRAM_BOT_TOKEN) =====\n"
         if result.stdout.count(marker) != 1:
             raise SystemExit("STOP: exact AlanChande publisher output missing or ambiguous")
         approved_text = result.stdout.split(marker, 1)[1].strip()
