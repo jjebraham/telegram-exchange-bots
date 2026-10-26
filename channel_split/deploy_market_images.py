@@ -3,7 +3,8 @@
 
 Does not activate image mode, restart services, publish messages or touch DBs.
 Only the server checkout's publisher integration, renderer, and bundled artwork
-are changed. An upgrade leaves the installed publisher file byte-for-byte intact.
+are changed. Renderer-only upgrades preserve the installed publisher bytes;
+the known photo-only integration needs an explicit --upgrade-integration.
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ parser.add_argument("--repo", default="/home/kianirad2020/telegram_bot_repo")
 parser.add_argument("--apply", action="store_true")
 parser.add_argument("--upgrade-renderer", action="store_true",
                     help="Update artwork/renderer only when the installed publisher integration matches exactly")
+parser.add_argument("--upgrade-integration", action="store_true",
+                    help="Migrate the exact previous photo-only integration to photo plus full FX details")
 parser.add_argument("--backup-dir", type=Path, default=Path.home() / "kiani-image-backups")
 args = parser.parse_args()
 
@@ -69,6 +72,7 @@ anchors = [
                     send_result = telegram_send_photo(
                         token, chat_id, image_path,
                         captions[post_key] + "\\n@alanchande_com",
+                        details_text=text if post_key == "iran-fx" else None,
                     )
             else:
                 send_result = telegram_send(token, chat_id, text)''',
@@ -90,20 +94,29 @@ anchors = [
     ),
 ]
 
+legacy_send = anchors[1][1].replace('                        details_text=text if post_key == "iran-fx" else None,\n', '')
+
 if "from market_images import SUPPORTED_MARKETS" in original:
     # Never re-patch or replace a publisher whose integration was modified.
-    if any(original.count(new) != 1 for old, new in anchors):
+    patched = original
+    if all(original.count(new) == 1 for old, new in anchors):
+        pass
+    elif (original.count(legacy_send) == 1
+          and all(original.count(new) == 1 for index, (old, new) in enumerate(anchors) if index != 1)):
+        if not args.upgrade_integration:
+            sys.exit("STOP: photo-only integration installed; review and use --upgrade-integration for full FX text")
+        patched = original.replace(legacy_send, anchors[1][1], 1)
+    else:
         sys.exit("STOP: installed image-publisher integration differs; review changes manually")
     exact_assets = all((target_assets / name).is_file()
                        and (target_assets / name).read_bytes() == (source_assets / name).read_bytes()
                        for name in asset_names)
     exact_module = report_target.is_file() and report_target.read_bytes() == report_source.read_bytes()
-    if renderer.is_file() and renderer.read_bytes() == source.read_bytes() and exact_assets and exact_module:
+    if patched == original and renderer.is_file() and renderer.read_bytes() == source.read_bytes() and exact_assets and exact_module:
         print("PASS: exact image publisher and assets already installed; no changes necessary")
         raise SystemExit(0)
-    if not args.upgrade_renderer:
+    if not (args.upgrade_renderer or args.upgrade_integration):
         sys.exit("STOP: another renderer version installed; use --upgrade-renderer after review")
-    patched = original
 else:
     patched = original
     for old, new in anchors:

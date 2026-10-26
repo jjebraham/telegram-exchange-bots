@@ -17,6 +17,7 @@ import re
 import shutil
 import uuid
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -576,8 +577,53 @@ def render_png(kind: str, approved_text: str, output: Path | str, *, demo: bool 
     return target
 
 
-def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: str, *, timeout: int = 35) -> dict:
-    """sendPhoto without printing the bot token."""
+class IncompleteImagePostError(RuntimeError):
+    """The photo exists; callers must inspect before retrying a partial delivery."""
+
+    def __init__(self, photo_response: dict):
+        self.photo_response = photo_response
+        message_id = photo_response['result']['message_id']
+        super().__init__(f'Photo message {message_id} was sent, but detail delivery was not confirmed. '
+                         'Do not resend the photo; inspect the message before retrying details.')
+
+
+def _check_details_length(text: str) -> None:
+    # Conservative UTF-16 count after HTML entity parsing, including flags.
+    visible = unescape(re.sub(r'<[^>]*>', '', text))
+    if not 1 <= len(visible.encode('utf-16-le')) // 2 <= 4096:
+        raise ValueError('Full market details must fit one Telegram text message; nothing sent')
+
+
+def _telegram_send_details(token: str, chat_id: str, text: str, photo_id: int, timeout: int) -> dict:
+    """Send the unchanged full HTML bulletin as a reply to its rate image."""
+    payload = urlencode({
+        'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML',
+        'disable_notification': 'true', 'disable_web_page_preview': 'true',
+        'reply_parameters': json.dumps({'message_id': photo_id}),
+    }).encode('utf-8')
+    request = Request(f'https://api.telegram.org/bot{token}/sendMessage', data=payload,
+                      headers={'Content-Type': 'application/x-www-form-urlencoded'})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            result = json.load(response)
+    except HTTPError as error:
+        raise RuntimeError(f'Telegram details HTTP {error.code}') from None
+    except (URLError, TimeoutError, json.JSONDecodeError) as error:
+        raise RuntimeError(f'Telegram details connection/response failure: {type(error).__name__}') from None
+    if not result.get('ok') or not isinstance(result.get('result'), dict) or 'message_id' not in result['result']:
+        raise RuntimeError('Telegram details did not return a message ID')
+    return result
+
+
+def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: str, *,
+                        timeout: int = 35, details_text: str | None = None) -> dict:
+    """Send a photo and optional complete bulletin; success requires both receipts.
+
+    Details are a linked text message, because the full FX table exceeds the
+    1024-character photo-caption limit. No truncation or automatic retry occurs.
+    """
+    if details_text is not None:
+        _check_details_length(details_text)
     boundary = "AlanChande" + uuid.uuid4().hex
     def field(name: str, val: str) -> bytes:
         return (f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{val}\r\n').encode()
@@ -597,6 +643,12 @@ def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: st
         raise RuntimeError(f"Telegram sendPhoto connection failure: {type(error).__name__}") from None
     if not result.get("ok") or not isinstance(result.get("result"),dict) or "message_id" not in result["result"]:
         raise RuntimeError("Telegram sendPhoto did not return a message ID")
+    if details_text is not None:
+        try:
+            details = _telegram_send_details(token, chat_id, details_text, result['result']['message_id'], timeout)
+        except Exception:
+            raise IncompleteImagePostError(result) from None
+        result['details_result'] = details['result']
     return result
 
 if __name__ == "__main__":

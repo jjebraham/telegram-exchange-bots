@@ -200,9 +200,8 @@ def iran_fx_body(text: str) -> str:
         for row in chunk:
             label = (f'<div class="currency-name">{flag_html(row.code)}<div class="name-stack">'
                      f'<strong>{escape(CURRENCY_NAMES[row.code])}</strong><small>{row.code}</small></div></div>')
-            table_rows.append(f'<tr data-code="{row.code}"><td>{label}</td><td>{number(row.price)}</td>'
-                              f'<td>{change(row.day,"24h")}</td><td>{change(row.month,"1m")}</td></tr>')
-        table = '<table class="fx-table">' + heads(('ارز','قیمت','۲۴ ساعت','۱ ماه')) + '<tbody>' + ''.join(table_rows) + '</tbody></table>'
+            table_rows.append(f'<tr data-code="{row.code}"><td>{label}</td><td>{number(row.price)}</td></tr>')
+        table = '<table class="fx-table">' + heads(('ارز','تومان')) + '<tbody>' + ''.join(table_rows) + '</tbody></table>'
         if unit:
             missing = [row.code for row in rows if row.price == '—']
             note = ('<small class="availability-note">نرخ ناموجود: ' + '، '.join(missing) + '</small>') if missing else ''
@@ -368,11 +367,11 @@ td{padding:0 9px;line-height:1.5}td:first-child,th:first-child{text-align:right;
 .report-footer b{font:800 28px Arial,sans-serif;color:#ffe27a;white-space:nowrap}
 .iran-fx .report-header{height:128px}.iran-fx .report-title{height:132px;border:0;padding:0 30px 0 40px}.iran-fx .report-title h1{font-size:68px;border-color:#fa7972}.iran-fx .report-main{padding:0 20px 10px}.iran-fx .brand-watermark{width:720px;height:720px}
 .fx-board{display:grid;grid-template-columns:1fr 1fr;gap:12px;direction:rtl;height:100%}.fx-half{min-width:0;display:flex;flex-direction:column}.fx-table{border:1.5px solid #e1dff6;border-radius:12px;overflow:hidden}
-.fx-table th{height:72px;background:#f3f2fce8;border-radius:0;font-size:26px;padding:0 3px}.fx-table th:first-child{width:38%;padding-right:22px}.fx-table th:nth-child(2){width:24%}.fx-table th:nth-child(3),.fx-table th:nth-child(4){width:19%}
-.fx-table td{height:88px;padding:0 3px;border-bottom:1px solid #e5e4f2;background:#ffffff85}.fx-table tbody tr:last-child td{border-bottom:0}.fx-table td:first-child{padding-right:12px}
-.currency-name{display:flex;align-items:center;gap:10px;font-size:25px;white-space:nowrap}.currency-name strong{font-weight:800}.currency-name small{font:600 18px Arial,sans-serif;color:#77708f;line-height:1.45;letter-spacing:.6px}
+.fx-table th{height:56px;background:#f3f2fce8;border-radius:0;font-size:30px;padding:0 12px}.fx-table th:first-child{width:48%;padding-right:18px}.fx-table th:nth-child(2){width:52%}
+.fx-table td{height:88px;padding:0 12px;border-bottom:1px solid #e5e4f2;background:#ffffffb8}.fx-table tbody tr:nth-child(even) td{background:#f6f7fcb8}.fx-table tbody tr:last-child td{border-bottom:0}.fx-table td:first-child{padding-right:12px}
+.currency-name{display:flex;align-items:center;gap:10px;font-size:32px;white-space:nowrap}.currency-name strong{font-weight:800}.currency-name small{font:600 22px Arial,sans-serif;color:#77708f;line-height:1.45;letter-spacing:.6px}
 .currency-flag{width:52px;height:40px;object-fit:cover;border-radius:5px;flex-shrink:0;border:1px solid #d8dbe3}
-.fx-table .price{font-size:35px;letter-spacing:-1px}.fx-table .percentage{font-size:28px;letter-spacing:-1px}.fx-unit{height:88px;display:flex;align-items:center;justify-content:center;gap:9px;font-size:27px;color:#595372;flex-wrap:wrap}.fx-unit b{color:#4b3dcb}.availability-note{font-size:18px;max-width:100%;text-align:center}
+.fx-table .price{font-size:62px;letter-spacing:-1.3px;line-height:1.15}.fx-unit{height:88px;display:flex;align-items:center;justify-content:center;gap:9px;font-size:27px;color:#595372;flex-wrap:wrap}.fx-unit b{color:#4b3dcb}.availability-note{font-size:18px;max-width:100%;text-align:center}
 .iran-fx .report-footer{height:88px;font-size:22px}.iran-fx .report-footer b{padding-right:32px;border-right:1px solid #fff}
 .turkey-gold .report-title{height:156px}.turkey-gold .report-title h1{font-size:68px}.turkey-gold .report-main{padding:24px 44px 0}.turkey-gold .report-footer,.fx-pulse .report-footer{height:88px}
 .buy-sell-key{display:flex;align-items:center;gap:20px;font-size:25px;font-weight:800;white-space:nowrap}.buy-sell-key span{display:flex;align-items:center;gap:8px}.buy-sell-key i{width:19px;height:19px;border-radius:50%}.sell-dot{background:#df002e}.buy-dot{background:#00802f}

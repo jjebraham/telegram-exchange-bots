@@ -29,6 +29,17 @@ def extended_period_samples():
 
 
 class ReportTests(unittest.TestCase):
+    def test_iran_fx_image_keeps_all_rates_and_moves_periods_to_text(self):
+        html=html_for_post('iran-fx',SAMPLES['iran-fx'],now=SAMPLE_TIMES['iran-fx'])
+        self.assertNotIn('data-period=',html)
+        rendered=re.findall(r'<tr data-code="([A-Z]+)">(.*?)</tr>',html)
+        self.assertEqual(len(rendered),25)
+        for (code,body),expected in zip(rendered,FX_SAMPLE_ROWS):
+            self.assertEqual(code,expected[0])
+            self.assertEqual(body.count('<td>'),2)
+            self.assertIn(f'data-value="{expected[1]}"',body)
+            self.assertIn(_fa_num(expected[1]),body)
+
     def test_extended_gold_periods_keep_monthly_values_out_of_daily_column(self):
         sample=extended_period_samples()['iran-gold']
         rows=parse_iran_gold(sample)
@@ -213,6 +224,12 @@ class ReportTests(unittest.TestCase):
                         if kind=='iran-fx':
                             self.assertEqual(page.locator('tbody tr').count(),25)
                             self.assertEqual(page.locator('.currency-flag').count(),25)
+                            self.assertEqual(page.locator('.period').count(),0)
+                            # Ordinary rates render at about 20 CSS px when the
+                            # complete image is viewed at a 390 px phone width.
+                            normal=page.locator('tr[data-code="EUR"] .price')
+                            font_size=normal.evaluate('e => parseFloat(getComputedStyle(e).fontSize)')
+                            self.assertGreaterEqual(font_size*390/1200,19.5)
                         page.close()
                 finally:
                     browser.close()

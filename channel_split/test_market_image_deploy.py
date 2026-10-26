@@ -44,6 +44,17 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(upgraded.returncode, 0, upgraded.stderr)
             self.assertEqual(publisher.read_bytes(), patched)
             self.assertEqual(renderer.read_bytes(), (ROOT / 'market_images.py').read_bytes())
+            # The previous exact integration needs deliberate migration; other
+            # publisher edits survive and renderer-only upgrades cannot do it.
+            legacy=publisher.read_text(encoding='utf-8').replace('                        details_text=text if post_key == "iran-fx" else None,\n','')
+            legacy += '\n# unrelated local publisher customization\n'
+            publisher.write_text(legacy,encoding='utf-8')
+            self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
+            migrated=run('--upgrade-integration','--apply')
+            self.assertEqual(migrated.returncode,0,migrated.stderr)
+            self.assertIn('details_text=text if post_key == "iran-fx" else None',publisher.read_text(encoding='utf-8'))
+            self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
+            self.assertEqual(run('--apply').returncode,0)
             publisher.write_text(publisher.read_text(encoding='utf-8').replace('preview_dir = os.environ', 'changed_dir = os.environ'), encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer', '--apply').returncode, 0)
 

@@ -25,21 +25,24 @@ image_python="$HOME/.venvs/alanchande-images/bin/python"
 test -x "$image_python" || { echo "Missing image-renderer Python venv" >&2; exit 1; }
 "$image_python" -c 'import playwright.sync_api'
 test -x /usr/bin/chromium || { echo "Missing /usr/bin/chromium" >&2; exit 1; }
-/usr/bin/python3 alanchande-image-stage/deploy_market_images.py --upgrade-renderer
-/usr/bin/python3 alanchande-image-stage/deploy_market_images.py --upgrade-renderer --apply
+/usr/bin/python3 alanchande-image-stage/deploy_market_images.py --upgrade-renderer --upgrade-integration
+/usr/bin/python3 alanchande-image-stage/deploy_market_images.py --upgrade-renderer --upgrade-integration --apply
 cd "$HOME/telegram_bot_repo/channel_split"
 mkdir -p "$HOME/alanchande-image-previews"
 export ALANCHANDE_IMAGE_PREVIEW_DIR="$HOME/alanchande-image-previews"
 export MARKET_SAFETY_MODE=enforce
 export MARKET_HISTORY_DB=market_history_production.sqlite3
 for post in alanchande-usdt-exchanges alanchande-iran-fx alanchande-iran-gold alanchande-turkey-gold alanchande-fx-pulse; do
-  /usr/bin/python3 publish_channels.py --post "$post" --dry-run >/dev/null
+  key="${post#alanchande-}"
+  key="${key%-exchanges}"
+  /usr/bin/python3 publish_channels.py --post "$post" --dry-run >"$HOME/alanchande-image-previews/$key-publisher.txt"
 done
 for key in usdt iran-fx iran-gold turkey-gold fx-pulse; do
   test -s "$HOME/alanchande-image-previews/$key.png"
 done
 /usr/bin/python3 - <<'PY'
 import os
+import re
 from pathlib import Path
 from publish_channels import _load_local_env
 from market_images import TITLES, telegram_send_photo
@@ -49,8 +52,17 @@ if not token:
     raise RuntimeError("Missing token in protected server environment")
 for key in ("usdt", "iran-fx", "iran-gold", "turkey-gold", "fx-pulse"):
     path = Path.home() / "alanchande-image-previews" / (key + ".png")
-    result = telegram_send_photo(token, "@alanchandetest", path, "🧪 TEST — " + TITLES[key])
+    snapshot = path.with_name(key + '-publisher.txt').read_text(encoding='utf-8')
+    if not re.search(rf'(?m)^SAFETY {re.escape(key)}: VERIFIED\b', snapshot):
+        raise RuntimeError('Live verification missing for ' + key)
+    marker = '===== ALANCHANDE_CHANNEL_ID (bot: ALANCHANDE_TELEGRAM_BOT_TOKEN) =====\n'
+    if snapshot.count(marker) != 1:
+        raise RuntimeError('Ambiguous verified bulletin for ' + key)
+    details = snapshot.split(marker, 1)[1].strip() if key == 'iran-fx' else None
+    result = telegram_send_photo(token, "@alanchandetest", path, "🧪 TEST — " + TITLES[key], details_text=details)
     print("Test channel", key, "message_id", result["result"]["message_id"])
+    if 'details_result' in result:
+        print('Full details message_id', result['details_result']['message_id'])
 PY
 REMOTE
 if [[ "$stage" == "activate" ]]; then

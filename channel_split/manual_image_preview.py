@@ -8,13 +8,14 @@ market-safety assessment and uploads exactly one live-data image.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 
-from market_images import TITLES, render_png, telegram_send_photo
+from market_images import TITLES, IncompleteImagePostError, render_png, telegram_send_photo
 
 POSTS = {
     "usdt": "alanchande-usdt-exchanges",
@@ -69,6 +70,15 @@ def main() -> int:
     render_png(args.kind, approved_text, target, demo=args.sample,
                now=SAMPLE_TIMES[args.kind] if args.sample else None)
     print(f"Rendered: {target} ({target.stat().st_size:,} bytes)")
+    details_text = None
+    if args.kind == 'iran-fx':
+        # Keep every value, period, omission note and source time from the same
+        # verified snapshot used to render this image. Never fetch a second time.
+        warning = '🧪 <b>نمونه آزمایشی — قیمت‌ها واقعی نیستند</b>\n\n' if args.sample else ''
+        details_text = warning + approved_text
+        details_path = target.with_suffix('.details.html')
+        details_path.write_text(details_text, encoding='utf-8')
+        print(f"Full text: {details_path}")
 
     if not args.send_test:
         print("Not sent. Add --send-test to post ONE photo to @alanchandetest.")
@@ -88,8 +98,23 @@ def main() -> int:
         if args.sample else
         f"✅ پیش‌نمایش نرخ‌های تأییدشده — {TITLES[args.kind]}\nفقط کانال آزمایشی."
     )
-    response = telegram_send_photo(token, DEST, target, caption)
+    if details_text is not None:
+        caption += '\nجزئیات نرخ‌ها و تغییرات در پیام متنی همراه.'
+    try:
+        response = telegram_send_photo(token, DEST, target, caption, details_text=details_text)
+    except IncompleteImagePostError as error:
+        target.with_suffix('.receipt.json').write_text(
+            json.dumps({'status':'photo_sent_details_unconfirmed',
+                                     'photo_message_id':error.photo_response['result']['message_id']}, indent=2)+'\n',
+            encoding='utf-8')
+        raise SystemExit(str(error)) from None
     message_id = int(response["result"]["message_id"])
+    receipt = {'status':'sent','photo_message_id':message_id}
+    if 'details_result' in response:
+        details_id = int(response['details_result']['message_id'])
+        receipt['details_message_id'] = details_id
+        print(f"Full details sent: https://t.me/alanchandetest/{details_id}")
+    target.with_suffix('.receipt.json').write_text(json.dumps(receipt,indent=2)+'\n', encoding='utf-8')
     print(f"SUCCESS: ONE photo posted to {DEST}; message ID={message_id}")
     print(f"https://t.me/alanchandetest/{message_id}")
     print("No changes to @alanchande_com or existing schedules")

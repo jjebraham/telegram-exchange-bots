@@ -47,6 +47,7 @@ jobs:
           python channel_split/test_market_images.py -v
           python channel_split/test_market_report_templates.py -v
           python channel_split/test_market_image_deploy.py -v
+          python channel_split/test_market_image_delivery.py -v
           python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
           python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
           python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v

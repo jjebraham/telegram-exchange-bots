@@ -29,6 +29,33 @@ Gold illustrations and the faint circular A watermark are original inline
 SVGs. No external fonts, emoji rendering, asset downloads or image-generation
 service is required during publication.
 
+## Iranian FX on phones
+
+The Iranian FX image shows only currency names, canonical flags/codes and toman
+rates. The 25 currencies keep the same right-13 / left-12 order. Price text is
+62 logical pixels (about 20 pixels at a 390-pixel phone width), up from 35;
+exceptionally long values still fit safely. Daily/monthly percentage columns
+are deliberately omitted from this image.
+
+The complete, unchanged verified publisher bulletin follows the photo as a
+linked HTML text message. It includes all 25 rates, Δ24H, Δ1M, source time,
+unit, availability notes and disclaimer. Both outputs use one fetched snapshot.
+The complete table exceeds Telegram's 1024-character photo-caption limit, so
+it uses `sendMessage` (4096 characters) with a reply to the photo. Length is
+checked before sending; details are never truncated. Other markets remain
+one photo each. Sample mode labels both the image and the full text.
+
+Success requires Telegram receipts for both messages. A partial delivery
+reports the already-sent photo ID and does not automatically retry the photo.
+The manual helper saves `.details.html` and `.receipt.json` beside the PNG;
+inspect the channel before retrying an ambiguous delivery. The rate/history
+calculations and market-safety requirements remain unchanged.
+
+The guarded installer recognizes the exact earlier photo-only integration,
+but requires `--upgrade-integration` to migrate it. `--upgrade-renderer` alone
+cannot change that publisher integration. The reviewed SSH deployment helper
+passes both flags; do not run it against production before visual approval.
+
 ## Verified data contracts
 
 | Report | Producer fields preserved | Historical periods |
@@ -70,6 +97,7 @@ python -m playwright install chromium
 RENDER_PNG_TESTS=1 python channel_split/test_market_images.py -v
 RENDER_PNG_TESTS=1 python channel_split/test_market_report_templates.py -v
 python channel_split/test_market_image_deploy.py -v
+python channel_split/test_market_image_delivery.py -v
 python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
 python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
 python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v
