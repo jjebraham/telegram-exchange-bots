@@ -9,6 +9,18 @@ import tgju_public_api as api
 from prepare_tgju_api_transport import add_hook
 
 class ApiTests(unittest.TestCase):
+    def _fx_payload(self):
+        from iran_fx import CURRENCY_ROWS
+        return {'current':{
+            ('price_dollar_rl' if code=='USD' else 'price_'+code.lower()):
+                {'p':str(2000000+i*1000),'ts':'2020-01-01 00:00:00'}
+            for i,(code,*_) in enumerate(CURRENCY_ROWS)
+        }}
+
+    def _fx_from_payload(self,payload):
+        with patch.object(api,'urlopen',return_value=io.BytesIO(json.dumps(payload).encode())):
+            return api.fetch_iran_fx_public()
+
     def test_required_prices_and_invalid_values_fail_closed(self):
         self.assertEqual(api.parse_public_prices({'current':{'sekee':{'p':'2,700,000,000'}}},('sekee',)),{'sekee':Decimal('2700000000')})
         for raw in (None,True,'NaN','0','-1','1,23'):
@@ -43,6 +55,49 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(market.coin_prices_rial[COIN_LABELS[0]],gold[PROFILE_SLUGS[COIN_LABELS[0]]])
         self.assertEqual(market.gold18_rial,gold[PROFILE_SLUGS['طلای ۱۸ عیار']])
         self.assertEqual(market.bubble_values_rial,{})
+
+    def test_one_absent_noncore_fx_price_is_partial_not_stale_substitution(self):
+        payload=self._fx_payload()
+        payload['current'].pop('price_hkd')
+        rates=self._fx_from_payload(payload)
+        self.assertEqual(len(rates),24)
+        self.assertNotIn('HKD',rates)
+        self.assertEqual(rates['USD'],Decimal('200000'))
+        # TGJU `ts` is the last change, not a new-tick guarantee; all old
+        # fixture timestamps intentionally remain irrelevant to price parsing.
+        self.assertIn('TRY',rates)
+
+    def test_null_noncore_fx_price_is_unavailable(self):
+        payload=self._fx_payload()
+        payload['current']['price_hkd']['p']=None
+        self.assertNotIn('HKD',self._fx_from_payload(payload))
+
+    def test_missing_core_multiple_missing_or_malformed_fx_fails_closed(self):
+        for omitted in (('price_dollar_rl',),('price_hkd','price_qar')):
+            with self.subTest(omitted=omitted):
+                payload=self._fx_payload()
+                for symbol in omitted:
+                    payload['current'].pop(symbol)
+                with self.assertRaises(ValueError):
+                    self._fx_from_payload(payload)
+        for bad in ('0','garbled',-1):
+            with self.subTest(bad=bad):
+                payload=self._fx_payload()
+                payload['current']['price_hkd']['p']=bad
+                with self.assertRaises(ValueError):
+                    self._fx_from_payload(payload)
+        with self.assertRaises(ValueError):
+            self._fx_from_payload({'current':{}})
+        with self.assertRaises(ValueError):
+            self._fx_from_payload([])
+
+    def test_gold_public_transport_stays_strict_when_symbol_is_missing(self):
+        from iran_gold import PROFILE_SLUGS
+        payload={'current':{slug:{'p':'300000000'} for slug in PROFILE_SLUGS.values()}}
+        payload['current'].pop(next(iter(PROFILE_SLUGS.values())))
+        with patch.object(api,'urlopen',return_value=io.BytesIO(json.dumps(payload).encode())):
+            with self.assertRaises(ValueError):
+                api.fetch_iran_gold_public()
 
     def test_hook_is_opt_in_and_preserves_original_bytes(self):
         source=b'def fetch(url="original", timeout=25):\r\n    """Existing documentation."""\r\n    return "original result"\r\n\r\n# unrelated local customization\r\n'

@@ -126,6 +126,18 @@ class ReportTests(unittest.TestCase):
         self.assertEqual((rows['USD'].price,rows['USD'].day,rows['USD'].month),('1,000','-1.23%','+4.56%'))
         self.assertEqual((rows['QAR'].price,rows['QAR'].day,rows['QAR'].month),('—','—','—'))
 
+    def test_unavailable_hkd_image_rate_cell_is_empty_with_accessible_reason(self):
+        from iran_fx import build_iran_fx_post
+        rates={code:Decimal(1000+i*137) for i,code in enumerate(CURRENCY_ORDER) if code!='HKD'}
+        text=build_iran_fx_post(rates,unavailable_codes={'HKD'})
+        html=html_for_post('iran-fx',text,now=SAMPLE_TIMES['iran-fx'])
+        rendered=dict(re.findall(r'<tr data-code="([A-Z]+)">(.*?)</tr>',html))
+        self.assertEqual(len(rendered),25)
+        self.assertIn('data-value="—" aria-label="نرخ ناموجود"></span>',rendered['HKD'])
+        self.assertNotIn('>—</span>',rendered['HKD'])
+        self.assertIn('data-value="1,000"',rendered['USD'])
+        self.assertIn('نرخ ناموجود: HKD',html)
+
     def test_legacy_iran_gold_history_is_daily_and_monthly_is_missing(self):
         from iran_gold import IranGoldMarket, build_iran_gold_post
         prices={name:Decimal(10000+i*1000) for i,name in enumerate(GOLD_COINS)}

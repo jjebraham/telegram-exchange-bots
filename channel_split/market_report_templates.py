@@ -200,7 +200,11 @@ def iran_fx_body(text: str) -> str:
         for row in chunk:
             label = (f'<div class="currency-name">{flag_html(row.code)}<div class="name-stack">'
                      f'<strong>{escape(CURRENCY_NAMES[row.code])}</strong><small>{row.code}</small></div></div>')
-            table_rows.append(f'<tr data-code="{row.code}"><td>{label}</td><td>{number(row.price)}</td></tr>')
+            # Preserve the unavailable token in the approved text and DOM data,
+            # while leaving the image's rate cell visually empty for this slot.
+            visible_price = (number(row.price) if row.price != '—' else
+                             '<span class="num price" dir="ltr" data-value="—" aria-label="نرخ ناموجود"></span>')
+            table_rows.append(f'<tr data-code="{row.code}"><td>{label}</td><td>{visible_price}</td></tr>')
         table = '<table class="fx-table"><tbody>' + ''.join(table_rows) + '</tbody></table>'
         if unit:
             missing = [row.code for row in rows if row.price == '—']

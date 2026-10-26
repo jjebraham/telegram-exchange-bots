@@ -17,14 +17,29 @@ from uuid import uuid4
 API_HOSTS = ('call4.tgju.org', 'call2.tgju.org', 'call3.tgju.org')
 
 
-def parse_public_prices(payload: dict, symbols: tuple[str, ...]) -> dict[str, Decimal]:
+def parse_public_prices(
+    payload: dict,
+    symbols: tuple[str, ...],
+    *,
+    allow_missing: frozenset[str] = frozenset(),
+) -> dict[str, Decimal]:
+    if not isinstance(payload, dict):
+        raise ValueError('TGJU public API response is not an object')
     current = payload.get('current')
     if not isinstance(current, dict):
         raise ValueError('TGJU public API has no current-price object')
     prices = {}
     for symbol in symbols:
         item = current.get(symbol)
-        raw = item.get('p') if isinstance(item, dict) else None
+        if item is None:
+            if symbol in allow_missing:
+                continue
+            raise ValueError('TGJU public API is missing a valid price: ' + symbol)
+        if not isinstance(item, dict):
+            raise ValueError('TGJU public API has a malformed price row: ' + symbol)
+        raw = item.get('p')
+        if raw is None and symbol in allow_missing:
+            continue
         if not isinstance(raw, str) or not re.fullmatch(r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)', raw):
             raise ValueError('TGJU public API is missing a valid price: ' + symbol)
         value = Decimal(raw.replace(',', ''))
@@ -34,9 +49,16 @@ def parse_public_prices(payload: dict, symbols: tuple[str, ...]) -> dict[str, De
     return prices
 
 
-def fetch_public_prices(symbols: tuple[str, ...], timeout: int = 15) -> dict[str, Decimal]:
+def fetch_public_prices(
+    symbols: tuple[str, ...],
+    timeout: int = 15,
+    *,
+    allow_missing: frozenset[str] = frozenset(),
+) -> dict[str, Decimal]:
     if not symbols or any(not re.fullmatch(r'[a-z][a-z0-9_]{0,79}', value) for value in symbols):
         raise ValueError('Invalid TGJU public API symbol selection')
+    if not allow_missing <= frozenset(symbols):
+        raise ValueError('Invalid optional TGJU public API symbols')
     errors = []
     for host in API_HOSTS:
         url = 'https://' + host + '/ajax.json?rev=' + uuid4().hex
@@ -50,18 +72,22 @@ def fetch_public_prices(symbols: tuple[str, ...], timeout: int = 15) -> dict[str
             continue
         if len(raw) > 2_000_000:
             raise ValueError('TGJU public API response exceeds the expected size')
-        # A nonempty malformed/incomplete response fails closed. Only transport
-        # failure tries another official host; no cached or sample rates exist.
-        return parse_public_prices(json.loads(raw), symbols)
+        # A nonempty malformed response fails closed. Iran FX alone may accept
+        # one absent non-core quote; gold and all other callers stay strict.
+        return parse_public_prices(json.loads(raw), symbols, allow_missing=allow_missing)
     raise RuntimeError('TGJU official API transport unavailable: ' + '; '.join(errors))
 
 
 def fetch_iran_fx_public(timeout: int = 15) -> dict[str, Decimal]:
-    from iran_fx import CURRENCY_ROWS
+    from iran_fx import CURRENCY_ROWS, IRAN_FX_CORE_CODES
     symbols = {code:('price_dollar_rl' if code == 'USD' else 'price_' + code.lower())
                for code, *_ in CURRENCY_ROWS}
-    values = fetch_public_prices(tuple(symbols.values()), timeout)
-    return {code:values[symbol]/Decimal('10') for code,symbol in symbols.items()}
+    allowed = frozenset(symbol for code,symbol in symbols.items() if code not in IRAN_FX_CORE_CODES)
+    values = fetch_public_prices(tuple(symbols.values()), timeout, allow_missing=allowed)
+    missing = [code for code,symbol in symbols.items() if symbol not in values]
+    if len(missing) > 1 or any(code in IRAN_FX_CORE_CODES for code in missing):
+        raise ValueError('TGJU public API is missing required FX prices: ' + ', '.join(missing))
+    return {code:values[symbol]/Decimal('10') for code,symbol in symbols.items() if symbol in values}
 
 
 def fetch_iran_gold_public(timeout: int = 15):

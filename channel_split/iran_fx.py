@@ -51,6 +51,11 @@ CURRENCY_ROWS = (
     ("QAR", "🇶🇦", "ریال قطر", ("ریال قطر",)),
 )
 
+# Keep the primary-source coverage rule aligned with the publisher's protected
+# reference currencies. One other currency may be unavailable without hiding
+# a gap in the main market rates.
+IRAN_FX_CORE_CODES = frozenset({"USD", "EUR", "GBP", "AED", "TRY"})
+
 _DIGITS = str.maketrans(
     "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
     "01234567890123456789",
@@ -127,12 +132,12 @@ def parse_tgju_currency_page(html: str) -> dict[str, Decimal]:
             continue
         try:
             rates_rial[code] = _parse_positive_number(row[1])
-        except ValueError:
-            continue
+        except ValueError as exc:
+            raise ValueError(f"TGJU free-market currency row has an invalid rate: {code}") from exc
 
     required = [code for code, *_rest in CURRENCY_ROWS]
     missing = [code for code in required if code not in rates_rial]
-    if missing:
+    if len(missing) > 1 or any(code in IRAN_FX_CORE_CODES for code in missing):
         raise ValueError(
             "TGJU free-market currency table is missing required rows: "
             + ", ".join(missing)
@@ -256,7 +261,7 @@ def build_iran_fx_post(
         footer.append(
             "⚠️ نرخ "
             + ", ".join(sorted(unavailable))
-            + " به‌دلیل اختلاف منابع موقتاً نمایش داده نمی‌شود."
+            + " در این نوبت نمایش داده نمی‌شود."
         )
     footer.append(
         "نرخ‌ها مربوط به بازار آزاد و صرفاً جهت اطلاع‌رسانی هستند."
