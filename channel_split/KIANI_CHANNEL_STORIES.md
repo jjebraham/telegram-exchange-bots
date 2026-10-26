@@ -31,6 +31,12 @@ available story capacity. Telegram documents these requirements in
    daily source post may be shared. Setup itself publishes no story. If a
    permission/boost/capacity check fails, the readiness marker stays absent.
 
+Interactive login allows two bounded SDK retries so Telegram can redirect it
+to the account's data center. The publishing worker keeps zero automatic
+request retries. Telegram flood waits are surfaced immediately in setup;
+neither login codes nor credentials are included in error messages. If setup
+stops, rerun the same command privately; saved application details are reused.
+
 Configuration and account login are stored privately in
 `~/.config/kiani-stories/` and `~/.local/share/kiani-stories/`, with owner-only
 access. The login persists; it is not required every day. Telegram sessions

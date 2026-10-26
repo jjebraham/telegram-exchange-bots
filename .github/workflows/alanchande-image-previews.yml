@@ -65,6 +65,7 @@ jobs:
           python channel_split/add_tgju_akamai_endpoint.py --self-test
           python channel_split/test_kiani_images.py -v
           python channel_split/test_kiani_stories.py -v
+          python channel_split/test_kiani_story_setup.py -v
           python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
           python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
           python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v

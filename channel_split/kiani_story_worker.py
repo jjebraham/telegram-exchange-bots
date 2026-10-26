@@ -47,11 +47,12 @@ def load_config(path: Path, *, require_enabled=True) -> dict:
     return data
 
 
-def new_client(config):
+def new_client(config, *, interactive=False):
     from telethon import TelegramClient
     return TelegramClient(config['session_path'], config['api_id'], config['api_hash'],
-                          device_model='Kiani channel stories', request_retries=0,
-                          connection_retries=1, flood_sleep_threshold=0, receive_updates=False)
+                          device_model='Kiani channel stories', request_retries=2 if interactive else 0,
+                          connection_retries=1, flood_sleep_threshold=0, receive_updates=False,
+                          raise_last_call_error=True)
 
 
 async def approved_account(client, config):
