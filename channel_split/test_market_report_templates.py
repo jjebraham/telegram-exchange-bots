@@ -32,6 +32,7 @@ class ReportTests(unittest.TestCase):
     def test_iran_fx_image_keeps_all_rates_and_moves_periods_to_text(self):
         html=html_for_post('iran-fx',SAMPLES['iran-fx'],now=SAMPLE_TIMES['iran-fx'])
         self.assertNotIn('data-period=',html)
+        self.assertNotIn('<thead>',html)
         rendered=re.findall(r'<tr data-code="([A-Z]+)">(.*?)</tr>',html)
         self.assertEqual(len(rendered),25)
         for (code,body),expected in zip(rendered,FX_SAMPLE_ROWS):

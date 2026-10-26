@@ -10,7 +10,7 @@ by a regression digest from commit `d9e4894`.
 | Kind | Logical artboard | Main composition | Sample PNG |
 |---|---|---|---|
 | usdt | 1200 × 1500 at seven exchanges | Exchange table and four summary cards | 2400 × 3080 |
-| iran-fx | 1200 × 1600 | Right 13 / left 12 currency rows | 2400 × 3280 |
+| iran-fx | 1200 × 1500 | Right 13 / left 12 currency rows, rates only | 2400 × 3080 |
 | iran-gold | 1200 × 1200 at seven instruments | Five coin rows and two gold rows | 2400 × 2480 |
 | turkey-gold | 1200 × 1200 | Four sell/buy rows with Persian/Turkish names | 2400 × 2480 |
 | fx-pulse | 1200 × 1200 | Two stacked USD/TL and EUR/TL feature cards | 2400 × 2480 |
@@ -32,7 +32,9 @@ service is required during publication.
 ## Iranian FX on phones
 
 The Iranian FX image shows only currency names, canonical flags/codes and toman
-rates. The 25 currencies keep the same right-13 / left-12 order. Price text is
+rates, without column headings, matching the revised 4:5 reference. Larger flags,
+rounded boards, a unit pill and left-aligned prices keep the visual hierarchy
+clear. The 25 currencies keep the same right-13 / left-12 order. Price text is
 62 logical pixels (about 20 pixels at a 390-pixel phone width), up from 35;
 exceptionally long values still fit safely. Daily/monthly percentage columns
 are deliberately omitted from this image.

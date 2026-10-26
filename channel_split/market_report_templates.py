@@ -22,7 +22,7 @@ CURRENCY_FLAG_CODES = dict(zip(
 CURRENCY_ORDER = tuple(CURRENCY_FLAG_CODES)
 GOLD_COINS = ('سکه امامی', 'سکه بهار آزادی', 'نیم سکه', 'ربع سکه', 'سکه گرمی')
 GOLD_BARS = ('طلای ۱۸ عیار', 'مثقال طلا')
-ARTBOARDS = {'iran-fx': (1200, 1600), 'iran-gold': (1200, 1200),
+ARTBOARDS = {'iran-fx': (1200, 1500), 'iran-gold': (1200, 1200),
              'turkey-gold': (1200, 1200), 'fx-pulse': (1200, 1200)}
 
 
@@ -201,7 +201,7 @@ def iran_fx_body(text: str) -> str:
             label = (f'<div class="currency-name">{flag_html(row.code)}<div class="name-stack">'
                      f'<strong>{escape(CURRENCY_NAMES[row.code])}</strong><small>{row.code}</small></div></div>')
             table_rows.append(f'<tr data-code="{row.code}"><td>{label}</td><td>{number(row.price)}</td></tr>')
-        table = '<table class="fx-table">' + heads(('ارز','تومان')) + '<tbody>' + ''.join(table_rows) + '</tbody></table>'
+        table = '<table class="fx-table"><tbody>' + ''.join(table_rows) + '</tbody></table>'
         if unit:
             missing = [row.code for row in rows if row.price == '—']
             note = ('<small class="availability-note">نرخ ناموجود: ' + '، '.join(missing) + '</small>') if missing else ''
@@ -365,13 +365,13 @@ td{padding:0 9px;line-height:1.5}td:first-child,th:first-child{text-align:right;
 .instrument-row .price{font-size:47px;letter-spacing:-1px}.section-heading td{height:60px;background:none;border:0;padding:0 20px}.section-heading td div{display:flex;align-items:center;gap:16px;color:#b77a12;font-size:31px;font-weight:900}.section-heading i{height:2px;background:#edc75b88;flex:1}
 .report-footer{height:76px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 44px;background:linear-gradient(110deg,#4643ba,#4942b2);color:#fff;font-size:23px;font-weight:550;gap:30px}
 .report-footer b{font:800 28px Arial,sans-serif;color:#ffe27a;white-space:nowrap}
-.iran-fx .report-header{height:128px}.iran-fx .report-title{height:132px;border:0;padding:0 30px 0 40px}.iran-fx .report-title h1{font-size:68px;border-color:#fa7972}.iran-fx .report-main{padding:0 20px 10px}.iran-fx .brand-watermark{width:720px;height:720px}
-.fx-board{display:grid;grid-template-columns:1fr 1fr;gap:12px;direction:rtl;height:100%}.fx-half{min-width:0;display:flex;flex-direction:column}.fx-table{border:1.5px solid #e1dff6;border-radius:12px;overflow:hidden}
-.fx-table th{height:56px;background:#f3f2fce8;border-radius:0;font-size:30px;padding:0 12px}.fx-table th:first-child{width:48%;padding-right:18px}.fx-table th:nth-child(2){width:52%}
-.fx-table td{height:88px;padding:0 12px;border-bottom:1px solid #e5e4f2;background:#ffffffb8}.fx-table tbody tr:nth-child(even) td{background:#f6f7fcb8}.fx-table tbody tr:last-child td{border-bottom:0}.fx-table td:first-child{padding-right:12px}
+.canvas.report.iran-fx{background:#f7f6fc}.iran-fx .report-header{height:128px}.iran-fx .accent-stripe{height:8px}.iran-fx .report-title{height:124px;border:0;padding:0 32px 0 42px}.iran-fx .report-title h1{font-size:68px;border-color:#fa7972}.iran-fx .report-subtitle{background:#fff;border:1.5px solid #e2e0ef;border-radius:40px;padding:12px 26px;font-size:29px}.iran-fx .report-main{padding:0 32px 20px}.iran-fx .brand-watermark{width:720px;height:720px;opacity:.025}
+.fx-board{display:grid;grid-template-columns:1fr 1fr;gap:18px;direction:rtl;height:100%}.fx-half{min-width:0;display:flex;flex-direction:column;border:1.5px solid #e1dff0;border-radius:24px;overflow:hidden;align-self:start}.fx-table{border:0}
+.fx-table td{height:86px;padding:0 20px;border-bottom:1px solid #eae8f3;background:#fff}.fx-table tbody tr:nth-child(even) td{background:#faf9fe}.fx-table tbody tr:last-child td{border-bottom:0}.fx-table td:first-child{width:51%;padding-right:20px;padding-left:0}.fx-table td:nth-child(2){width:49%;text-align:left}
 .currency-name{display:flex;align-items:center;gap:10px;font-size:32px;white-space:nowrap}.currency-name strong{font-weight:800}.currency-name small{font:600 22px Arial,sans-serif;color:#77708f;line-height:1.45;letter-spacing:.6px}
 .currency-flag{width:52px;height:40px;object-fit:cover;border-radius:5px;flex-shrink:0;border:1px solid #d8dbe3}
-.fx-table .price{font-size:62px;letter-spacing:-1.3px;line-height:1.15}.fx-unit{height:88px;display:flex;align-items:center;justify-content:center;gap:9px;font-size:27px;color:#595372;flex-wrap:wrap}.fx-unit b{color:#4b3dcb}.availability-note{font-size:18px;max-width:100%;text-align:center}
+.iran-fx .currency-flag{width:68px;height:52px;border-radius:8px}.iran-fx .currency-name{gap:12px}.iran-fx .name-stack strong{line-height:1.35}
+.fx-table .price{font-size:62px;letter-spacing:-1.3px;line-height:1.15}.fx-unit{height:86px;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:9px;font-size:28px;color:#595372;flex-wrap:wrap;background:#f0eef8;border-top:1px solid #eae8f3}.fx-unit b{color:#4b3dcb;font-size:36px}.availability-note{font-size:18px;max-width:100%;text-align:center}
 .iran-fx .report-footer{height:88px;font-size:22px}.iran-fx .report-footer b{padding-right:32px;border-right:1px solid #fff}
 .turkey-gold .report-title{height:156px}.turkey-gold .report-title h1{font-size:68px}.turkey-gold .report-main{padding:24px 44px 0}.turkey-gold .report-footer,.fx-pulse .report-footer{height:88px}
 .buy-sell-key{display:flex;align-items:center;gap:20px;font-size:25px;font-weight:800;white-space:nowrap}.buy-sell-key span{display:flex;align-items:center;gap:8px}.buy-sell-key i{width:19px;height:19px;border-radius:50%}.sell-dot{background:#df002e}.buy-dot{background:#00802f}
