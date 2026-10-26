@@ -15,6 +15,11 @@ on:
       - channel_split/prepare_tgju_api_transport.py
       - channel_split/test_tgju_public_api.py
       - channel_split/add_tgju_akamai_endpoint.py
+      - channel_split/kiani_images.py
+      - channel_split/kiani_image_assets/**
+      - channel_split/deploy_kiani_images.py
+      - channel_split/test_kiani_images.py
+      - channel_split/visual_kiani_images.py
       - .github/workflows/alanchande-image-previews.yml
   pull_request:
     paths:
@@ -54,6 +59,7 @@ jobs:
           python channel_split/test_market_image_delivery.py -v
           python channel_split/test_tgju_public_api.py -v
           python channel_split/add_tgju_akamai_endpoint.py --self-test
+          python channel_split/test_kiani_images.py -v
           python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
           python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
           python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v
@@ -62,6 +68,8 @@ jobs:
           bash -n channel_split/deploy_images_via_ssh.sh
       - name: Generate all five visibly illustrative PNG proofs
         run: python channel_split/visual_market_images.py --kind all --output-dir image-previews
+      - name: Generate four visibly illustrative Kiani customer images
+        run: python channel_split/visual_kiani_images.py --output-dir image-previews/kiani
       - name: Upload visual-review PNGs
         uses: actions/upload-artifact@v4
         with:
