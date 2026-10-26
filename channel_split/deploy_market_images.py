@@ -73,7 +73,7 @@ anchors = [
                         token, chat_id, image_path,
                         captions[post_key] + "\\n@alanchande_com",
                         details_text=image_post_details(post_key, text),
-                        details_as_caption=post_key == "usdt",
+                        details_as_caption=post_key in {"usdt", "fx-pulse"},
                     )
             else:
                 send_result = telegram_send(token, chat_id, text)''',
@@ -98,21 +98,28 @@ anchors = [
 legacy_import = anchors[0][1].replace(', image_post_details', '')
 legacy_fx_send = anchors[1][1].replace('details_text=image_post_details(post_key, text)',
                                     'details_text=text if post_key == "iran-fx" else None')
-legacy_fx_send = legacy_fx_send.replace('                        details_as_caption=post_key == "usdt",\n', '')
+caption_option_line = '                        details_as_caption=post_key in {"usdt", "fx-pulse"},\n'
+legacy_fx_send = legacy_fx_send.replace(caption_option_line, '')
 legacy_photo_send = anchors[1][1].replace('                        details_text=image_post_details(post_key, text),\n', '').replace(
-    '                        details_as_caption=post_key == "usdt",\n', '')
+    caption_option_line, '')
+legacy_usdt_send = anchors[1][1].replace('details_as_caption=post_key in {"usdt", "fx-pulse"}',
+                                      'details_as_caption=post_key == "usdt"')
+legacy_integrations = ((legacy_import,legacy_fx_send),(legacy_import,legacy_photo_send),
+                       (anchors[0][1],legacy_usdt_send))
 
 if "from market_images import SUPPORTED_MARKETS" in original:
     # Never re-patch or replace a publisher whose integration was modified.
     patched = original
+    legacy = next(((import_line,send_block) for import_line,send_block in legacy_integrations
+                   if original.count(import_line)==1 and original.count(send_block)==1
+                   and original.count(anchors[2][1])==1),None)
     if all(original.count(new) == 1 for old, new in anchors):
         pass
-    elif (original.count(legacy_import) == 1 and original.count(anchors[2][1]) == 1
-          and any(original.count(legacy_send) == 1 for legacy_send in (legacy_fx_send,legacy_photo_send))):
+    elif legacy is not None:
         if not args.upgrade_integration:
             sys.exit("STOP: earlier image integration installed; review and use --upgrade-integration for full mobile text")
-        legacy_send = next(value for value in (legacy_fx_send,legacy_photo_send) if original.count(value)==1)
-        patched = original.replace(legacy_import, anchors[0][1], 1).replace(legacy_send, anchors[1][1], 1)
+        legacy_import_line,legacy_send = legacy
+        patched = original.replace(legacy_import_line, anchors[0][1], 1).replace(legacy_send, anchors[1][1], 1)
     else:
         sys.exit("STOP: installed image-publisher integration differs; review changes manually")
     exact_assets = all((target_assets / name).is_file()

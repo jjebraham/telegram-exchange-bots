@@ -100,7 +100,7 @@ def main() -> int:
         caption += '\nجزئیات نرخ‌ها و تغییرات در پیام متنی همراه.'
     try:
         response = telegram_send_photo(token, DEST, target, caption, details_text=details_text,
-                                       details_as_caption=args.kind=='usdt')
+                                       details_as_caption=args.kind in {'usdt','fx-pulse'})
     except IncompleteImagePostError as error:
         target.with_suffix('.receipt.json').write_text(
             json.dumps({'status':'photo_sent_details_unconfirmed',

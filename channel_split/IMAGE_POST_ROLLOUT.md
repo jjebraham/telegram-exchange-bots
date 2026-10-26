@@ -44,8 +44,9 @@ linked HTML text message. It includes all 25 rates, Δ24H, Δ1M, source time,
 unit, availability notes and disclaimer. Both outputs use one fetched snapshot.
 The complete table exceeds Telegram's 1024-character photo-caption limit, so
 it uses `sendMessage` (4096 characters) with a reply to the photo. Length is
-checked before sending; details are never truncated. Gold and Turkey FX pulse
-remain one photo each. Sample mode labels both the image and the full text.
+checked before sending; details are never truncated. Gold remains one photo;
+Turkey FX pulse includes its full caption as described below. Sample mode
+labels both the image and the full text.
 
 Success requires Telegram receipts for both messages. A partial delivery
 reports the already-sent photo ID and does not automatically retry the photo.
@@ -84,6 +85,16 @@ The previous USDT golden HTML digest is superseded by this explicit redesign.
 Tests verify three-column prices, buy/sell mapping, summaries, readable type,
 missing history, five/eight-row bounds, one-fetch text consistency, complete
 HTML caption delivery and long-text fallback.
+
+## Turkey FX pulse
+
+The two main USD/TL and EUR/TL rates use black 88-pixel type, reduced from 116.
+The layout, flags, units, original four-decimal midpoints and daily/monthly
+panels remain. The complete original verified bulletin is included as the
+photo's HTML caption; oversized future text uses the existing linked fallback.
+No source rate, midpoint calculation, percentage, source time or safety rule
+is changed. `--kind fx-pulse --send-test` fetches one enforced snapshot for
+both image and text and always targets TEST.
 
 ## Verified data contracts
 

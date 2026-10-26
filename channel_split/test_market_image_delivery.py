@@ -168,6 +168,18 @@ class DeliveryTests(unittest.TestCase):
     def test_blocked_usdt_sends_neither_photo_nor_text(self):
         self._manual_preview('BLOCKED','usdt')
 
+    def test_manual_pulse_image_and_full_caption_use_one_verified_snapshot(self):
+        self._manual_preview('VERIFIED','fx-pulse')
+
+    def test_pulse_text_keeps_four_decimals_periods_clock_and_units(self):
+        source=('📊 <b>نبض بازار ارز ترکیه | 24H</b>\n'
+                '<pre>MARKET RATE Δ24H Δ1M\n🇺🇸USD/TL 49.7900 — +1.98%\n'
+                '🇪🇺EUR/TL 55.5750 -0.42% —</pre>\n💵 واحد: لیر ترکیه 🇹🇷\n'
+                '🕒 <code>15:50</code> استانبول\nقیمت‌ها صرفاً جهت اطلاع‌رسانی است.')
+        self.assertEqual(image_post_details('fx-pulse',source),source)
+        with self.assertRaises(ValueError):
+            image_post_details('fx-pulse',source.replace('Δ24H Δ1M','Δ1M Δ24H'))
+
 
 if __name__ == '__main__':
     unittest.main()
