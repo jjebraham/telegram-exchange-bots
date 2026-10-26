@@ -7,12 +7,13 @@ import sys
 import tempfile
 from types import SimpleNamespace as NS
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from PIL import Image
 from telethon.tl import functions, types
 from kiani_story_state import SourceReceipt, StoryState, STORY_PERIOD, select_receipt, in_daily_window
-from kiani_story_worker import process, preflight, story_canvas, validate_source
+from kiani_story_worker import main_async, process, preflight, story_canvas, validate_source
 
 NOW = datetime(2026, 10, 27, 9, 11, tzinfo=timezone.utc)  # 12:11 Istanbul
 SOURCE = SourceReceipt('2026-10-27', 1234, NOW - timedelta(seconds=50))
@@ -31,6 +32,12 @@ class FakeClient:
         self.sent, self.deleted = [], []
         self.active = {111: [], 222: []}
         self.flood, self.premium, self.read_fail = flood, premium, False
+
+    async def connect(self):
+        pass
+
+    async def disconnect(self):
+        pass
 
     async def is_user_authorized(self):
         return True
@@ -140,6 +147,22 @@ class StoryReceiptTests(unittest.TestCase):
 
 
 class StoryApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_flood_wait_when_reading_source_also_defers_next_connection(self):
+        class ReadFloodClient(FakeClient):
+            async def get_messages(self, entity, ids):
+                raise type('FloodWaitError', (Exception,), {'seconds': 600})()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'state.sqlite3'
+            config = dict(CONFIG, receipt_db='unused-receipts', state_db=str(path))
+            with patch('kiani_story_worker.load_config', return_value=config), \
+                 patch('kiani_story_worker.select_receipt', return_value=SOURCE), \
+                 patch('kiani_story_worker.new_client', return_value=ReadFloodClient()) as factory:
+                self.assertEqual(await main_async(NS(action='run', config=Path('unused-config'))), 1)
+                self.assertTrue(StoryState(path).cooling_down(datetime.now(timezone.utc)))
+                await main_async(NS(action='run', config=Path('unused-config')))
+                self.assertEqual(factory.call_count, 1)
+
     async def test_preflight_rejects_nonpremium_for_requested_48_hour_period(self):
         report = await preflight(FakeClient(premium=False), CONFIG)
         self.assertTrue(all(not row['ready'] for row in report.values()))

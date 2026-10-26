@@ -261,8 +261,8 @@ async def main_async(args):
             print(json.dumps({job['target']: job['status'] for job in jobs}))
             return 0
     client = new_client(config)
-    await client.connect()
     try:
+        await client.connect()
         if args.action == 'preflight':
             report = await preflight(client, config)
         else:
@@ -271,6 +271,13 @@ async def main_async(args):
         if args.action == 'preflight':
             return 0 if all(row['ready'] for row in report.values()) else 1
         return 0 if all(status == 'sent' for status in report.values()) else 1
+    except Exception as error:
+        delay = flood_delay(error)
+        if args.action == 'run' and delay:
+            state.defer(delay, datetime.now(timezone.utc))
+            print('STORY WORKER WAIT:', type(error).__name__, delay)
+            return 1
+        raise
     finally:
         await client.disconnect()
 
