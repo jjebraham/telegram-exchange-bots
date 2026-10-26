@@ -1,15 +1,15 @@
 # AlanChande image reports: review, deployment and rollback
 
 All five templates render validated publisher output offline with Python,
-Playwright and Chromium. The four additional reference layouts are implemented
-in `market_report_templates.py`; the established USDT HTML is preserved exactly
-by a regression digest from commit `d9e4894`.
+Playwright and Chromium. The four additional layouts are implemented in
+`market_report_templates.py`. USDT and Iranian FX use the requested mobile
+layouts with larger main rates and historical details in accompanying text.
 
 ## Layouts and assets
 
 | Kind | Logical artboard | Main composition | Sample PNG |
 |---|---|---|---|
-| usdt | 1200 × 1500 at seven exchanges | Exchange table and four summary cards | 2400 × 3080 |
+| usdt | 1200 × 1500 at seven exchanges | Three-column mobile rate table and four summary cards | 2400 × 3080 |
 | iran-fx | 1200 × 1500 | Right 13 / left 12 currency rows, rates only | 2400 × 3080 |
 | iran-gold | 1200 × 1200 at seven instruments | Five coin rows and two gold rows | 2400 × 2480 |
 | turkey-gold | 1200 × 1200 | Four sell/buy rows with Persian/Turkish names | 2400 × 2480 |
@@ -44,8 +44,8 @@ linked HTML text message. It includes all 25 rates, Δ24H, Δ1M, source time,
 unit, availability notes and disclaimer. Both outputs use one fetched snapshot.
 The complete table exceeds Telegram's 1024-character photo-caption limit, so
 it uses `sendMessage` (4096 characters) with a reply to the photo. Length is
-checked before sending; details are never truncated. Other markets remain
-one photo each. Sample mode labels both the image and the full text.
+checked before sending; details are never truncated. Gold and Turkey FX pulse
+remain one photo each. Sample mode labels both the image and the full text.
 
 Success requires Telegram receipts for both messages. A partial delivery
 reports the already-sent photo ID and does not automatically retry the photo.
@@ -57,6 +57,33 @@ The guarded installer recognizes the exact earlier photo-only integration,
 but requires `--upgrade-integration` to migrate it. `--upgrade-renderer` alone
 cannot change that publisher integration. The reviewed SSH deployment helper
 passes both flags; do not run it against production before visual approval.
+
+## USDT on phones, with full text beneath the photo
+
+The USDT image has three columns: exchange, **your purchase**, and **your sale**.
+It retains the exchange logos and all four summary cards, with 70-pixel table
+rates (about 23 pixels at a 390-pixel phone width). Percentage columns are
+omitted from the image. The full daily/monthly table remains in the text,
+with dashes where actual historical values are unavailable. The artboard
+adjusts by 104 logical pixels for each exchange above/below seven.
+
+The first publisher value is `buy_toman`, what the customer pays to buy USDT;
+the second is `sell_toman`, what the customer receives when selling it. Values
+and summaries are never swapped or recalculated. The source text's SELL/BUY
+header uses the exchange's perspective; `image_post_details` changes only that
+display header to customer BUY/SELL and adds a short Persian explanation.
+Every source row, percentage, source clock and summary value is preserved.
+
+USDT's complete text normally fits directly in the photo's HTML caption, so
+one Telegram post contains both image and text. If it exceeds the 1024-character
+caption limit, it falls back to linked full text; nothing is cut. Source checks
+are enforced before either output is sent. The manual preview command remains
+`--kind usdt --send-test` and always targets TEST.
+
+The previous USDT golden HTML digest is superseded by this explicit redesign.
+Tests verify three-column prices, buy/sell mapping, summaries, readable type,
+missing history, five/eight-row bounds, one-fetch text consistency, complete
+HTML caption delivery and long-text fallback.
 
 ## Verified data contracts
 

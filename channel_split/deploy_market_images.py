@@ -21,7 +21,7 @@ parser.add_argument("--apply", action="store_true")
 parser.add_argument("--upgrade-renderer", action="store_true",
                     help="Update artwork/renderer only when the installed publisher integration matches exactly")
 parser.add_argument("--upgrade-integration", action="store_true",
-                    help="Migrate the exact previous photo-only integration to photo plus full FX details")
+                    help="Migrate a known earlier integration to photo plus full mobile-market details")
 parser.add_argument("--backup-dir", type=Path, default=Path.home() / "kiani-image-backups")
 args = parser.parse_args()
 
@@ -48,7 +48,7 @@ original = main.read_text(encoding="utf-8")
 anchors = [
     (
         'DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"',
-        'from market_images import SUPPORTED_MARKETS, render_png, telegram_send_photo\n\n'
+        'from market_images import SUPPORTED_MARKETS, render_png, telegram_send_photo, image_post_details\n\n'
         'DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"',
     ),
     (
@@ -72,7 +72,8 @@ anchors = [
                     send_result = telegram_send_photo(
                         token, chat_id, image_path,
                         captions[post_key] + "\\n@alanchande_com",
-                        details_text=text if post_key == "iran-fx" else None,
+                        details_text=image_post_details(post_key, text),
+                        details_as_caption=post_key == "usdt",
                     )
             else:
                 send_result = telegram_send(token, chat_id, text)''',
@@ -94,18 +95,24 @@ anchors = [
     ),
 ]
 
-legacy_send = anchors[1][1].replace('                        details_text=text if post_key == "iran-fx" else None,\n', '')
+legacy_import = anchors[0][1].replace(', image_post_details', '')
+legacy_fx_send = anchors[1][1].replace('details_text=image_post_details(post_key, text)',
+                                    'details_text=text if post_key == "iran-fx" else None')
+legacy_fx_send = legacy_fx_send.replace('                        details_as_caption=post_key == "usdt",\n', '')
+legacy_photo_send = anchors[1][1].replace('                        details_text=image_post_details(post_key, text),\n', '').replace(
+    '                        details_as_caption=post_key == "usdt",\n', '')
 
 if "from market_images import SUPPORTED_MARKETS" in original:
     # Never re-patch or replace a publisher whose integration was modified.
     patched = original
     if all(original.count(new) == 1 for old, new in anchors):
         pass
-    elif (original.count(legacy_send) == 1
-          and all(original.count(new) == 1 for index, (old, new) in enumerate(anchors) if index != 1)):
+    elif (original.count(legacy_import) == 1 and original.count(anchors[2][1]) == 1
+          and any(original.count(legacy_send) == 1 for legacy_send in (legacy_fx_send,legacy_photo_send))):
         if not args.upgrade_integration:
-            sys.exit("STOP: photo-only integration installed; review and use --upgrade-integration for full FX text")
-        patched = original.replace(legacy_send, anchors[1][1], 1)
+            sys.exit("STOP: earlier image integration installed; review and use --upgrade-integration for full mobile text")
+        legacy_send = next(value for value in (legacy_fx_send,legacy_photo_send) if original.count(value)==1)
+        patched = original.replace(legacy_import, anchors[0][1], 1).replace(legacy_send, anchors[1][1], 1)
     else:
         sys.exit("STOP: installed image-publisher integration differs; review changes manually")
     exact_assets = all((target_assets / name).is_file()

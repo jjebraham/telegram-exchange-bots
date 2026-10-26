@@ -1,5 +1,12 @@
 # USDT reference implementation and visual acceptance
 
+**Mobile update, 26 October 2026:** The user requested the next USDT post in the
+new rate-first style. Its image now has three columns with larger buy/sell
+prices; percentages move to the full text beneath the photo. The customer
+convention and original values/summaries are preserved. See
+`IMAGE_POST_ROLLOUT.md` for the current layout, caption/fallback behavior and
+validation. The reference review below records the earlier implementation.
+
 This document covers the USDT infographic implementation. The four additional
 reference templates are now covered in `IMAGE_POST_ROLLOUT.md`. Production
 activation still requires explicit visual approval.

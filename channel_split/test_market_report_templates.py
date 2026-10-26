@@ -78,11 +78,17 @@ class ReportTests(unittest.TestCase):
                     target=render_png(kind,sample,Path(directory)/(kind+'.png'),now=SAMPLE_TIMES[kind])
                     self.assertEqual(struct.unpack('>II',target.read_bytes()[16:24]),(2400,2400))
 
-    def test_usdt_html_is_unchanged_from_the_approved_implementation(self):
-        # Golden HTML from d9e4894, including its embedded artwork and OFL font.
+    def test_mobile_usdt_preserves_prices_and_summaries_without_period_columns(self):
         from test_market_images import SAMPLE_TIME
-        digest=hashlib.sha256(html_for_post('usdt',SAMPLES['usdt'],now=SAMPLE_TIME).encode()).hexdigest()
-        self.assertEqual(digest,'88837d898b9f6c9fcc74714b3ba297701493c3f4ef0b97d3d15cff4ce4e62a1e')
+        html=html_for_post('usdt',SAMPLES['usdt'],now=SAMPLE_TIME)
+        rows=re.findall(r'<tr data-exchange="[^"]+">(.*?)</tr>',html)
+        self.assertEqual(len(rows),7)
+        self.assertTrue(all(row.count('<td>')==3 for row in rows))
+        self.assertTrue(all('percentage' not in row for row in rows))
+        self.assertIn('۲۶۹,۵۴۵',rows[0])
+        self.assertIn('۲۶۹,۲۴۵',rows[0])
+        for summary in ('avg-buy','avg-sell','lowest-buy','highest-sell'):
+            self.assertIn('usdt-summary '+summary,html)
 
     def test_all_25_canonical_flags_match_the_producer_and_fixture(self):
         from iran_fx import CURRENCY_ROWS

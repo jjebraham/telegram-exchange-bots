@@ -45,7 +45,7 @@ import os
 import re
 from pathlib import Path
 from publish_channels import _load_local_env
-from market_images import TITLES, telegram_send_photo
+from market_images import TITLES, telegram_send_photo, image_post_details
 _load_local_env()
 token = os.environ.get("ALANCHANDE_TELEGRAM_BOT_TOKEN")
 if not token:
@@ -58,8 +58,9 @@ for key in ("usdt", "iran-fx", "iran-gold", "turkey-gold", "fx-pulse"):
     marker = '===== ALANCHANDE_CHANNEL_ID (bot: ALANCHANDE_TELEGRAM_BOT_TOKEN) =====\n'
     if snapshot.count(marker) != 1:
         raise RuntimeError('Ambiguous verified bulletin for ' + key)
-    details = snapshot.split(marker, 1)[1].strip() if key == 'iran-fx' else None
-    result = telegram_send_photo(token, "@alanchandetest", path, "🧪 TEST — " + TITLES[key], details_text=details)
+    details = image_post_details(key, snapshot.split(marker, 1)[1].strip())
+    result = telegram_send_photo(token, "@alanchandetest", path, "🧪 TEST — " + TITLES[key],
+                                 details_text=details, details_as_caption=key=='usdt')
     print("Test channel", key, "message_id", result["result"]["message_id"])
     if 'details_result' in result:
         print('Full details message_id', result['details_result']['message_id'])

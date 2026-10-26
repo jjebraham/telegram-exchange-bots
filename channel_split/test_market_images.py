@@ -118,7 +118,7 @@ class TemplateTests(unittest.TestCase):
         for expected in (
             "tether-icon", "exchange-logo", "usdt-summary-grid",
             "avg-buy", "avg-sell", "lowest-buy", "highest-sell",
-            "۲۶۸,۵۰۰", "۲۶۹,۲۶۶", "−", "نوبیتکس", "راستین", "AlanVazir",
+            "۲۶۸,۵۰۰", "۲۶۹,۲۶۶", "نوبیتکس", "راستین", "AlanVazir",
         ):
             self.assertIn(expected, html)
 
@@ -216,7 +216,12 @@ class TemplateTests(unittest.TestCase):
                         _fit_dynamic_fields(page)
                         _validate_layout(page)
                         self.assertEqual(page.locator('tbody tr').count(), count)
-                        self.assertEqual(page.locator('.canvas').bounding_box()['height'], 1500 + 90 * (count-7))
+                        self.assertEqual(page.locator('.canvas').bounding_box()['height'], 1500 + 104 * (count-7))
+                        self.assertEqual(page.locator('.usdt-table th').count(),3)
+                        self.assertEqual(page.locator('.usdt-table .percentage').count(),0)
+                        normal=page.locator('.usdt-table tr[data-exchange="Wallex"] .buy')
+                        font=normal.evaluate('e => parseFloat(getComputedStyle(e).fontSize)')
+                        self.assertGreaterEqual(font*390/1200,22)
                         page.close()
             finally:
                 browser.close()

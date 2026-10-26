@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 
-from market_images import TITLES, IncompleteImagePostError, render_png, telegram_send_photo
+from market_images import TITLES, IncompleteImagePostError, image_post_details, render_png, telegram_send_photo
 
 POSTS = {
     "usdt": "alanchande-usdt-exchanges",
@@ -70,12 +70,10 @@ def main() -> int:
     render_png(args.kind, approved_text, target, demo=args.sample,
                now=SAMPLE_TIMES[args.kind] if args.sample else None)
     print(f"Rendered: {target} ({target.stat().st_size:,} bytes)")
-    details_text = None
-    if args.kind == 'iran-fx':
+    details_text = image_post_details(args.kind, approved_text, demo=args.sample)
+    if details_text is not None:
         # Keep every value, period, omission note and source time from the same
         # verified snapshot used to render this image. Never fetch a second time.
-        warning = '🧪 <b>نمونه آزمایشی — قیمت‌ها واقعی نیستند</b>\n\n' if args.sample else ''
-        details_text = warning + approved_text
         details_path = target.with_suffix('.details.html')
         details_path.write_text(details_text, encoding='utf-8')
         print(f"Full text: {details_path}")
@@ -101,7 +99,8 @@ def main() -> int:
     if details_text is not None:
         caption += '\nجزئیات نرخ‌ها و تغییرات در پیام متنی همراه.'
     try:
-        response = telegram_send_photo(token, DEST, target, caption, details_text=details_text)
+        response = telegram_send_photo(token, DEST, target, caption, details_text=details_text,
+                                       details_as_caption=args.kind=='usdt')
     except IncompleteImagePostError as error:
         target.with_suffix('.receipt.json').write_text(
             json.dumps({'status':'photo_sent_details_unconfirmed',
@@ -110,7 +109,10 @@ def main() -> int:
         raise SystemExit(str(error)) from None
     message_id = int(response["result"]["message_id"])
     receipt = {'status':'sent','photo_message_id':message_id}
-    if 'details_result' in response:
+    if response.get('details_in_caption'):
+        receipt.update(details_message_id=message_id,details_in_caption=True)
+        print('Full text included in the photo caption')
+    elif 'details_result' in response:
         details_id = int(response['details_result']['message_id'])
         receipt['details_message_id'] = details_id
         print(f"Full details sent: https://t.me/alanchandetest/{details_id}")

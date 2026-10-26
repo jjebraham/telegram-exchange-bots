@@ -46,15 +46,24 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(renderer.read_bytes(), (ROOT / 'market_images.py').read_bytes())
             # The previous exact integration needs deliberate migration; other
             # publisher edits survive and renderer-only upgrades cannot do it.
-            legacy=publisher.read_text(encoding='utf-8').replace('                        details_text=text if post_key == "iran-fx" else None,\n','')
+            legacy=publisher.read_text(encoding='utf-8').replace(', image_post_details','').replace(
+                'details_text=image_post_details(post_key, text)', 'details_text=text if post_key == "iran-fx" else None').replace(
+                '                        details_as_caption=post_key == "usdt",\n','')
             legacy += '\n# unrelated local publisher customization\n'
             publisher.write_text(legacy,encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
             migrated=run('--upgrade-integration','--apply')
             self.assertEqual(migrated.returncode,0,migrated.stderr)
-            self.assertIn('details_text=text if post_key == "iran-fx" else None',publisher.read_text(encoding='utf-8'))
+            self.assertIn('details_text=image_post_details(post_key, text)',publisher.read_text(encoding='utf-8'))
             self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
             self.assertEqual(run('--apply').returncode,0)
+            photo_only=publisher.read_text(encoding='utf-8').replace(', image_post_details','').replace(
+                '                        details_text=image_post_details(post_key, text),\n','').replace(
+                '                        details_as_caption=post_key == "usdt",\n','')
+            publisher.write_text(photo_only,encoding='utf-8')
+            self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
+            self.assertEqual(run('--upgrade-integration','--apply').returncode,0)
+            self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
             publisher.write_text(publisher.read_text(encoding='utf-8').replace('preview_dir = os.environ', 'changed_dir = os.environ'), encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer', '--apply').returncode, 0)
 

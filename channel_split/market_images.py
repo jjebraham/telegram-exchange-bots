@@ -140,15 +140,13 @@ def _usdt(text: str) -> str:
             f'<tr data-exchange="{name}"><td><div class="exchange-name">'
             f'{_badge_icon(name)}<strong>{escape(EXCHANGES[name])}</strong></div></td>'
             f'<td><span class="buy num" dir="ltr">{_fa_num(buy)}</span></td>'
-            f'<td><span class="sell num" dir="ltr">{_fa_num(sell)}</span></td>'
-            f'<td>{_usdt_percent(day)}</td><td>{_usdt_percent(month)}</td></tr>'
+            f'<td><span class="sell num" dir="ltr">{_fa_num(sell)}</span></td></tr>'
         )
     if not 5 <= len(rows) <= len(EXCHANGES):
         raise ValueError("USDT source count outside expected range")
     table = (
         '<section class="usdt-table"><table><thead><tr>'
-        '<th>صرافی</th><th>قیمت خرید</th><th>قیمت فروش</th>'
-        '<th>تغییر ۲۴ ساعت</th><th>تغییر ۱ ماه</th>'
+        '<th>صرافی</th><th>خرید شما</th><th>فروش شما</th>'
         '</tr></thead><tbody>' + "".join(rows) + '</tbody></table></section>'
     )
     summaries = []
@@ -377,9 +375,9 @@ def _fit_dynamic_fields(page) -> None:
 
 
 USDT_CSS = """
-.usdt.canvas{font-family:AlanVazir,sans-serif;color:#10113c;background:white}
+.usdt.canvas{font-family:AlanVazir,sans-serif;color:#10113c;background:#f7f6fc}
 .usdt>.stripe{display:none}
-.usdt .header{height:132px;position:relative;isolation:isolate;overflow:hidden;padding:12px 58px 0;
+.usdt .header{height:120px;position:relative;isolation:isolate;overflow:hidden;padding:12px 58px 0;
  background:linear-gradient(100deg,#657efb,#4a7df0);font-size:36px;font-weight:800;line-height:1.3}
 .usdt .header:before{content:"";position:absolute;z-index:-1;inset:11px 12px 0;border-radius:28px 28px 18px 18px;
  background:linear-gradient(110deg,#3436b2,#2846af 55%,#3639b3)}
@@ -390,36 +388,36 @@ USDT_CSS = """
 .usdt .header small{font-size:31px;font-weight:750;color:white}
 .usdt .header svg{height:48px;width:48px;flex-shrink:0}
 .usdt .header svg.header-landscape{position:absolute;z-index:0;width:440px;height:132px;left:385px;bottom:0;opacity:.28}
-.usdt .title{height:186px;min-height:186px;border:0;padding:0 25px 0 36px;display:grid;grid-template-columns:176px 1fr 166px;gap:12px;align-items:center}
+.usdt .title{height:150px;min-height:150px;border:0;padding:0 25px 0 36px;display:grid;grid-template-columns:140px 1fr 164px;gap:12px;align-items:center}
 .usdt .hero-group{display:contents}
-.usdt .title h1{font-size:64px;line-height:1.5;font-weight:900;border:0;padding:0;margin:0 -1% 0 0;width:102%;transform:scaleX(.98);letter-spacing:-2.7px;white-space:nowrap;color:#10113c;text-align:center}
-.usdt .title h1 span{font-size:80px;background:linear-gradient(0deg,#3334b6,#5b59e3);background-clip:text;color:transparent}
+.usdt .title h1{font-size:60px;line-height:1.5;font-weight:900;border:0;padding:0;margin:0 -1% 0 0;width:102%;transform:scaleX(.98);letter-spacing:-2.7px;white-space:nowrap;color:#10113c;text-align:center}
+.usdt .title h1 span{font-size:74px;background:linear-gradient(0deg,#3334b6,#5b59e3);background-clip:text;color:transparent}
 .usdt .title .subtitle{font-size:26px;font-weight:750;color:#4d4c77;align-self:center;position:relative;padding-bottom:18px;white-space:nowrap}
 .usdt .title .subtitle:after{content:"";width:78px;height:5px;position:absolute;bottom:0;left:0;background:#7d72ff;border-radius:3px}
-.usdt .tether-icon{width:188px;height:170px;object-fit:contain;justify-self:end}
+.usdt .tether-icon{width:150px;height:140px;object-fit:contain;justify-self:end}
 .usdt .main{padding:0 20px 20px;display:block;flex:1;min-height:0}
-.usdt .usdt-body{display:flex;flex-direction:column;gap:22px}
+.usdt .usdt-body{display:flex;flex-direction:column;gap:18px}
 .usdt-table table{border:2px solid #e2e3f5;border-radius:20px;table-layout:fixed;overflow:hidden}
-.usdt-table th{height:72px;font-size:28px;font-weight:800;color:#222151;background:linear-gradient(110deg,#eff0fc,#eaeaf7);padding:8px 4px;line-height:1.4;white-space:nowrap}
-.usdt-table th:first-child,.usdt-table td:first-child{width:22%;padding-right:24px;text-align:right}
-.usdt-table th:not(:first-child){width:19.5%}
-.usdt-table td{height:90px;padding:6px 4px;border-bottom:1px solid #dedff0;background:white;line-height:1.4}
-.usdt-table tr:nth-child(even) td{background:#fff}
-.usdt-table .exchange-name{display:flex;align-items:center;gap:16px;font-size:33px;font-weight:850;white-space:nowrap}
+.usdt-table th{height:64px;font-size:32px;font-weight:800;color:#222151;background:linear-gradient(110deg,#eff0fc,#eaeaf7);padding:8px 12px;line-height:1.4;white-space:nowrap}
+.usdt-table th:first-child,.usdt-table td:first-child{width:30%;padding-right:24px;text-align:right}
+.usdt-table th:not(:first-child){width:35%}
+.usdt-table td{height:104px;padding:6px 16px;border-bottom:1px solid #dedff0;background:white;line-height:1.25}
+.usdt-table tr:nth-child(even) td{background:#faf9fe}
+.usdt-table .exchange-name{display:flex;align-items:center;gap:16px;font-size:38px;font-weight:850;white-space:nowrap}
 .usdt-table .exchange-name strong{font-weight:850}
 .usdt-table .exchange-logo{width:61px;height:61px;object-fit:contain;flex-shrink:0}
 .usdt .num{font-family:AlanVazir,sans-serif;font-weight:900;white-space:nowrap;unicode-bidi:isolate;display:inline-block}
-.usdt-table .num{font-size:44px;letter-spacing:-.8px}
+.usdt-table .num{font-size:70px;letter-spacing:-1.3px;line-height:1.2}
 .usdt-table .percentage{font-size:41px;display:inline-flex;direction:ltr;align-items:baseline;gap:0;letter-spacing:-1px}
 .usdt-table .buy{color:#db0632}.usdt-table .sell{color:#10113c}
 .usdt-table .up{color:#008036}.usdt-table .down{color:#e30a33}.usdt-table .muted{color:#737197}
-.usdt-summary-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:165px 165px;gap:20px 24px;direction:rtl}
-.usdt-summary{position:relative;border-radius:18px;border:1.5px solid #cbd9ff;background:linear-gradient(110deg,#eff3ff,#f9faff);padding:22px 26px;overflow:visible;color:#181a65}
-.usdt-summary .summary-label{font-size:27px;font-weight:800;color:#454374;text-align:center;margin:8px 80px 0 10px;line-height:1.4;white-space:nowrap}
-.usdt-summary .summary-price{position:absolute;bottom:19px;left:32px;right:132px;display:flex;direction:rtl;align-items:baseline;justify-content:center;gap:14px;line-height:1.15;white-space:nowrap}
-.usdt-summary .summary-price .num{font-size:67px;letter-spacing:-1.4px;flex-shrink:0}
+.usdt-summary-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:144px 144px;gap:16px 24px;direction:rtl}
+.usdt-summary{position:relative;border-radius:18px;border:1.5px solid #cbd9ff;background:linear-gradient(110deg,#eff3ff,#f9faff);padding:16px 26px;overflow:visible;color:#181a65}
+.usdt-summary .summary-label{font-size:29px;font-weight:800;color:#454374;text-align:center;margin:0 80px 0 10px;line-height:1.4;white-space:nowrap}
+.usdt-summary .summary-price{position:absolute;bottom:13px;left:32px;right:132px;display:flex;direction:rtl;align-items:baseline;justify-content:center;gap:14px;line-height:1.15;white-space:nowrap}
+.usdt-summary .summary-price .num{font-size:60px;letter-spacing:-1.4px;flex-shrink:0}
 .usdt-summary .unit{font-size:25px;font-weight:700;color:#454374}
-.usdt-summary .summary-icon{position:absolute;left:29px;top:20px;width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(120deg,#dfe7ff,#d6dfff);color:#4c4de0}
+.usdt-summary .summary-icon{position:absolute;left:29px;top:16px;width:60px;height:60px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(120deg,#dfe7ff,#d6dfff);color:#4c4de0}
 .usdt-summary .summary-icon svg{width:43px;height:43px;fill:currentColor}
 .usdt-summary .summary-brand{position:absolute;right:40px;bottom:26px;font-size:27px;font-weight:850;line-height:1.4;white-space:nowrap}
 .usdt-summary.avg-buy,.usdt-summary.lowest-buy{background:linear-gradient(110deg,#fff0f4,#fff8fa);border-color:#ffbdd1;color:#db0632}
@@ -457,7 +455,7 @@ def html_for_post(kind: str, text: str, *, now: datetime | None = None) -> str:
     city = "تهران" if tz == "Asia/Tehran" else "استانبول"
     content = {"usdt":_usdt,"iran-fx":_iran_fx,"iran-gold":_iran_gold,
                "turkey-gold":_turkey_gold,"fx-pulse":_pulse}[kind](text)
-    heights = {"usdt":1500 + 90 * (content.count('data-exchange=') - 7),"iran-fx":1580,"iran-gold":1280,"turkey-gold":1280,"fx-pulse":1180}
+    heights = {"usdt":1500 + 104 * (content.count('data-exchange=') - 7),"iran-fx":1580,"iran-gold":1280,"turkey-gold":1280,"fx-pulse":1180}
     subtitle = {"usdt":"ارقام به تومان","iran-fx":"ارقام به تومان",
                 "iran-gold":"قیمت بازار · ارقام به تومان",
                 "turkey-gold":"بازار Kapalıçarşı · لیر ترکیه",
@@ -577,6 +575,30 @@ def render_png(kind: str, approved_text: str, output: Path | str, *, demo: bool 
     return target
 
 
+def image_post_details(kind: str, approved_text: str, *, demo: bool = False) -> str | None:
+    """Complete companion text for the mobile rate images, from the same snapshot.
+
+    USDT's publisher header uses the exchange's SELL/BUY perspective. The image
+    labels the customer's BUY/SELL perspective. Align only the display header;
+    every source row, summary value and historical percentage remains untouched.
+    """
+    if kind not in {'iran-fx', 'usdt'}:
+        return None
+    text = approved_text
+    if kind == 'usdt':
+        _usdt(approved_text)  # Preserve strict source/summary validation.
+        header = re.search(r'(<pre>)([^\n]*)(\n)', text)
+        if header is None or unescape(header.group(2)).replace('\u200e','').split() != ['EXCHANGE','SELL','BUY','Δ24H','Δ1M']:
+            raise ValueError('Unrecognized USDT publisher price/period columns')
+        labels = '\u200e' + f"{'EXCHANGE':<9} {'BUY':>7} {'SELL':>7} {'Δ24H':>7} {'Δ1M':>7}"
+        text = text[:header.start(2)] + labels + text[header.end(2):]
+        text += ('\n\nخرید (BUY): مبلغ پرداختی شما برای خرید هر تتر.'
+                 '\nفروش (SELL): مبلغ دریافتی شما از فروش هر تتر.')
+    if demo:
+        text = '🧪 <b>نمونه آزمایشی — قیمت‌ها واقعی نیستند</b>\n\n' + text
+    return text
+
+
 class IncompleteImagePostError(RuntimeError):
     """The photo exists; callers must inspect before retrying a partial delivery."""
 
@@ -587,10 +609,14 @@ class IncompleteImagePostError(RuntimeError):
                          'Do not resend the photo; inspect the message before retrying details.')
 
 
-def _check_details_length(text: str) -> None:
+def _telegram_text_length(text: str) -> int:
     # Conservative UTF-16 count after HTML entity parsing, including flags.
     visible = unescape(re.sub(r'<[^>]*>', '', text))
-    if not 1 <= len(visible.encode('utf-16-le')) // 2 <= 4096:
+    return len(visible.encode('utf-16-le')) // 2
+
+
+def _check_details_length(text: str) -> None:
+    if not 1 <= _telegram_text_length(text) <= 4096:
         raise ValueError('Full market details must fit one Telegram text message; nothing sent')
 
 
@@ -616,19 +642,22 @@ def _telegram_send_details(token: str, chat_id: str, text: str, photo_id: int, t
 
 
 def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: str, *,
-                        timeout: int = 35, details_text: str | None = None) -> dict:
+                        timeout: int = 35, details_text: str | None = None,
+                        details_as_caption: bool = False) -> dict:
     """Send a photo and optional complete bulletin; success requires both receipts.
 
-    Details are a linked text message, because the full FX table exceeds the
-    1024-character photo-caption limit. No truncation or automatic retry occurs.
+    Requested short details fit directly in an HTML caption; longer bulletins
+    use a linked text message. Full details are never truncated or retried.
     """
     if details_text is not None:
         _check_details_length(details_text)
+    inline_details = details_text is not None and details_as_caption and _telegram_text_length(details_text) <= 1024
     boundary = "AlanChande" + uuid.uuid4().hex
     def field(name: str, val: str) -> bytes:
         return (f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{val}\r\n').encode()
     png = Path(photo).read_bytes()
-    body = b"".join([field("chat_id",chat_id), field("caption",caption[:1024]),
+    body = b"".join([field("chat_id",chat_id), field("caption",details_text if inline_details else caption[:1024]),
+                     field("parse_mode","HTML") if inline_details else b"",
                      field("disable_notification","true"),
                      (f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="market.png"\r\nContent-Type: image/png\r\n\r\n').encode(),
                      png,b"\r\n",(f"--{boundary}--\r\n").encode()])
@@ -643,7 +672,9 @@ def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: st
         raise RuntimeError(f"Telegram sendPhoto connection failure: {type(error).__name__}") from None
     if not result.get("ok") or not isinstance(result.get("result"),dict) or "message_id" not in result["result"]:
         raise RuntimeError("Telegram sendPhoto did not return a message ID")
-    if details_text is not None:
+    if inline_details:
+        result['details_in_caption'] = True
+    elif details_text is not None:
         try:
             details = _telegram_send_details(token, chat_id, details_text, result['result']['message_id'], timeout)
         except Exception:
