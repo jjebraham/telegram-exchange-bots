@@ -20,6 +20,9 @@ on:
       - channel_split/deploy_kiani_images.py
       - channel_split/test_kiani_images.py
       - channel_split/visual_kiani_images.py
+      - channel_split/*stor*.py
+      - channel_split/requirements-stories.txt
+      - channel_split/systemd/kiani-channel-stories.*
       - .github/workflows/alanchande-image-previews.yml
   pull_request:
     paths:
@@ -48,6 +51,7 @@ jobs:
       - name: Install screenshot and comparison dependencies
         run: |
           python -m pip install 'playwright==1.57.0' Pillow
+          python -m pip install -r channel_split/requirements-stories.txt
           python -m playwright install --with-deps chromium
       - name: Test five templates, publisher contracts and guarded deployment
         env:
@@ -60,6 +64,7 @@ jobs:
           python channel_split/test_tgju_public_api.py -v
           python channel_split/add_tgju_akamai_endpoint.py --self-test
           python channel_split/test_kiani_images.py -v
+          python channel_split/test_kiani_stories.py -v
           python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
           python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
           python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for the successful 12:10 Istanbul Kiani post each day
+
+[Timer]
+OnCalendar=*-*-* 12:10..29:30 Europe/Istanbul
+AccuracySec=5s
+RandomizedDelaySec=0
+Persistent=false
+Unit=kiani-channel-stories.service
+
+[Install]
+WantedBy=timers.target
