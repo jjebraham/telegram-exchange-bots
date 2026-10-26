@@ -46,6 +46,22 @@ Recheck the approved login with `setup_kiani_stories.py --check`. After fixing
 boosts or permissions, a successful recheck restores readiness. Revoking the
 session in Telegram Settings → Devices also revokes the worker's login.
 
+## Switch administrator accounts
+
+Run `setup_kiani_stories.py --switch-account` in your private server terminal.
+It pauses story posting, privately archives this worker's previous login and
+application configuration, then asks for fresh API ID/hash and the replacement
+account's phone number, code and two-step password. Previous account files are
+moved to an owner-only `previous-account-*` folder under the configuration
+directory; they are never reused by the worker after the switch.
+
+The replacement account must also be Premium and able to post stories as both
+channels. Both channel checks must pass before `READY` restores the schedule.
+Delivery history and pinned channel identities are preserved, preventing an
+account change from repeating today's story. Setup holds the worker's lock to
+prevent simultaneous session use. If interrupted after entering the new API
+details, resume with the ordinary setup command without `--switch-account`.
+
 ## Exact expiry and delivery receipts
 
 Every send requests `period=172800` and `pinned=False`; there is no 24-hour

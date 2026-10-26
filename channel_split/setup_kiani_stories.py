@@ -1,6 +1,7 @@
 """One-time private, interactive administrator login; never run through chat."""
 import argparse
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from getpass import getpass
 import json
@@ -57,19 +58,59 @@ def write_private(path: Path, data: dict):
             os.unlink(name)
 
 
+def prepare_account_switch(config_path: Path, old: dict, session_folder: Path) -> dict:
+    """Archive only this worker's login; retain channel pins and delivery history."""
+    session = session_folder / 'admin.session'
+    if not old:
+        if session.exists():
+            raise SetupError('A dedicated session exists without its approved configuration')
+        return {}
+    if Path(old.get('session_path', '')).absolute() != session.absolute():
+        raise SetupError('Account switch expected the dedicated story session path')
+    paths = [session.with_name(session.name + suffix) for suffix in ('', '-journal', '-wal', '-shm')]
+    paths = [path for path in paths if path.exists()]
+    paths.append(config_path)
+    for path in paths:
+        private_file(path)
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    backup = config_path.parent / ('previous-account-' + stamp)
+    backup.mkdir(mode=0o700)
+    for path in paths:
+        os.replace(path, backup / path.name)
+    print('Previous account login saved privately. Enter the replacement account details below.')
+    return {key: old[key] for key in ('channel_ids', 'state_db') if key in old}
+
+
+@contextmanager
+def setup_lock():
+    import fcntl
+    folder = Path.home() / '.local/state/kiani-stories'
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (folder / 'worker.lock').open('a+b') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SetupError('The story worker or another setup is active. Retry after it finishes.') from None
+        yield
+
+
 async def setup(args):
+    if not args.check and not sys.stdin.isatty():
+        raise SetupError('Run this login directly in your private server terminal')
     ready = CONFIG.with_name('ready')
     if ready.exists():
         ready.unlink()
     if args.check:
         config = load_config(CONFIG, require_enabled=False)
     else:
-        if not sys.stdin.isatty():
-            raise SetupError('Run this login directly in your private server terminal')
         old = {}
         if CONFIG.exists():
             private_file(CONFIG)
             old = json.loads(CONFIG.read_text(encoding='utf-8'))
+        session_folder = Path.home() / '.local/share/kiani-stories'
+        session_folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if args.switch_account:
+            old = prepare_account_switch(CONFIG, old, session_folder)
         print('Use the Telegram administrator account for both channels.')
         print('API application details are available privately at https://my.telegram.org/apps')
         api_id_text = str(old.get('api_id') or input('Telegram API ID: ').strip())
@@ -79,8 +120,6 @@ async def setup(args):
         api_hash = old.get('api_hash') or getpass('Telegram API hash (hidden): ').strip()
         if not isinstance(api_id, int) or api_id <= 0 or not re.fullmatch(r'[0-9a-fA-F]{32}', api_hash):
             raise SetupError('Valid Telegram application details are required')
-        session_folder = Path.home() / '.local/share/kiani-stories'
-        session_folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         session_path = session_folder / 'admin.session'
         # An unrelated pre-existing account session is never selected implicitly.
         if session_path.exists() and not old:
@@ -90,7 +129,7 @@ async def setup(args):
         config = {'version': 1, 'api_id': api_id, 'api_hash': api_hash,
                   'session_path': str(session_path), 'expected_user_id': old.get('expected_user_id', 0),
                   'receipt_db': str(_kiani_forward_db_path().resolve()),
-                  'state_db': str(Path.home() / '.local/state/kiani-stories/delivery.sqlite3'),
+                  'state_db': old.get('state_db') or str(Path.home() / '.local/state/kiani-stories/delivery.sqlite3'),
                   'channel_ids': old.get('channel_ids', {}), 'enabled': False}
         write_private(CONFIG, config)
     client = new_client(config, interactive=not args.check)
@@ -135,11 +174,15 @@ async def setup(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--check', action='store_true', help='Recheck the existing approved login without a new login')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--check', action='store_true', help='Recheck the existing approved login without a new login')
+    mode.add_argument('--switch-account', action='store_true',
+                      help='Pause stories, privately archive the previous login, and request new API details and account login')
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        asyncio.run(setup(args))
+        with setup_lock():
+            asyncio.run(setup(args))
     except Exception as error:
         print('SETUP STOPPED:', type(error).__name__)
         print(error_hint(error))
