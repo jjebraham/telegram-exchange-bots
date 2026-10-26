@@ -250,8 +250,9 @@ photo with only the three channel links. Ten recent photo captions were
 updated and their two linked detail messages removed after content backups.
 
 The prior live code, environment and original captions/full texts are preserved
-at `/home/kianirad2020/kiani-image-backups/picture-only-before-20261026T181948Z`.
-The presentation switch does not complete the pending permanent TGJU route.
+in the private deployment backup. Its location and restoration commands are in
+the local rollout record. The presentation switch does not complete the pending
+permanent TGJU route.
 
 TGJU's direct connections from Selenium fail, and its configured proxy pool
 returned HTTP 402. The existing Akamai relay at `139.162.186.28` is healthy but
