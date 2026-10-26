@@ -98,8 +98,10 @@ both image and text and always targets TEST.
 
 ## Gold reports and read-only API readiness
 
-Iranian gold and Turkish gold use black 42-pixel main prices, with the original
-names, instruments, sell/buy order, units and historical columns preserved.
+Iranian gold uses black 60-pixel main prices and Turkish gold uses black
+56-pixel main prices, with safe fitting for unusually long values. Percentage
+type remains 35 pixels and 33 pixels respectively. The original names,
+instruments, sell/buy order, units and historical columns are preserved.
 The full original verified text is an HTML photo caption when it fits, with
 the existing linked fallback for longer text. All five report types now
 retain their full text, including unavailable-history dashes.
