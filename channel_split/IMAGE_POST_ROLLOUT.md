@@ -3,7 +3,25 @@
 All five templates render validated publisher output offline with Python,
 Playwright and Chromium. The four additional layouts are implemented in
 `market_report_templates.py`. USDT and Iranian FX use the requested mobile
-layouts with larger main rates and historical details in accompanying text.
+layouts with larger main rates. The complete text remains available as a
+rollback option.
+
+## Current main-channel presentation
+
+The main channel uses `ALANCHANDE_POST_FORMAT=image` and
+`ALANCHANDE_IMAGE_CAPTION_STYLE=links`. Each of the five market reports sends
+one photo with this caption below it, without a separate detail message:
+
+```text
+@alanchande_com  📺
+@exchangekiani 💱
+@kianiexchangebot 🤖
+```
+
+Set `ALANCHANDE_IMAGE_CAPTION_STYLE=full` to restore the previous full-caption
+and linked-text behavior. Its implementation and the original source text are
+preserved. The full-text sections below describe that rollback option.
+An unknown style fails before a photo can be sent.
 
 ## Layouts and assets
 
@@ -106,13 +124,14 @@ The full original verified text is an HTML photo caption when it fits, with
 the existing linked fallback for longer text. All five report types now
 retain their full text, including unavailable-history dashes.
 
-The server can reach TGJU's official `call4` JSON feed while its `www`
-connections time out. `tgju_public_api.py` uses the public feed and symbols
-from TGJU's own client, requires every selected positive price, retains rial
-units for gold and the existing /10 normalization for FX, and fails closed
-on malformed/incomplete data. Network failures alone try another official host.
-Independent-source comparisons, history and publication safety remain in the
-unchanged publisher. The helper never rewrites an earlier last-change date
+The local review client can reach TGJU's official `call4` JSON feed; direct
+TGJU connections from Selenium currently fail. `tgju_public_api.py` uses the
+public feed and symbols from TGJU's own client, retains rial units for gold
+and the existing /10 normalization for FX. Gold stays strict; FX can return
+24 rates when exactly one non-core quote is absent. Malformed prices, missing
+major currencies and multiple omissions fail closed. Network failures alone
+try another official host. Each displayed rate still needs independent-source
+and history checks. The helper never rewrites an earlier last-change date
 for an unchanged instrument into a new market tick.
 
 `prepare_tgju_api_transport.py` defaults to a read-only dry run. It can describe
@@ -222,11 +241,17 @@ review must not invoke the five-photo production deployment helper.
 
 ## Production readiness and guarded installation
 
-The approved image-and-text integration was installed on 26 October 2026 and
-`ALANCHANDE_POST_FORMAT=image` was enabled without changing schedules or market
-verification. Source failures still block publishing. The one-time approved
-main-channel batch published verified USDT, Iranian gold, Turkish gold and
-Turkey FX pulse; Iranian FX remained held by the capture's quote-time check.
+All five approved designs were published on 26 October 2026. The Iranian FX
+post displayed 24 independently verified rates and a blank HKD price slot;
+omitted rates do not become accepted history values. One missing non-core
+primary quote can leave its slot blank while all other 24 checks must verify.
+The main-channel presentation was then changed at the user's request to one
+photo with only the three channel links. Ten recent photo captions were
+updated and their two linked detail messages removed after content backups.
+
+The prior live code, environment and original captions/full texts are preserved
+at `/home/kianirad2020/kiani-image-backups/picture-only-before-20261026T181948Z`.
+The presentation switch does not complete the pending permanent TGJU route.
 
 TGJU's direct connections from Selenium fail, and its configured proxy pool
 returned HTTP 402. The existing Akamai relay at `139.162.186.28` is healthy but
@@ -239,9 +264,8 @@ administrator connection is still needed. No private key was copied or SSH
 restriction changed. After the endpoint is installed, its pinned transport must
 be connected to the publisher and original source verification must pass.
 
-**Do not install or activate production image publishing until the final five
-appearances have explicit user approval.** The review does not modify live
-source, credentials, schedules, market histories, channel settings, or services.
+The current production appearances and presentation changes have explicit user
+approval. Future template changes should be visually reviewed before deployment.
 
 Before any production installation, inspect its dirty checkout and preserve
 unrelated work:

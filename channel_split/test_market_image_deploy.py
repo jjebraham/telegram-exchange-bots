@@ -25,6 +25,8 @@ class DeploymentTests(unittest.TestCase):
                                        '--repo', str(repo), '--backup-dir', str(backup), *flags],
                                       capture_output=True, text=True, timeout=20)
 
+            style_line = '                        caption_style=os.environ.get("ALANCHANDE_IMAGE_CAPTION_STYLE", "full"),\n'
+
             self.assertEqual(run().returncode, 0)
             self.assertEqual(publisher.read_bytes(), before)
             self.assertFalse(backup.exists())
@@ -44,9 +46,13 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(upgraded.returncode, 0, upgraded.stderr)
             self.assertEqual(publisher.read_bytes(), patched)
             self.assertEqual(renderer.read_bytes(), (ROOT / 'market_images.py').read_bytes())
+            publisher.write_text(publisher.read_text(encoding='utf-8').replace(style_line, ''), encoding='utf-8')
+            self.assertNotEqual(run('--upgrade-renderer', '--apply').returncode, 0)
+            self.assertEqual(run('--upgrade-integration', '--apply').returncode, 0)
+            self.assertIn(style_line, publisher.read_text(encoding='utf-8'))
             # The previous exact integration needs deliberate migration; other
             # publisher edits survive and renderer-only upgrades cannot do it.
-            legacy=publisher.read_text(encoding='utf-8').replace(', image_post_details','').replace(
+            legacy=publisher.read_text(encoding='utf-8').replace(style_line, '').replace(', image_post_details','').replace(
                 'details_text=image_post_details(post_key, text)', 'details_text=text if post_key == "iran-fx" else None').replace(
                 '                        details_as_caption=post_key != "iran-fx",\n','')
             legacy += '\n# unrelated local publisher customization\n'
@@ -57,20 +63,20 @@ class DeploymentTests(unittest.TestCase):
             self.assertIn('details_text=image_post_details(post_key, text)',publisher.read_text(encoding='utf-8'))
             self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
             self.assertEqual(run('--apply').returncode,0)
-            photo_only=publisher.read_text(encoding='utf-8').replace(', image_post_details','').replace(
+            photo_only=publisher.read_text(encoding='utf-8').replace(style_line, '').replace(', image_post_details','').replace(
                 '                        details_text=image_post_details(post_key, text),\n','').replace(
                 '                        details_as_caption=post_key != "iran-fx",\n','')
             publisher.write_text(photo_only,encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
             self.assertEqual(run('--upgrade-integration','--apply').returncode,0)
             self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
-            usdt_only=publisher.read_text(encoding='utf-8').replace(
+            usdt_only=publisher.read_text(encoding='utf-8').replace(style_line, '').replace(
                 'details_as_caption=post_key != "iran-fx"', 'details_as_caption=post_key == "usdt"')
             publisher.write_text(usdt_only,encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
             self.assertEqual(run('--upgrade-integration','--apply').returncode,0)
             self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
-            pulse_only=publisher.read_text(encoding='utf-8').replace(
+            pulse_only=publisher.read_text(encoding='utf-8').replace(style_line, '').replace(
                 'details_as_caption=post_key != "iran-fx"', 'details_as_caption=post_key in {"usdt", "fx-pulse"}')
             publisher.write_text(pulse_only,encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)

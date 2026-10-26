@@ -644,14 +644,24 @@ def _telegram_send_details(token: str, chat_id: str, text: str, photo_id: int, t
     return result
 
 
+CHANNEL_LINK_CAPTION = "@alanchande_com  📺\n@exchangekiani 💱\n@kianiexchangebot 🤖"
+
+
 def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: str, *,
                         timeout: int = 35, details_text: str | None = None,
-                        details_as_caption: bool = False) -> dict:
+                        details_as_caption: bool = False, caption_style: str = "full") -> dict:
     """Send a photo and optional complete bulletin; success requires both receipts.
 
     Requested short details fit directly in an HTML caption; longer bulletins
     use a linked text message. Full details are never truncated or retried.
     """
+    caption_style = caption_style.strip().lower()
+    if caption_style not in {"full", "links"}:
+        raise ValueError("Unknown image caption style; expected full or links")
+    if caption_style == "links":
+        caption = CHANNEL_LINK_CAPTION
+        details_text = None
+        details_as_caption = False
     if details_text is not None:
         _check_details_length(details_text)
     inline_details = details_text is not None and details_as_caption and _telegram_text_length(details_text) <= 1024
@@ -661,6 +671,7 @@ def telegram_send_photo(token: str, chat_id: str, photo: Path | str, caption: st
     png = Path(photo).read_bytes()
     body = b"".join([field("chat_id",chat_id), field("caption",details_text if inline_details else caption[:1024]),
                      field("parse_mode","HTML") if inline_details else b"",
+                     field("show_caption_above_media","false"),
                      field("disable_notification","true"),
                      (f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="market.png"\r\nContent-Type: image/png\r\n\r\n').encode(),
                      png,b"\r\n",(f"--{boundary}--\r\n").encode()])

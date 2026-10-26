@@ -21,7 +21,7 @@ parser.add_argument("--apply", action="store_true")
 parser.add_argument("--upgrade-renderer", action="store_true",
                     help="Update artwork/renderer only when the installed publisher integration matches exactly")
 parser.add_argument("--upgrade-integration", action="store_true",
-                    help="Migrate a known earlier integration to photo plus full mobile-market details")
+                    help="Migrate a known earlier integration to selectable full or links-only captions")
 parser.add_argument("--backup-dir", type=Path, default=Path.home() / "kiani-image-backups")
 args = parser.parse_args()
 
@@ -74,6 +74,7 @@ anchors = [
                         captions[post_key] + "\\n@alanchande_com",
                         details_text=image_post_details(post_key, text),
                         details_as_caption=post_key != "iran-fx",
+                        caption_style=os.environ.get("ALANCHANDE_IMAGE_CAPTION_STYLE", "full"),
                     )
             else:
                 send_result = telegram_send(token, chat_id, text)''',
@@ -96,17 +97,19 @@ anchors = [
 ]
 
 legacy_import = anchors[0][1].replace(', image_post_details', '')
-legacy_fx_send = anchors[1][1].replace('details_text=image_post_details(post_key, text)',
+caption_style_line = '                        caption_style=os.environ.get("ALANCHANDE_IMAGE_CAPTION_STYLE", "full"),\n'
+legacy_full_send = anchors[1][1].replace(caption_style_line, '')
+legacy_fx_send = legacy_full_send.replace('details_text=image_post_details(post_key, text)',
                                     'details_text=text if post_key == "iran-fx" else None')
 caption_option_line = '                        details_as_caption=post_key != "iran-fx",\n'
 legacy_fx_send = legacy_fx_send.replace(caption_option_line, '')
-legacy_photo_send = anchors[1][1].replace('                        details_text=image_post_details(post_key, text),\n', '').replace(
+legacy_photo_send = legacy_full_send.replace('                        details_text=image_post_details(post_key, text),\n', '').replace(
     caption_option_line, '')
-legacy_usdt_send = anchors[1][1].replace('details_as_caption=post_key != "iran-fx"',
+legacy_usdt_send = legacy_full_send.replace('details_as_caption=post_key != "iran-fx"',
                                       'details_as_caption=post_key == "usdt"')
-legacy_pulse_send = anchors[1][1].replace('details_as_caption=post_key != "iran-fx"',
+legacy_pulse_send = legacy_full_send.replace('details_as_caption=post_key != "iran-fx"',
                                        'details_as_caption=post_key in {"usdt", "fx-pulse"}')
-legacy_integrations = ((legacy_import,legacy_fx_send),(legacy_import,legacy_photo_send),
+legacy_integrations = ((anchors[0][1],legacy_full_send),(legacy_import,legacy_fx_send),(legacy_import,legacy_photo_send),
                        (anchors[0][1],legacy_usdt_send),(anchors[0][1],legacy_pulse_send))
 
 if "from market_images import SUPPORTED_MARKETS" in original:
@@ -119,7 +122,7 @@ if "from market_images import SUPPORTED_MARKETS" in original:
         pass
     elif legacy is not None:
         if not args.upgrade_integration:
-            sys.exit("STOP: earlier image integration installed; review and use --upgrade-integration for full mobile text")
+            sys.exit("STOP: earlier image integration installed; review and use --upgrade-integration for caption styles")
         legacy_import_line,legacy_send = legacy
         patched = original.replace(legacy_import_line, anchors[0][1], 1).replace(legacy_send, anchors[1][1], 1)
     else:

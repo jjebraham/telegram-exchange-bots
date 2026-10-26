@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from market_images import IncompleteImagePostError, image_post_details, telegram_send_photo
+from market_images import CHANNEL_LINK_CAPTION, IncompleteImagePostError, image_post_details, telegram_send_photo
 from test_market_images import SAMPLES
 import manual_image_preview as manual
 
@@ -24,6 +24,29 @@ def response(message_id):
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_links_style_sends_one_photo_with_only_the_three_requested_links(self):
+        for kind, details in SAMPLES.items():
+            with self.subTest(kind=kind), patch('market_images.urlopen', return_value=response(61)) as send:
+                result = telegram_send_photo('private-token', '@alanchande_com', self.photo, 'Old title',
+                                             details_text=details, details_as_caption=True, caption_style='links')
+            self.assertEqual(send.call_count, 1)
+            self.assertNotIn('details_result', result)
+            self.assertNotIn('details_in_caption', result)
+            body = send.call_args.args[0].data
+            self.assertIn(CHANNEL_LINK_CAPTION.encode('utf-8'), body)
+            self.assertNotIn(b'Old title', body)
+            self.assertNotIn(details.encode('utf-8'), body)
+            self.assertIn(b'name="show_caption_above_media"\r\n\r\nfalse', body)
+
+    def test_links_style_does_not_validate_or_send_removed_long_details(self):
+        with patch('market_images.urlopen', return_value=response(62)) as send:
+            telegram_send_photo('private-token', '@alanchande_com', self.photo, 'Old title',
+                                details_text='x' * 5000, caption_style='links')
+        self.assertEqual(send.call_count, 1)
+        with patch('market_images.urlopen') as send, self.assertRaises(ValueError):
+            telegram_send_photo('private-token', '@alanchande_com', self.photo, 'Old title', caption_style='unknown')
+        send.assert_not_called()
+
     def test_short_usdt_details_are_complete_html_in_one_photo_caption(self):
         details=image_post_details('usdt',SAMPLES['usdt'])
         with patch('market_images.urlopen',return_value=response(71)) as send:
