@@ -14,6 +14,7 @@ on:
       - channel_split/tgju_public_api.py
       - channel_split/prepare_tgju_api_transport.py
       - channel_split/test_tgju_public_api.py
+      - channel_split/add_tgju_akamai_endpoint.py
       - .github/workflows/alanchande-image-previews.yml
   pull_request:
     paths:
@@ -52,6 +53,7 @@ jobs:
           python channel_split/test_market_image_deploy.py -v
           python channel_split/test_market_image_delivery.py -v
           python channel_split/test_tgju_public_api.py -v
+          python channel_split/add_tgju_akamai_endpoint.py --self-test
           python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
           python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
           python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v

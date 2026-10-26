@@ -222,6 +222,23 @@ review must not invoke the five-photo production deployment helper.
 
 ## Production readiness and guarded installation
 
+The approved image-and-text integration was installed on 26 October 2026 and
+`ALANCHANDE_POST_FORMAT=image` was enabled without changing schedules or market
+verification. Source failures still block publishing. The one-time approved
+main-channel batch published verified USDT, Iranian gold, Turkish gold and
+Turkey FX pulse; Iranian FX remained held by the capture's quote-time check.
+
+TGJU's direct connections from Selenium fail, and its configured proxy pool
+returned HTTP 402. The existing Akamai relay at `139.162.186.28` is healthy but
+does not allow the `tgju_current` selector yet. `add_tgju_akamai_endpoint.py`
+prepares only that fixed official endpoint; it defaults to dry-run, checks live
+upstream prices before apply, preserves the existing endpoint map and bridge
+code, and backs up the exact bridge before replacement. Its three offline
+checks run in validation CI. It has not been applied to Akamai: an established
+administrator connection is still needed. No private key was copied or SSH
+restriction changed. After the endpoint is installed, its pinned transport must
+be connected to the publisher and original source verification must pass.
+
 **Do not install or activate production image publishing until the final five
 appearances have explicit user approval.** The review does not modify live
 source, credentials, schedules, market histories, channel settings, or services.
