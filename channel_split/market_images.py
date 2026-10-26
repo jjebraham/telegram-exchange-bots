@@ -582,12 +582,12 @@ def image_post_details(kind: str, approved_text: str, *, demo: bool = False) -> 
     labels the customer's BUY/SELL perspective. Align only the display header;
     every source row, summary value and historical percentage remains untouched.
     """
-    if kind not in {'iran-fx', 'usdt', 'fx-pulse'}:
+    if kind not in SUPPORTED_MARKETS:
         return None
     text = approved_text
-    if kind == 'fx-pulse':
-        from market_report_templates import parse_pulse
-        parse_pulse(approved_text)
+    if kind in {'fx-pulse','iran-gold','turkey-gold'}:
+        from market_report_templates import parse_pulse,parse_iran_gold,parse_turkey_gold
+        {'fx-pulse':parse_pulse,'iran-gold':parse_iran_gold,'turkey-gold':parse_turkey_gold}[kind](approved_text)
     if kind == 'usdt':
         _usdt(approved_text)  # Preserve strict source/summary validation.
         header = re.search(r'(<pre>)([^\n]*)(\n)', text)

@@ -48,7 +48,7 @@ class DeploymentTests(unittest.TestCase):
             # publisher edits survive and renderer-only upgrades cannot do it.
             legacy=publisher.read_text(encoding='utf-8').replace(', image_post_details','').replace(
                 'details_text=image_post_details(post_key, text)', 'details_text=text if post_key == "iran-fx" else None').replace(
-                '                        details_as_caption=post_key in {"usdt", "fx-pulse"},\n','')
+                '                        details_as_caption=post_key != "iran-fx",\n','')
             legacy += '\n# unrelated local publisher customization\n'
             publisher.write_text(legacy,encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
@@ -59,14 +59,20 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(run('--apply').returncode,0)
             photo_only=publisher.read_text(encoding='utf-8').replace(', image_post_details','').replace(
                 '                        details_text=image_post_details(post_key, text),\n','').replace(
-                '                        details_as_caption=post_key in {"usdt", "fx-pulse"},\n','')
+                '                        details_as_caption=post_key != "iran-fx",\n','')
             publisher.write_text(photo_only,encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
             self.assertEqual(run('--upgrade-integration','--apply').returncode,0)
             self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
             usdt_only=publisher.read_text(encoding='utf-8').replace(
-                'details_as_caption=post_key in {"usdt", "fx-pulse"}', 'details_as_caption=post_key == "usdt"')
+                'details_as_caption=post_key != "iran-fx"', 'details_as_caption=post_key == "usdt"')
             publisher.write_text(usdt_only,encoding='utf-8')
+            self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
+            self.assertEqual(run('--upgrade-integration','--apply').returncode,0)
+            self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))
+            pulse_only=publisher.read_text(encoding='utf-8').replace(
+                'details_as_caption=post_key != "iran-fx"', 'details_as_caption=post_key in {"usdt", "fx-pulse"}')
+            publisher.write_text(pulse_only,encoding='utf-8')
             self.assertNotEqual(run('--upgrade-renderer','--apply').returncode,0)
             self.assertEqual(run('--upgrade-integration','--apply').returncode,0)
             self.assertIn('# unrelated local publisher customization',publisher.read_text(encoding='utf-8'))

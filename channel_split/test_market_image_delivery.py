@@ -58,7 +58,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('🕒 <code>07:09</code> تهران',details)
         self.assertIn('<code>269,128</code>',details)
         self.assertEqual(image_post_details('iran-fx',SAMPLES['iran-fx']),SAMPLES['iran-fx'])
-        self.assertIsNone(image_post_details('iran-gold',SAMPLES['iran-gold']))
+        self.assertEqual(image_post_details('iran-gold',SAMPLES['iran-gold']),SAMPLES['iran-gold'])
         self.assertIn('قیمت‌ها واقعی نیستند',image_post_details('usdt',source,demo=True))
 
     def test_usdt_text_rejects_unknown_price_or_period_header(self):
@@ -170,6 +170,18 @@ class DeliveryTests(unittest.TestCase):
 
     def test_manual_pulse_image_and_full_caption_use_one_verified_snapshot(self):
         self._manual_preview('VERIFIED','fx-pulse')
+
+    def test_manual_iran_gold_image_and_full_caption_use_one_verified_snapshot(self):
+        self._manual_preview('VERIFIED','iran-gold')
+
+    def test_manual_turkey_gold_image_and_full_caption_use_one_verified_snapshot(self):
+        self._manual_preview('VERIFIED','turkey-gold')
+
+    def test_gold_text_preserves_every_original_live_period_field(self):
+        from test_market_report_templates import extended_period_samples
+        for kind in ('iran-gold','turkey-gold'):
+            source=extended_period_samples()[kind]+'\nOriginal availability note\n🕒 <code>13:25</code>'
+            self.assertEqual(image_post_details(kind,source),source)
 
     def test_pulse_text_keeps_four_decimals_periods_clock_and_units(self):
         source=('📊 <b>نبض بازار ارز ترکیه | 24H</b>\n'

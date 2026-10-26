@@ -11,6 +11,9 @@ on:
       - channel_split/test_market_report_templates.py
       - channel_split/visual_market_images.py
       - channel_split/deploy_market_images.py
+      - channel_split/tgju_public_api.py
+      - channel_split/prepare_tgju_api_transport.py
+      - channel_split/test_tgju_public_api.py
       - .github/workflows/alanchande-image-previews.yml
   pull_request:
     paths:
@@ -48,6 +51,7 @@ jobs:
           python channel_split/test_market_report_templates.py -v
           python channel_split/test_market_image_deploy.py -v
           python channel_split/test_market_image_delivery.py -v
+          python channel_split/test_tgju_public_api.py -v
           python -m unittest discover -s tests -p test_channel_split_market_safety.py -v
           python -m unittest discover -s tests -p test_channel_split_hybrid_usdt.py -v
           python -m unittest discover -s tests -p test_channel_split_market_pulse.py -v

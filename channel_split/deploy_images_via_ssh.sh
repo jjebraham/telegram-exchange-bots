@@ -60,7 +60,7 @@ for key in ("usdt", "iran-fx", "iran-gold", "turkey-gold", "fx-pulse"):
         raise RuntimeError('Ambiguous verified bulletin for ' + key)
     details = image_post_details(key, snapshot.split(marker, 1)[1].strip())
     result = telegram_send_photo(token, "@alanchandetest", path, "🧪 TEST — " + TITLES[key],
-                                 details_text=details, details_as_caption=key in {'usdt','fx-pulse'})
+                                 details_text=details, details_as_caption=key!='iran-fx')
     print("Test channel", key, "message_id", result["result"]["message_id"])
     if 'details_result' in result:
         print('Full details message_id', result['details_result']['message_id'])

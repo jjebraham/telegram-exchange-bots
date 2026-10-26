@@ -73,7 +73,7 @@ anchors = [
                         token, chat_id, image_path,
                         captions[post_key] + "\\n@alanchande_com",
                         details_text=image_post_details(post_key, text),
-                        details_as_caption=post_key in {"usdt", "fx-pulse"},
+                        details_as_caption=post_key != "iran-fx",
                     )
             else:
                 send_result = telegram_send(token, chat_id, text)''',
@@ -98,14 +98,16 @@ anchors = [
 legacy_import = anchors[0][1].replace(', image_post_details', '')
 legacy_fx_send = anchors[1][1].replace('details_text=image_post_details(post_key, text)',
                                     'details_text=text if post_key == "iran-fx" else None')
-caption_option_line = '                        details_as_caption=post_key in {"usdt", "fx-pulse"},\n'
+caption_option_line = '                        details_as_caption=post_key != "iran-fx",\n'
 legacy_fx_send = legacy_fx_send.replace(caption_option_line, '')
 legacy_photo_send = anchors[1][1].replace('                        details_text=image_post_details(post_key, text),\n', '').replace(
     caption_option_line, '')
-legacy_usdt_send = anchors[1][1].replace('details_as_caption=post_key in {"usdt", "fx-pulse"}',
+legacy_usdt_send = anchors[1][1].replace('details_as_caption=post_key != "iran-fx"',
                                       'details_as_caption=post_key == "usdt"')
+legacy_pulse_send = anchors[1][1].replace('details_as_caption=post_key != "iran-fx"',
+                                       'details_as_caption=post_key in {"usdt", "fx-pulse"}')
 legacy_integrations = ((legacy_import,legacy_fx_send),(legacy_import,legacy_photo_send),
-                       (anchors[0][1],legacy_usdt_send))
+                       (anchors[0][1],legacy_usdt_send),(anchors[0][1],legacy_pulse_send))
 
 if "from market_images import SUPPORTED_MARKETS" in original:
     # Never re-patch or replace a publisher whose integration was modified.

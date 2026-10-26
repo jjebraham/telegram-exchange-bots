@@ -44,8 +44,8 @@ linked HTML text message. It includes all 25 rates, Δ24H, Δ1M, source time,
 unit, availability notes and disclaimer. Both outputs use one fetched snapshot.
 The complete table exceeds Telegram's 1024-character photo-caption limit, so
 it uses `sendMessage` (4096 characters) with a reply to the photo. Length is
-checked before sending; details are never truncated. Gold remains one photo;
-Turkey FX pulse includes its full caption as described below. Sample mode
+checked before sending; details are never truncated. Gold and Turkey FX pulse
+include their full captions as described below. Sample mode
 labels both the image and the full text.
 
 Success requires Telegram receipts for both messages. A partial delivery
@@ -95,6 +95,30 @@ photo's HTML caption; oversized future text uses the existing linked fallback.
 No source rate, midpoint calculation, percentage, source time or safety rule
 is changed. `--kind fx-pulse --send-test` fetches one enforced snapshot for
 both image and text and always targets TEST.
+
+## Gold reports and read-only API readiness
+
+Iranian gold and Turkish gold use black 42-pixel main prices, with the original
+names, instruments, sell/buy order, units and historical columns preserved.
+The full original verified text is an HTML photo caption when it fits, with
+the existing linked fallback for longer text. All five report types now
+retain their full text, including unavailable-history dashes.
+
+The server can reach TGJU's official `call4` JSON feed while its `www`
+connections time out. `tgju_public_api.py` uses the public feed and symbols
+from TGJU's own client, requires every selected positive price, retains rial
+units for gold and the existing /10 normalization for FX, and fails closed
+on malformed/incomplete data. Network failures alone try another official host.
+Independent-source comparisons, history and publication safety remain in the
+unchanged publisher. The helper never rewrites an earlier last-change date
+for an unchanged instrument into a new market tick.
+
+`prepare_tgju_api_transport.py` defaults to a read-only dry run. It can describe
+the exact opt-in hook changes without replacing the existing dirty fetchers or
+changing configuration. Its backup/apply behavior is tested only on disposable
+fixtures during review. No API transport activation is wired into the deployment
+helper. Production hook application, configuration and image activation all
+remain pending explicit visual/rollout approval.
 
 ## Verified data contracts
 
