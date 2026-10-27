@@ -26,7 +26,7 @@ import instagram_global_metals_renderer as metals_renderer
 STATE = Path.home() / '.local/state/kiani-instagram-iran-gold'
 PUBLIC = Path('/var/www/peerexo.com/public/instagram-rates')
 BASE = 'https://peerexo.com/instagram-rates'
-FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'iran_gold_servix.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
+FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'iran_gold_servix.py', 'iran_gold_tgju.py', 'instagram_iran_gold.py', 'instagram_iran_gold_renderer.py',
          'economic_calendar_data.py', 'instagram_economic_calendar_renderer.py', 'tests/test_instagram_iran_gold.py',
          'tests/test_iran_gold_servix.py', 'tests/test_iran_gold_template.py',
          'deploy/instagram-iran-gold/activate_servix.py',
