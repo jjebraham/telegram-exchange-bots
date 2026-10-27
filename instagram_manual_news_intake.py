@@ -14,8 +14,9 @@ import shlex
 import sqlite3
 import sys
 import time
+from datetime import datetime
 from urllib.parse import urlsplit
-from urllib.request import Request, build_opener
+from urllib.request import Request, build_opener, urlopen
 
 HOME = Path.home()
 STATE = HOME / '.local/state/kiani-instagram-manual-news'
@@ -277,6 +278,17 @@ def hourly_count(con, now, exclude_story_id=None):
         (start, start + 3600, start, start + 3600, exclude_story_id, exclude_story_id)).fetchone()[0]
 
 
+def scheduled_slot_pending(kind, now, engine, ranked):
+    local = datetime.fromtimestamp(now, engine.ISTANBUL)
+    slot = f'hour-{local.hour:02d}'
+    if slot not in ranked.HOURLY_SLOTS:
+        return False
+    minute = 0 if kind == 'crypto' else 30
+    scheduled = local.replace(minute=minute, second=0, microsecond=0).timestamp()
+    hour_start = local.replace(minute=0, second=0, microsecond=0).timestamp()
+    return now <= scheduled < hour_start + 3600
+
+
 def process_submission(con, record, runtime):
     import crypto_news_trial as engine
     import instagram_ranked_news as ranked
@@ -333,6 +345,8 @@ def process_submission(con, record, runtime):
                     raise IntakeError('سقف روزانه یا ظرفیت قابل‌استفاده خبر برای این دسته تکمیل شده است.')
                 if hourly_count(production, now):
                     raise IntakeError('در این ساعت از این دسته یک پست منتشر شده است؛ برای جلوگیری از ازدحام این لینک منتشر نشد.')
+                if scheduled_slot_pending(kind, now, engine, ranked):
+                    raise IntakeError('زمان انتشار برنامه‌ریزی‌شده همین دسته در این ساعت نزدیک است؛ این لینک منتشر نشد تا دو پست پشت سر هم قرار نگیرند.')
                 reservation = guard()
                 print('Manual news quota checked:', json.dumps(dict(category=kind,
                     category_day_cap=cap, category_posts_today=ranked.consumed(production, now),
@@ -414,6 +428,8 @@ def process_submission(con, record, runtime):
                             raise NewsError('The daily news limit was reached before publication.')
                         if hourly_count(production, current, story_id):
                             raise NewsError('A news post already occupies this hour.')
+                        if scheduled_slot_pending(kind, current, engine, ranked):
+                            raise NewsError('A scheduled news slot is imminent in this hour.')
                         guard()
                         if material['article_published_at'] < time.time() - 86400:
                             raise NewsError('The source became stale during final checks.')
