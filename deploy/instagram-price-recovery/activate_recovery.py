@@ -90,6 +90,11 @@ def lock(stack, path):
 
 
 def rates_probe(runtime):
+    # Preserve the installed optional Hawala bridge/calendar modules while the
+    # candidate rates code takes precedence from the pinned staging directory.
+    shared = str(Path.home()/'kiani-instagram-publisher')
+    if shared not in sys.path:
+        sys.path.append(shared)
     import instagram_daily_rates as rates
     from instagram_carousel import collect_sections, assert_fresh_sections
     first = rates.fetch_customer_rates()
