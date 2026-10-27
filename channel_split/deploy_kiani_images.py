@@ -23,14 +23,16 @@ BRANCH = '''            # Kiani customer image delivery v1
                 and os.environ.get("KIANI_POST_FORMAT", "text").lower() == "image"
             ):
                 import tempfile
-                from market_images import telegram_send_photo
+                from market_images import telegram_send_photo as kiani_send_photo
                 with tempfile.TemporaryDirectory(prefix="kiani-customer-image-") as temp:
                     image_path = Path(temp) / f"{post_key}.png"
                     render_kiani_png(post_key, text, image_path)
-                    send_result = telegram_send_photo(
+                    send_result = kiani_send_photo(
                         token, chat_id, image_path, "", caption_style="links",
                     )
 '''
+LEGACY_BRANCH = BRANCH.replace('telegram_send_photo as kiani_send_photo', 'telegram_send_photo').replace(
+    'send_result = kiani_send_photo(', 'send_result = telegram_send_photo(')
 
 
 def assign_keys(source: bytes) -> bytes:
@@ -85,9 +87,15 @@ def patch_publisher(original: bytes) -> bytes:
         raise ValueError('Mixed publisher line endings require review')
     source = changed.decode('utf-8').replace('\r\n', '\n')
     if IMPORT in source or '# Kiani customer image delivery v1' in source:
-        if source.count(IMPORT) != 1 or source.count(BRANCH) != 1:
+        if source.count(IMPORT) != 1:
             raise ValueError('Installed Kiani image integration differs from the reviewed version')
-        return changed
+        if source.count(BRANCH) == 1:
+            return changed
+        if source.count(LEGACY_BRANCH) == 1:
+            # A function-local import must not shadow AlanChande's global sender.
+            source = source.replace(LEGACY_BRANCH, BRANCH, 1)
+            return source.replace('\n', newline).encode('utf-8')
+        raise ValueError('Installed Kiani image integration differs from the reviewed version')
     anchor = 'DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"'
     if source.count(anchor) != 1:
         raise ValueError('Unexpected publisher import anchor')

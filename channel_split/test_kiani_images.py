@@ -3,13 +3,15 @@ import ast
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from deploy_kiani_images import BUILDERS, patch_publisher
+from deploy_kiani_images import BRANCH, BUILDERS, LEGACY_BRANCH, patch_publisher
 from kiani_images import kiani_html, parse_customer_board, parse_try_board, parse_converter
 from kiani_posts import build_kiani_toman_receive_post
 from visual_kiani_images import samples, SAMPLE_TIME, SAMPLE_RATES
@@ -18,6 +20,47 @@ ROOT = Path(__file__).resolve().parent
 
 
 class KianiImageTests(unittest.TestCase):
+    def test_combined_delivery_sends_alan_first_and_kiani_without_import_shadowing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / 'repo/channel_split'
+            folder.mkdir(parents=True)
+            (folder / 'publish_channels.py').write_bytes((ROOT / 'publish_channels.py').read_bytes())
+            alan = subprocess.run([sys.executable, str(ROOT / 'deploy_market_images.py'), '--repo', str(folder.parent),
+                                   '--backup-dir', str(Path(temp) / 'backup'), '--apply'],
+                                  capture_output=True, text=True, timeout=20)
+            self.assertEqual(alan.returncode, 0, alan.stderr)
+            installed = patch_publisher((folder / 'publish_channels.py').read_bytes())
+            legacy = installed.decode().replace(BRANCH, LEGACY_BRANCH)
+            upgraded = patch_publisher(legacy.encode())
+            self.assertEqual(upgraded, installed)
+            branch = next(node for node in ast.walk(ast.parse(upgraded)) if isinstance(node, ast.If)
+                          and any(isinstance(child, ast.Name) and child.id == 'KIANI_IMAGE_POSTS' for child in ast.walk(node.test)))
+            module = ast.parse('def deliver(destination_env, post_key, token, chat_id, text):\n    pass\n')
+            module.body[0].body = [branch, ast.Return(ast.Name('send_result', ast.Load()))]
+            calls = []
+
+            def send(*args, **kwargs):
+                self.assertTrue(args[2].is_file())
+                calls.append((args[1], kwargs.get('caption_style')))
+                return {'ok': True}
+
+            def render(kind, text, path):
+                path.write_bytes(b'simulated-render')
+
+            namespace = {'os': os, 'Path': Path, 'KIANI_IMAGE_POSTS': set(BUILDERS.values()),
+                         'SUPPORTED_MARKETS': {'turkey-gold', 'iran-fx', 'iran-gold', 'fx-pulse', 'usdt'},
+                         'telegram_send_photo': send, 'render_png': render, 'render_kiani_png': render,
+                         'image_post_details': lambda kind, text: text}
+            exec(compile(ast.fix_missing_locations(module), '<actual-combined-image-dispatch>', 'exec'), namespace)
+            with patch.dict(os.environ, {'ALANCHANDE_POST_FORMAT': 'image', 'KIANI_POST_FORMAT': 'image',
+                                         'ALANCHANDE_IMAGE_CAPTION_STYLE': 'links'}), \
+                 patch('market_images.telegram_send_photo', side_effect=send):
+                for kind in namespace['SUPPORTED_MARKETS']:
+                    self.assertEqual(namespace['deliver']('ALANCHANDE_CHANNEL_ID', kind, 'fake', '@alan', 'source'), {'ok': True})
+                self.assertEqual(namespace['deliver']('KIANI_CHANNEL_ID', 'kiani-rates', 'fake', '@kiani', 'source'), {'ok': True})
+            self.assertEqual(len(calls), 6)
+            self.assertTrue(all(style == 'links' for _, style in calls))
+
     def test_board_keeps_customer_buy_sell_and_cross_directions(self):
         text = samples()['kiani-rates']
         data = parse_customer_board(text)
