@@ -8,7 +8,7 @@ This extension adds a private Telegram intake to the existing Instagram crypto/e
 2. An allowlisted admin sends one public article URL in a private chat. Optional accompanying text is treated only as a note; it does not enter the factual assessment or translation prompt.
 3. The link must resolve to the existing reviewed news-publisher allowlist. The original page must contain a timezone-aware publication time within 24 hours and a usable source passage. Redirects are checked against the reviewed publisher allowlist.
 4. The existing DeepSeek assessment classifies the story as relevant crypto or economy hard news. If the categories are ambiguous, the bot declines it. Existing event-history grouping blocks already-published events.
-5. The existing Persian translation and readable multi-slide renderer prepare the post. The existing Meta publisher sends it directly after checking the active quota reservation, the current category/day allowance, and a maximum of one post in that category per clock hour.
+5. The existing Persian translation and readable multi-slide renderer prepare the post. The existing Meta publisher sends it directly after checking the active quota reservation, the current category/day allowance, and a maximum of one post in that category per clock hour. It will not publish into an hour where that category's scheduled slot is still upcoming.
 6. The publisher writes the media ID into the existing crypto/economy publication database. Existing delayed Story discovery and Instagram Insights/retention collection use those same records.
 
 ## Safety limits
