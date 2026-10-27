@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from time import time_ns
 from typing import Mapping
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -48,6 +50,11 @@ CURRENCY_ROWS = (
     ("OMR", "🇴🇲", "ریال عمان", ("ریال عمان",)),
     ("QAR", "🇶🇦", "ریال قطر", ("ریال قطر",)),
 )
+
+# Keep the primary-source coverage rule aligned with the publisher's protected
+# reference currencies. One other currency may be unavailable without hiding
+# a gap in the main market rates.
+IRAN_FX_CORE_CODES = frozenset({"USD", "EUR", "GBP", "AED", "TRY"})
 
 _DIGITS = str.maketrans(
     "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
@@ -125,12 +132,12 @@ def parse_tgju_currency_page(html: str) -> dict[str, Decimal]:
             continue
         try:
             rates_rial[code] = _parse_positive_number(row[1])
-        except ValueError:
-            continue
+        except ValueError as exc:
+            raise ValueError(f"TGJU free-market currency row has an invalid rate: {code}") from exc
 
     required = [code for code, *_rest in CURRENCY_ROWS]
     missing = [code for code in required if code not in rates_rial]
-    if missing:
+    if len(missing) > 1 or any(code in IRAN_FX_CORE_CODES for code in missing):
         raise ValueError(
             "TGJU free-market currency table is missing required rows: "
             + ", ".join(missing)
@@ -145,24 +152,38 @@ def fetch_iran_open_market_fx(
     url: str = TGJU_CURRENCY_URL,
     timeout: int = 25,
 ) -> dict[str, Decimal]:
-    request = Request(
-        url,
-        headers={
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.5",
-            "User-Agent": "AlanChande-IranFxPublisher/1.0",
-        },
-    )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            html = response.read().decode(charset, errors="replace")
-    except HTTPError as exc:
-        raise RuntimeError(f"TGJU currency source returned HTTP {exc.code}") from exc
-    except (URLError, TimeoutError) as exc:
-        raise RuntimeError(f"Could not load TGJU currency source: {exc}") from exc
-
-    return parse_tgju_currency_page(html)
+    for attempt in range(2):
+        request_url = url
+        if attempt:
+            # Some TGJU cache entries return HTTP 200 with a zero-byte body.
+            # Retry the SAME source/path once with a fresh cache key. A malformed
+            # non-empty table still fails closed; never substitute another rate.
+            parts = urlsplit(url)
+            query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                     if key != "_alanchande_refresh"]
+            query.append(("_alanchande_refresh", str(time_ns())))
+            request_url = urlunsplit(parts._replace(query=urlencode(query)))
+        request = Request(
+            request_url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.5",
+                "Accept-Encoding": "identity",
+                "User-Agent": "AlanChande-IranFxPublisher/1.0",
+                **({"Cache-Control": "no-cache"} if attempt else {}),
+            },
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                html = response.read().decode(charset, errors="replace")
+        except HTTPError as exc:
+            raise RuntimeError(f"TGJU currency source returned HTTP {exc.code}") from exc
+        except (URLError, TimeoutError) as exc:
+            raise RuntimeError(f"Could not load TGJU currency source: {exc}") from exc
+        if html.strip():
+            return parse_tgju_currency_page(html)
+    raise RuntimeError("TGJU currency source returned an empty response twice; no rates available")
 
 
 def _fmt_toman(value: Decimal) -> str:
@@ -240,7 +261,7 @@ def build_iran_fx_post(
         footer.append(
             "⚠️ نرخ "
             + ", ".join(sorted(unavailable))
-            + " به‌دلیل اختلاف منابع موقتاً نمایش داده نمی‌شود."
+            + " در این نوبت نمایش داده نمی‌شود."
         )
     footer.append(
         "نرخ‌ها مربوط به بازار آزاد و صرفاً جهت اطلاع‌رسانی هستند."

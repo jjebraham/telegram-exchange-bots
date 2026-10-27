@@ -1,4 +1,8 @@
 # Secrets & sensitive data
+*.session
+*.session-journal
+*.session-wal
+*.session-shm
 .env
 *.env
 config.py

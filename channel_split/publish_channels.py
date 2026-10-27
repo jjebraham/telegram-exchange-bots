@@ -621,7 +621,7 @@ def main() -> int:
                 note_source_health(
                     "iran:tgju-fx",
                     True,
-                    "parsed 25 free-market currency rows",
+                    f"parsed {len(iran_fx_cache)} free-market currency rows",
                 )
             except Exception as exc:
                 note_source_health(
@@ -1327,8 +1327,27 @@ def main() -> int:
         dolarchand = get_iran_fx_dolarchand_safe(rates.keys())
         adonis_try = get_iran_fx_adonis_try_safe()
 
+        unknown_codes = set(rates) - IRAN_FX_EXPECTED_CODES
+        if unknown_codes:
+            raise ValueError("Unknown TGJU currency codes: " + ", ".join(sorted(unknown_codes)))
+
         observations = []
-        for code, value in rates.items():
+        for code, *_rest in CURRENCY_ROWS:
+            value = rates.get(code)
+            # A missing primary quote occupies its canonical slot but can
+            # never be replaced by a secondary quote or an old history value.
+            # The existing isolated-omission gate decides whether the other
+            # 24 independently verified rows are sufficient to publish.
+            if value is None:
+                observations.append(
+                    SafetyObservation(
+                        market_key=f"iran-fx:{code}/TOMAN",
+                        source_values={},
+                        structural_errors=("TGJU primary quote unavailable",),
+                    )
+                )
+                continue
+
             source_values: dict[str, Decimal] = {"tgju": value}
             unavailable: list[str] = []
 

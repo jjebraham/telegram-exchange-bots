@@ -181,8 +181,10 @@ class PublisherSafetyModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
             argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
-            tgju = {"USD": Decimal("233200")}
-            pashizi = {"USD": Decimal("233100")}
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+            tgju["USD"] = Decimal("233200")
+            pashizi["USD"] = Decimal("233100")
+            dolarchand["USD"] = Decimal("233150")
 
             with (
                 patch.object(sys, "argv", argv),
@@ -197,6 +199,8 @@ class PublisherSafetyModeTests(unittest.TestCase):
                     "fetch_pashizi_iran_fx",
                     return_value=pashizi,
                 ),
+                patch.object(publish_channels, "fetch_dolarchand_iran_fx", return_value=(dolarchand, {})),
+                patch.object(publish_channels, "fetch_adonis_try_sell_toman", return_value=tgju["TRY"]),
                 patch.object(
                     publish_channels,
                     "build_iran_fx_post",
@@ -230,15 +234,20 @@ class PublisherSafetyModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
             argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+            tgju["USD"] = Decimal("258465")
+            pashizi["USD"] = Decimal("261200")
+            dolarchand["USD"] = Decimal("264200")
             with (
                 patch.object(sys, "argv", argv),
                 patch.dict(os.environ, self._env(db, "enforce"), clear=False),
                 patch.object(publish_channels, "fetch_iran_open_market_fx",
-                             return_value={"USD": Decimal("258465")}),
+                             return_value=tgju),
                 patch.object(publish_channels, "fetch_pashizi_iran_fx",
-                             return_value={"USD": Decimal("261200")}),
+                             return_value=pashizi),
                 patch.object(publish_channels, "fetch_dolarchand_iran_fx",
-                             return_value=({"USD": Decimal("264200")}, {})),
+                             return_value=(dolarchand, {})),
+                patch.object(publish_channels, "fetch_adonis_try_sell_toman", return_value=tgju["TRY"]),
                 patch.object(publish_channels, "build_iran_fx_post",
                              return_value="IRAN-FX"),
                 patch.object(publish_channels, "telegram_send",
@@ -252,7 +261,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             telegram_send.assert_called_once()
-            status = recent_safety_status(db)
+            status = recent_safety_status(db, limit=25)
             self.assertIn("iran-fx:USD/TOMAN", status)
             self.assertIn("VERIFIED", status)
             self.assertIn("agree within 2.50%", status)
@@ -261,15 +270,20 @@ class PublisherSafetyModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
             argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+            tgju["USD"] = Decimal("258000")
+            pashizi["USD"] = Decimal("264000")
+            dolarchand.pop("USD")
             with (
                 patch.object(sys, "argv", argv),
                 patch.dict(os.environ, self._env(db, "enforce"), clear=False),
                 patch.object(publish_channels, "fetch_iran_open_market_fx",
-                             return_value={"USD": Decimal("258000")}),
+                             return_value=tgju),
                 patch.object(publish_channels, "fetch_pashizi_iran_fx",
-                             return_value={"USD": Decimal("264000")}),
+                             return_value=pashizi),
                 patch.object(publish_channels, "fetch_dolarchand_iran_fx",
-                             return_value=({}, {"USD": "unavailable"})),
+                             return_value=(dolarchand, {"USD": "unavailable"})),
+                patch.object(publish_channels, "fetch_adonis_try_sell_toman", return_value=tgju["TRY"]),
                 patch.object(publish_channels, "build_iran_fx_post",
                              return_value="IRAN-FX"),
                 patch.object(publish_channels, "telegram_send") as telegram_send,
@@ -280,7 +294,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             telegram_send.assert_not_called()
-            status = recent_safety_status(db)
+            status = recent_safety_status(db, limit=25)
             self.assertIn("iran-fx:USD/TOMAN", status)
             self.assertIn("BLOCKED", status)
 
@@ -288,8 +302,10 @@ class PublisherSafetyModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             db = Path(tempdir) / "history.sqlite3"
             argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
-            tgju = {"TRY": Decimal("4866")}
-            pashizi = {"TRY": Decimal("4750")}
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+            tgju["TRY"] = Decimal("4866")
+            pashizi["TRY"] = Decimal("4750")
+            dolarchand.pop("TRY")
 
             with (
                 patch.object(sys, "argv", argv),
@@ -312,7 +328,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
                 patch.object(
                     publish_channels,
                     "fetch_dolarchand_iran_fx",
-                    return_value=({}, {"TRY": "unavailable"}),
+                    return_value=(dolarchand, {"TRY": "unavailable"}),
                 ),
                 patch.object(
                     publish_channels,
@@ -686,7 +702,7 @@ class PublisherSafetyModeTests(unittest.TestCase):
             self.assertIn("—", afn_line)
             self.assertNotIn("4,000", afn_line)
             self.assertIn(
-                "نرخ AFN به‌دلیل اختلاف منابع موقتاً نمایش داده نمی‌شود.",
+                "نرخ AFN در این نوبت نمایش داده نمی‌شود.",
                 post,
             )
 
@@ -703,6 +719,44 @@ class PublisherSafetyModeTests(unittest.TestCase):
 
             status = recent_safety_status(db)
             self.assertIn("iran-fx:AFN/TOMAN", status)
+            self.assertIn("BLOCKED", status)
+            self.assertIn("published=1", status)
+
+    def test_iran_fx_missing_hkd_keeps_slot_but_never_publishes_its_rate(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            db = Path(tempdir) / "history.sqlite3"
+            argv = ["publish_channels.py", "--post", "alanchande-iran-fx"]
+            tgju, pashizi, dolarchand = self._full_iran_fx_sources()
+            missing_hkd_rate = tgju.pop("HKD")
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, self._env(db, "enforce"), clear=False),
+                patch.object(publish_channels, "fetch_iran_open_market_fx", return_value=tgju),
+                patch.object(publish_channels, "fetch_pashizi_iran_fx", return_value=pashizi),
+                patch.object(publish_channels, "fetch_dolarchand_iran_fx", return_value=(dolarchand, {})),
+                patch.object(publish_channels, "fetch_adonis_try_sell_toman", return_value=tgju["TRY"]),
+                patch.object(publish_channels, "telegram_send", return_value={"ok": True}) as telegram_send,
+                patch.object(publish_channels, "record_published_values", return_value="2026-10-26T15:00:00+00:00") as record_published_values,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                result = publish_channels.main()
+
+            self.assertEqual(result, 0)
+            telegram_send.assert_called_once()
+            post = telegram_send.call_args.args[2]
+            hkd_line = next(line for line in post.splitlines() if "🇭🇰 HKD" in line)
+            self.assertNotIn(f"{missing_hkd_rate:,}", hkd_line)
+            self.assertIn("HKD", post)
+            history_values = record_published_values.call_args.args[2]
+            self.assertEqual(len(history_values), 24)
+            self.assertNotIn("HKD", history_values)
+            self.assertIn("USD", history_values)
+            self.assertIsNone(load_last_accepted(db, "iran-fx:HKD/TOMAN"))
+            self.assertIsNotNone(load_last_accepted(db, "iran-fx:USD/TOMAN"))
+            status = recent_safety_status(db)
+            self.assertIn("iran-fx:HKD/TOMAN", status)
             self.assertIn("BLOCKED", status)
             self.assertIn("published=1", status)
 
