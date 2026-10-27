@@ -12,6 +12,8 @@ on:
       - channel_split/visual_market_images.py
       - channel_split/deploy_market_images.py
       - channel_split/tgju_public_api.py
+      - channel_split/tgju_akamai.py
+      - channel_split/test_tgju_akamai.py
       - channel_split/prepare_tgju_api_transport.py
       - channel_split/test_tgju_public_api.py
       - channel_split/add_tgju_akamai_endpoint.py
@@ -62,6 +64,7 @@ jobs:
           python channel_split/test_market_image_deploy.py -v
           python channel_split/test_market_image_delivery.py -v
           python channel_split/test_tgju_public_api.py -v
+          python channel_split/test_tgju_akamai.py -v
           python channel_split/add_tgju_akamai_endpoint.py --self-test
           python channel_split/test_kiani_images.py -v
           python channel_split/test_kiani_stories.py -v

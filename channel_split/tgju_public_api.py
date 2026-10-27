@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 import json
+import os
 import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -59,6 +60,9 @@ def fetch_public_prices(
         raise ValueError('Invalid TGJU public API symbol selection')
     if not allow_missing <= frozenset(symbols):
         raise ValueError('Invalid optional TGJU public API symbols')
+    if os.environ.get('ALANCHANDE_TGJU_TRANSPORT') == 'akamai_api':
+        from tgju_akamai import fetch_current_payload
+        return parse_public_prices(fetch_current_payload(timeout), symbols, allow_missing=allow_missing)
     errors = []
     for host in API_HOSTS:
         url = 'https://' + host + '/ajax.json?rev=' + uuid4().hex

@@ -23,14 +23,17 @@ def add_hook(raw: bytes, function: str, default_url: str, helper: str) -> bytes:
     newline='\r\n' if '\r\n' in source else '\n'
     hook=('\n    # AlanChande official API transport (opt-in)\n'
           '    import os as _alan_transport_os\n'
-          '    if (_alan_transport_os.environ.get("ALANCHANDE_TGJU_TRANSPORT", "html") == "public_api"\n'
+          '    if (_alan_transport_os.environ.get("ALANCHANDE_TGJU_TRANSPORT", "html") in {"public_api", "akamai_api"}\n'
           f'            and url == {default_url}):\n'
           f'        from tgju_public_api import {helper}\n'
           f'        return {helper}(timeout=timeout)\n').replace('\n',newline)
     if 'AlanChande official API transport (opt-in)' in source:
-        if source.count(hook)!=1:
-            raise ValueError('Existing transport hook differs; review manually')
-        return raw
+        if source.count(hook)==1:
+            return raw
+        legacy=hook.replace('in {"public_api", "akamai_api"}', '== "public_api"')
+        if source.count(legacy)==1:
+            return source.replace(legacy,hook,1).encode('utf-8')
+        raise ValueError('Existing transport hook differs; review manually')
     first=node.body[0]
     doc=isinstance(first,ast.Expr) and isinstance(first.value,ast.Constant) and isinstance(first.value.value,str)
     insertion=first.end_lineno if doc else first.lineno-1
@@ -49,19 +52,26 @@ def main():
     folder=(repo/'channel_split').resolve()
     if not folder.is_relative_to(repo):
         raise SystemExit('STOP: target folder is outside the named repository')
-    client=Path(__file__).with_name('tgju_public_api.py').read_bytes()
-    ast.parse(client.decode('utf-8'))
+    sources={name:Path(__file__).with_name(name).read_bytes()
+             for name in ('tgju_public_api.py','tgju_akamai.py')}
+    for client in sources.values():
+        ast.parse(client.decode('utf-8'))
     originals={}; replacements={}
     for filename,function,default_url,helper in SPECS:
         path=folder/filename
         raw=path.read_bytes()
         originals[path]=raw
         replacements[path]=add_hook(raw,function,default_url,helper)
-    target=folder/'tgju_public_api.py'
-    originals[target]=target.read_bytes() if target.exists() else None
-    if originals[target] not in (None,client):
-        raise SystemExit('STOP: an unrecognized API client already exists; review manually')
-    replacements[target]=client
+    for name,client in sources.items():
+        target=folder/name
+        if target.is_symlink():
+            raise SystemExit('STOP: API client is a symlink')
+        originals[target]=target.read_bytes() if target.exists() else None
+        known_prior = name=='tgju_public_api.py' and originals[target] is not None and hashlib.sha256(
+            originals[target].replace(b'\r\n',b'\n')).hexdigest() == '3fc25cbf5ea6503eae8a9e527aebdeea5c0b41d25d5591d50a03671ff7330207'
+        if originals[target] not in (None,client) and not known_prior:
+            raise SystemExit('STOP: an unrecognized API client already exists; review manually')
+        replacements[target]=client
     changes={path:raw for path,raw in replacements.items() if raw!=originals[path]}
     print(json.dumps({'mode':'apply' if args.apply else 'dry-run',
                       'files':[{'name':path.name,'sha256':hashlib.sha256(raw).hexdigest()} for path,raw in changes.items()],

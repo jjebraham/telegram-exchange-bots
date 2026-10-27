@@ -113,6 +113,11 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(namespace['fetch'](url='custom'),'original result')
         fetch.assert_called_once_with(timeout=25)
         self.assertEqual(add_hook(changed,'fetch','DEFAULT_URL','fetch_iran_fx_public'),changed)
+        legacy=changed.replace(b'in {"public_api", "akamai_api"}',b'== "public_api"')
+        self.assertEqual(add_hook(legacy,'fetch','DEFAULT_URL','fetch_iran_fx_public'),changed)
+        with patch.dict(os.environ,{'ALANCHANDE_TGJU_TRANSPORT':'akamai_api'}),patch.object(api,'fetch_iran_fx_public',return_value={'USD':Decimal('2')}) as fetch:
+            self.assertEqual(namespace['fetch'](),{'USD':Decimal('2')})
+            self.assertEqual(namespace['fetch'](url='custom'),'original result')
 
     def test_prepare_dry_run_backup_and_idempotency(self):
         root=Path(__file__).resolve().parent
@@ -135,6 +140,10 @@ class ApiTests(unittest.TestCase):
             self.assertEqual((backups[0]/'iran_gold.py').read_bytes(),before['iran_gold.py'])
             self.assertEqual(run('--apply').returncode,0)
             self.assertEqual(len(list(backup.iterdir())),1)
+            (folder/'tgju_public_api.py').write_bytes(b'# unrelated custom client\n')
+            rejected=run('--apply')
+            self.assertNotEqual(rejected.returncode,0)
+            self.assertEqual((folder/'tgju_public_api.py').read_bytes(),b'# unrelated custom client\n')
 
 if __name__=='__main__':
     unittest.main()
