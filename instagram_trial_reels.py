@@ -66,12 +66,15 @@ def _font(asset_root, size, bold=False):
     path = Path(asset_root) / 'fonts' / name
     if path.is_symlink() or not path.is_file():
         raise TrialReelError('Kiani Persian font assets are unavailable.')
-    return ImageFont.truetype(str(path), size, layout_engine=ImageFont.Layout.RAQM)
+    # _rtl already shapes Arabic and applies the bidi algorithm. RAQM would
+    # shape and reorder the same text a second time, reversing Persian words.
+    return ImageFont.truetype(str(path), size, layout_engine=ImageFont.Layout.BASIC)
 
 
 def _wrap(draw, text, font, width):
     rows, current = [], ''
-    for word in text.split():
+    # Keep multiword English names together while wrapping Persian headlines.
+    for word in re.findall(r'[A-Za-z0-9]+(?:[ \t]+[A-Za-z0-9]+)+|\S+', text):
         candidate = (current + ' ' + word).strip()
         if current and draw.textlength(_rtl(candidate), font=font) > width:
             rows.append(current)
@@ -259,7 +262,8 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
         for frame in frames:
             command.extend(['-loop', '1', '-framerate', '30', '-t', str(SEGMENT_SECONDS), '-i', str(frame)])
         command.extend(['-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'])
-        command.extend(['-filter_complex', ';'.join(filters), '-map', f'[{current}]',
+        filters.append(f'[{current}]scale=in_range=full:out_range=tv,format=yuv420p[vout]')
+        command.extend(['-filter_complex', ';'.join(filters), '-map', '[vout]',
             '-map', f'{len(frames)}:a:0', '-shortest', '-c:v', 'libx264',
             '-preset', 'veryfast', '-crf', '25', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
             '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
