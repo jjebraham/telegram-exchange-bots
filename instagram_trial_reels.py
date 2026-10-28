@@ -383,6 +383,10 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
     if public_root.is_symlink():
         raise TrialReelError('Public Trial Reel media directory is unsafe.')
     public_root.mkdir(parents=True, exist_ok=True, mode=0o755)
+    # The worker uses umask 077 for private state; mkdir's mode is masked by it.
+    # Reapply the intended public traversal/read mode so the web server and Meta
+    # can fetch the video from the document root.
+    os.chmod(public_root, 0o755)
     video_path = public_root / ('kiani-trial-' + trial_id + '.mp4')
     with publisher_lock(), _connect() as con:
         con.execute('BEGIN IMMEDIATE')
