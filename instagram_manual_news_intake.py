@@ -1,4 +1,120 @@
-mps(payload, ensure_ascii=False).encode('utf-8'),
+#!/usr/bin/env python3
+"""Admin-only Telegram intake for verified, automatically published news."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import sqlite3
+import sys
+import time
+from datetime import datetime
+from urllib.parse import urlsplit
+from urllib.error import HTTPError
+from urllib.request import Request, build_opener, urlopen
+
+HOME = Path.home()
+STATE = HOME / '.local/state/kiani-instagram-manual-news'
+DB = STATE / 'intake.sqlite3'
+CONFIG_DEFAULT = HOME / '.config/kiani-instagram-manual-news/config.json'
+ADMIN_IDS = re.compile(r'^[0-9]{5,20}$')
+URL_RE = re.compile(r'https?://[^\s<>]+', re.IGNORECASE)
+MAX_TELEGRAM_BODY = 1_000_000
+POLL_TIMEOUT = 20
+
+
+class IntakeError(RuntimeError):
+    pass
+
+
+def canonical_url(value):
+    from instagram_crypto_news import canonical_url as normalize
+    return normalize(value)
+
+
+def url_in(text):
+    found = [match.group(0).rstrip('.,;:!?)]}»”\'"') for match in URL_RE.finditer(str(text or ''))]
+    if len(found) != 1:
+        return None
+    value = found[0]
+    if len(value) > 2048:
+        return None
+    parts = urlsplit(value)
+    if parts.scheme not in {'http', 'https'} or not parts.hostname or parts.username or parts.password:
+        return None
+    return value
+
+
+def open_database():
+    if STATE.is_symlink():
+        raise IntakeError('The private intake directory is unsafe.')
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(STATE, 0o700)
+    if DB.is_symlink():
+        raise IntakeError('The intake database path is unsafe.')
+    con = sqlite3.connect(DB, timeout=15)
+    os.chmod(DB, 0o600)
+    con.row_factory = sqlite3.Row
+    con.executescript('''
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS submissions(
+            update_id INTEGER PRIMARY KEY, admin_id TEXT NOT NULL, chat_id TEXT NOT NULL,
+            message_id INTEGER NOT NULL, source_url TEXT, source_key TEXT,
+            received_at REAL NOT NULL, status TEXT NOT NULL, kind TEXT,
+            request_type TEXT NOT NULL DEFAULT 'feed',
+            title_fa TEXT, media_id TEXT, response TEXT NOT NULL DEFAULT '',
+            reply_sent INTEGER NOT NULL DEFAULT 0, error_code TEXT);
+        CREATE INDEX IF NOT EXISTS manual_news_source ON submissions(source_key,received_at);
+        CREATE INDEX IF NOT EXISTS manual_news_pending ON submissions(status,received_at);
+    ''')
+    columns = {row['name'] for row in con.execute('PRAGMA table_info(submissions)')}
+    if 'request_type' not in columns:
+        con.execute("ALTER TABLE submissions ADD COLUMN request_type TEXT NOT NULL DEFAULT 'feed'")
+    return con
+
+
+def set_offset(con, offset):
+    con.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('telegram_offset', str(offset)))
+
+
+def get_offset(con):
+    row = con.execute("SELECT value FROM settings WHERE key='telegram_offset'").fetchone()
+    return int(row['value']) if row else None
+
+
+def private_json(path):
+    if path.is_symlink() or not path.is_file():
+        raise IntakeError('Private Telegram configuration is missing or unsafe.')
+    info = path.stat()
+    if hasattr(os, 'getuid') and info.st_uid != os.getuid():
+        raise IntakeError('Private Telegram configuration has an unexpected owner.')
+    if info.st_mode & 0o077:
+        raise IntakeError('Private Telegram configuration permissions are too open.')
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        raise IntakeError('Private Telegram configuration cannot be read.') from None
+    if not isinstance(data, dict) or data.get('schema_version') != 1:
+        raise IntakeError('Private Telegram configuration schema is unsupported.')
+    token = data.get('bot_token')
+    admins = data.get('admin_ids')
+    if not isinstance(token, str) or not re.fullmatch(r'[0-9]{5,15}:[A-Za-z0-9_-]{20,}', token):
+        raise IntakeError('Telegram bot token is invalid.')
+    if not isinstance(admins, list) or not admins or any(not isinstance(x, str) or not ADMIN_IDS.fullmatch(x) for x in admins):
+        raise IntakeError('At least one numeric admin account ID is required.')
+    return token, set(admins)
+
+
+def telegram(token, method, payload, *, timeout=35):
+    url = 'https://api.telegram.org/bot' + token + '/' + method
+    request = Request(url, data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
                       headers={'Content-Type': 'application/json', 'Accept': 'application/json',
                                'User-Agent': 'KianiInstagramManualNews/1.0'})
     try:
@@ -74,7 +190,72 @@ def ingest(con, updates, admins):
                 con.execute('''INSERT OR IGNORE INTO submissions
                     (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
                     VALUES (?,?,?,?,?,'rejected',?,?,0)''',
-             tuid()) or info.st_mode & 0o077):
+                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)), time.time(),
+                     'trial' if malformed_trial else 'direct_reel', response))
+                final_messages.append((update['update_id'], chat_id, response))
+                continue
+            matches = list(URL_RE.finditer(link_text))
+            source_url = url_in(link_text)
+            if source_url is None:
+                response = ('فقط یک لینک خبر در هر پیام بفرستید.' if len(matches) > 1 else
+                            'یک لینک کامل خبر بفرستید؛ رسانه باید در فهرست منابع بررسی‌شده باشد.')
+                con.execute('''INSERT OR IGNORE INTO submissions
+                    (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
+                    VALUES (?,?,?,?,?,'rejected',?,?,0)''',
+                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)), time.time(), request_type, response))
+                final_messages.append((update['update_id'], chat_id, response))
+                continue
+            try:
+                normalized = canonical_url(source_url)
+                source_key = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+            except Exception:
+                con.execute('''INSERT OR IGNORE INTO submissions
+                    (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
+                    VALUES (?,?,?,?,?,'rejected',?,?,0)''',
+                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)),
+                     time.time(), request_type, 'لینک قابل پردازش نیست. نشانی مقاله را بررسی کنید.'))
+                continue
+            con.execute('''INSERT OR IGNORE INTO submissions
+                (update_id,admin_id,chat_id,message_id,source_url,source_key,received_at,status,request_type,response,reply_sent)
+                VALUES (?,?,?,?,?,?,?,'received',?,'',0)''',
+                (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)),
+                 source_url, source_key, time.time(), request_type))
+            saved = con.execute('SELECT status,response FROM submissions WHERE update_id=?', (update['update_id'],)).fetchone()
+            if saved and saved['status'] == 'received':
+                acknowledgements.append((update['update_id'], chat_id,
+                    'لینک دریافت شد؛ منبع، تازگی و محتوای خبر را بررسی می‌کنم.'))
+    return acknowledgements, final_messages
+
+
+def recent_duplicate(con, source_key, except_update):
+    row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
+        AND status IN ('received','received_trial','processing','trial_processing','trial_pending','published','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
+        (source_key, except_update)).fetchone()
+    return dict(row) if row else None
+
+def recent_trial_duplicate(con, source_key, except_update):
+    row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
+        AND request_type='trial' AND status IN ('received','received_trial','processing','trial_processing','trial_pending','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
+        (source_key, except_update)).fetchone()
+    return dict(row) if row else None
+
+def recent_direct_reel_duplicate(con, source_key, except_update):
+    row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
+        AND request_type IN ('trial','direct_reel')
+        AND status IN ('received','trial_processing','trial_pending','trial_published',
+                       'direct_reel_processing','direct_reel_pending','direct_reel_published','needs_review')
+        ORDER BY received_at DESC LIMIT 1''', (source_key, except_update)).fetchone()
+    return dict(row) if row else None
+
+
+def load_publish_env():
+    from economy_news_translation import load_translation_env
+    load_translation_env(HOME / 'sub/.env')
+    path = HOME / '.kiani-instagram.env'
+    if path.is_symlink() or not path.is_file():
+        raise IntakeError('The existing private Instagram publishing configuration is unavailable.')
+    info = path.stat()
+    if ((hasattr(os, 'getuid') and info.st_uid != os.getuid()) or info.st_mode & 0o077):
         raise IntakeError('The existing Instagram configuration has unsafe ownership or permissions.')
     allowed = {'INSTAGRAM_USER_ID', 'INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_GRAPH_API_VERSION'}
     for line in path.read_text(encoding='utf-8').splitlines():
@@ -674,5 +855,6 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
