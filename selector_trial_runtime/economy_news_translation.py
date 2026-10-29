@@ -185,6 +185,7 @@ class Completion:
 
 
 def request_completion(body, api_key):
+    recorded_usage = False
     request = Request('https://api.deepseek.com/chat/completions',
                       data=json.dumps(body).encode(),
                       headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'})
@@ -194,6 +195,9 @@ def request_completion(body, api_key):
         if len(data) > 200000:
             raise ValueError('Response too large')
         envelope = json.loads(data)
+        from instagram_reel_usage import record_envelope
+        record_envelope(body, envelope)
+        recorded_usage = True
         choice = envelope['choices'][0]
         content, reason = choice['message']['content'], choice['finish_reason']
         if content is not None and not isinstance(content, str):
@@ -207,6 +211,12 @@ def request_completion(body, api_key):
         # Never use, replay or print reasoning_content or provider response text.
         return Completion(content, reason, tokens)
     except Exception as exc:
+        if not recorded_usage:
+            try:
+                from instagram_reel_usage import record_envelope
+                record_envelope(body, {})
+            except ImportError:
+                pass
         # Do not print HTTP bodies, headers, environment contents or credentials.
         code = getattr(exc, 'code', None)
         detail = f'HTTP {code}' if type(code) is int else type(exc).__name__
@@ -287,3 +297,4 @@ def translate(con, material, request_fn=None):
             raise NewsError(f'DeepSeek returned no complete translation after {attempt} attempts ({failure}; {status}).')
         print(f'DeepSeek response incomplete ({failure}; {status}); retrying.')
         time.sleep(attempt)
+

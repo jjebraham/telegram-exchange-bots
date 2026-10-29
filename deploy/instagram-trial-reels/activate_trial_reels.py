@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the private admin Trial Reel command and daily 20:30 selector."""
+"""Install the private admin Trial Reel command and five daily selector slots."""
 from __future__ import annotations
 
 import argparse
@@ -56,7 +56,7 @@ def cron_read():
     return subprocess.check_output(['crontab', '-l'], timeout=15)
 
 
-def replace_trial_cron(original, command):
+def replace_trial_cron(original, commands):
     lines = original.decode('utf-8').splitlines()
     starts = [i for i, line in enumerate(lines) if line.strip() == BEGIN]
     ends = [i for i, line in enumerate(lines) if line.strip() == END]
@@ -68,7 +68,7 @@ def replace_trial_cron(original, command):
         raise RuntimeError('A Trial Reel launcher is scheduled outside its managed cron block.')
     if lines and lines[-1].strip():
         lines.append('')
-    lines += [BEGIN, 'CRON_TZ=Europe/Istanbul', command, END]
+    lines += [BEGIN, 'CRON_TZ=Europe/Istanbul', *commands, END]
     return ('\n'.join(lines).rstrip() + '\n').encode()
 
 
@@ -96,7 +96,8 @@ def main():
     if not runtime.is_relative_to(source_root):
         raise RuntimeError('The reviewed runtime is outside the pinned private source directory.')
     if not all((runtime / name).is_file() and not (runtime / name).is_symlink() for name in (
-            'instagram_trial_reels.py', 'instagram_trial_music.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py')):
+            'instagram_trial_reels.py', 'instagram_trial_music.py', 'instagram_reel_motion.py', 'instagram_reel_media.py', 'instagram_reel_source_image.py',
+            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py')):
         raise RuntimeError('A required Trial Reel runtime file is missing or unsafe.')
 
     publisher = home / 'kiani-instagram-publisher'
@@ -161,8 +162,9 @@ def main():
         daily_log = home / 'kiani-instagram-trial-reels-cron.log'
         original = cron_read()
         require_manual_cron(original, manual_launcher, manual_log)
-        daily_command = f'30 20 * * * {shlex.quote(str(daily_launcher))} >> {shlex.quote(str(daily_log))} 2>&1'
-        replacement = replace_trial_cron(original, daily_command)
+        slots = ((11, 0), (13, 0), (15, 0), (17, 0), (20, 30))
+        daily_commands = [f'{minute} {hour} * * * {shlex.quote(str(daily_launcher))} --slot {hour:02d}:{minute:02d} >> {shlex.quote(str(daily_log))} 2>&1' for hour, minute in slots]
+        replacement = replace_trial_cron(original, daily_commands)
         if subprocess.run(['systemctl', 'is-active', '--quiet', 'cron'], timeout=15).returncode:
             raise RuntimeError('Cron stopped during setup; nothing was scheduled.')
 
@@ -172,7 +174,7 @@ def main():
             ' --once --runtime ' + shlex.quote(str(runtime)) + ' --config ' + shlex.quote(str(bot_config)) + '\n'
         daily_script = prefix + 'exec ' + shlex.quote(str(python)) + ' -u ' + \
             shlex.quote(str(runtime / 'instagram_trial_reels.py')) + ' --daily --runtime ' + \
-            shlex.quote(str(runtime)) + ' --assets ' + shlex.quote(str(publisher)) + '\n'
+            shlex.quote(str(runtime)) + ' --assets ' + shlex.quote(str(publisher)) + ' "$@"\n'
 
         paths = (manual_launcher, daily_launcher)
         old_files = {}
@@ -215,9 +217,9 @@ def main():
 
     print('Existing Telegram bot:', '@' + str(json.loads(bot_config.read_text()).get('bot_username', 'configured')))
     print('Authorized private admins:', len(admins))
-    print('Admin command: /trial <one approved, fresh news URL>')
-    print('Daily automatic selection: highest-ranked eligible crypto/economy story at 20:30 Europe/Istanbul.')
-    print('Shared limit: at most one Trial Reel per Istanbul calendar day.')
+    print('Admin command: /trial <one approved publisher article URL>; publication timestamp optional.')
+    print('Automatic Trial Reel slots: 11:00, 13:00, 15:00, 17:00 and 20:30 Europe/Istanbul.')
+    print('Istanbul daily limits: up to 5 admin Trial Reels plus 5 automatic; Meta quota applies.')
     print('Graduation: SS_PERFORMANCE; Instagram decides whether to share with followers.')
     print('Trial Reels are excluded from ordinary Feed deletion and delayed-Story workers.')
     print('Bounded status polling runs through the existing private Telegram worker.')
@@ -237,4 +239,5 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Trial Reel activation stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 

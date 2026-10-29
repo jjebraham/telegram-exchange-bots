@@ -16,6 +16,7 @@ import sys
 import time
 from datetime import datetime
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import Request, build_opener, urlopen
 
 HOME = Path.home()
@@ -226,6 +227,12 @@ def recent_duplicate(con, source_key, except_update):
         (source_key, except_update)).fetchone()
     return dict(row) if row else None
 
+def recent_trial_duplicate(con, source_key, except_update):
+    row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
+        AND request_type='trial' AND status IN ('received','received_trial','processing','trial_processing','trial_pending','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
+        (source_key, except_update)).fetchone()
+    return dict(row) if row else None
+
 
 def load_publish_env():
     from economy_news_translation import load_translation_env
@@ -252,7 +259,7 @@ def load_publish_env():
     os.environ['INSTAGRAM_PUBLISH_MODE'] = 'feed'
 
 
-def classify(engine, ranked, con, material, now, *, allow_opinion=False):
+def classify(engine, ranked, con, material, now, *, allow_opinion=False, trial_relaxed=False):
     scored = {}
     for kind in ('crypto', 'economy'):
         ranked.configure_engine(kind)
@@ -261,6 +268,9 @@ def classify(engine, ranked, con, material, now, *, allow_opinion=False):
             raise IntakeError('DeepSeek did not return one validated assessment.')
         row = rows[0]
         assessment = row['assessment']
+        if trial_relaxed:
+            scored[kind] = row
+            continue
         eligible = (assessment['story_type'] == 'hard_news' or allow_opinion and
                     assessment['story_type'] == 'opinion' and assessment['usefulness']['points'] > 0)
         eligible = (eligible and
@@ -276,6 +286,8 @@ def classify(engine, ranked, con, material, now, *, allow_opinion=False):
         return next(iter(scored.items()))
     crypto_relevance = scored['crypto']['assessment']['relevance']['points']
     economy_relevance = scored['economy']['assessment']['relevance']['points']
+    if trial_relaxed:
+        return ('crypto', scored['crypto']) if crypto_relevance >= economy_relevance else ('economy', scored['economy'])
     if abs(crypto_relevance - economy_relevance) < 10:
         raise IntakeError('The news category is ambiguous; this link was not posted.')
     return ('crypto', scored['crypto']) if crypto_relevance > economy_relevance else ('economy', scored['economy'])
@@ -460,35 +472,37 @@ def process_submission(con, record, runtime):
                 return kind, saved['title_fa'], media_id
 
 
+from instagram_reel_usage import tracked as track_reel_usage
+
+@track_reel_usage('admin_link')
 def process_trial_submission(con, record, runtime):
     """Verify and queue a private-admin link as an isolated Trial Reel."""
     import crypto_news_trial as engine
     import instagram_ranked_news as ranked
     from instagram_crypto_news import NewsError, database
     from instagram_news_batch import guard
-    from instagram_trial_reels import TrialReelError, create_trial
+    from instagram_trial_reels import TrialReelError, create_trial, check_admin_daily_limit
+
+    try:
+        check_admin_daily_limit()
+    except TrialReelError as exc:
+        raise IntakeError(str(exc)) from None
 
     update_id = record['update_id']
     source_url, source_key = record['source_url'], record['source_key']
     with con:
-        duplicate = recent_duplicate(con, source_key, update_id)
+        duplicate = recent_trial_duplicate(con, source_key, update_id)
         if duplicate:
             raise IntakeError('این لینک قبلاً دریافت یا منتشر شده است؛ ریل تکراری ساخته نشد.')
         con.execute("UPDATE submissions SET status='trial_processing',response='' WHERE update_id=? AND status='received'", (update_id,))
     now = time.time()
     ranked.configure_engine('crypto')
-    blocked, _ = ranked.histories(now)
-    if canonical_url(source_url) in blocked:
-        raise IntakeError('این خبر قبلاً منتشر شده یا برایش تلاش انتشار ثبت شده است؛ ریل تکراری ساخته نشد.')
     material = engine.source_material(dict(id='trial-' + str(update_id), source_url=source_url,
-        title_original='', source_name=''), now)
+        title_original='', source_name=''), now, admin_override=True)
     final_url = canonical_url(material['source_url'])
     final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
-    blocked, _ = ranked.histories(time.time())
-    if final_url in blocked:
-        raise IntakeError('نشانی نهایی این خبر قبلاً منتشر شده یا در انتظار انتشار است.')
     with con:
-        duplicate = recent_duplicate(con, final_key, update_id)
+        duplicate = recent_trial_duplicate(con, final_key, update_id)
         if duplicate:
             raise IntakeError('این خبر از نشانی نهایی دیگری قبلاً دریافت یا منتشر شده است.')
         con.execute('UPDATE submissions SET source_url=?,source_key=? WHERE update_id=?', (final_url, final_key, update_id))
@@ -501,17 +515,14 @@ def process_trial_submission(con, record, runtime):
         # The admin explicitly chooses this Trial Reel experiment. Accept a
         # verified publisher's useful analysis/opinion as well as hard news;
         # the automatic daily selector remains hard-news-only.
-        kind, row = classify(engine, ranked, assessment_db, material, time.time(), allow_opinion=True)
+        try:
+            kind, row = classify(engine, ranked, assessment_db, material, time.time(), trial_relaxed=True)
+        except Exception as exc:
+            print('Trial classification unavailable; using crypto category:', type(exc).__name__, flush=True)
+            kind, row = 'crypto', dict(material, assessment={'story_type': 'opinion'})
         record['kind'] = kind
         ranked.configure_engine(kind)
-        _blocked, history = ranked.histories(time.time())
-        groups = engine.event_groups(assessment_db, [row], history)
-        if not groups or groups[0].get('published_match'):
-            raise IntakeError('همین رویداد قبلاً منتشر شده است؛ ریل تکراری ساخته نشد.')
         with ranked.locks(kind):
-            blocked_now, _ = ranked.histories(time.time())
-            if final_url in blocked_now:
-                raise IntakeError('این خبر در فاصله بررسی تا انتشار ثبت شده است؛ ریل تکراری ساخته نشد.')
             try:
                 guard()
             except Exception as exc:
@@ -519,6 +530,7 @@ def process_trial_submission(con, record, runtime):
             title, summary = ranked.translate(assessment_db, row)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
+                image_url=material.get('image_url'),
                 article_published_at=material['article_published_at'],
                 story_type=row['assessment']['story_type'])
             asset_root = Path.home() / 'kiani-instagram-publisher'
@@ -625,6 +637,8 @@ def run_once(config_path, runtime):
                     with con:
                         con.execute('UPDATE submissions SET reply_sent=1 WHERE update_id=?', (update_id,))
             deliver_unsent(con, token)
+            from instagram_reel_usage import deliver_notices
+            deliver_notices(token, admins, send_message)
             try:
                 from instagram_trial_reels import poll_pending
                 results = poll_pending(publisher_root=HOME / 'kiani-instagram-publisher')
@@ -647,6 +661,12 @@ def run_once(config_path, runtime):
                             '\nارزیابی بازدید طبق سیاست خبر، دو ساعت پس از انتشار انجام می‌شود.')
                         finish(con, token, record, 'published', response, kind=kind, title=title, media_id=media_id)
                         print('Manual news published:', kind, media_id, flush=True)
+                except HTTPError as exc:
+                    if record.get('request_type') == 'trial' and exc.code == 429:
+                        finish(con, token, record, 'rejected', 'رسانه فعلاً درخواست‌های زیادی دریافت کرده است (HTTP 429). لطفاً بعداً دوباره لینک را بفرستید.', code='SourceRateLimited429')
+                    else:
+                        finish(con, token, record, 'rejected', f'دسترسی به منبع با خطای HTTP {exc.code} انجام نشد؛ لطفاً بعداً دوباره تلاش کنید.', code='SourceHTTPError')
+                    print('Manual news source HTTP status:', exc.code, flush=True)
                 except IntakeError as exc:
                     code = re.sub(r'[^A-Za-z0-9]', '', str(exc))[:64] or 'Rejected'
                     finish(con, token, record, 'rejected', str(exc), code=code)
@@ -676,6 +696,7 @@ def run_once(config_path, runtime):
                             'این خبر منتشر نشد. منبع، دسته‌بندی یا ظرفیت انتشار شرایط لازم را نداشت؛ لینک را بررسی کنید و در صورت نیاز بعداً دوباره بفرستید.',
                             code=type(exc).__name__)
                     print('Manual news processing stopped:', type(exc).__name__, flush=True)
+            deliver_notices(token, admins, send_message)
             return 0
 
 
@@ -703,3 +724,4 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+

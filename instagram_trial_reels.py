@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -30,18 +31,20 @@ DB = STATE / 'trial_reels.sqlite3'
 PUBLIC_ROOT = Path('/var/www/peerexo.com/public/instagram-rates/trial-reels')
 PUBLIC_BASE = 'https://peerexo.com/instagram-rates/trial-reels'
 ZONE = ZoneInfo('Europe/Istanbul')
-MAX_PER_DAY = 1
+MAX_PER_DAY = 5
+MAX_ADMIN_PER_DAY = 5
+AUTO_SLOTS = ('11:00', '13:00', '15:00', '17:00', '20:30')
 PENDING = {'rendering', 'creating_container', 'container_processing', 'publishing', 'needs_review'}
 DECISIVE = {'published', 'needs_review', 'container_processing', 'publishing', 'creating_container'}
 SEGMENT_SECONDS = 5.0
 CROSSFADE_SECONDS = 0.25
 VIDEO_SIZE = (1080, 1920)
-INK = '#123D31'
-GREEN = '#16845F'
-MINT = '#DCEFE5'
-PAPER = '#F1F7F2'
-MUTED = '#6F827A'
-GOLD = '#F3BA47'
+INK = '#112A52'
+GREEN = '#00AFA8'
+MINT = '#D8F7F1'
+PAPER = '#07172C'
+MUTED = '#70829A'
+GOLD = '#FFB52E'
 
 
 class TrialReelError(RuntimeError):
@@ -146,7 +149,11 @@ def _frame(title, body, kind, page, pages, asset_root, story_type='hard_news'):
     bold = _font(asset_root, 38, True)
     draw.text((w - 188, 130), _rtl('صرافی کیانی'), font=bold, fill=INK, anchor='rm')
     draw.text((w - 188, 177), 'kiani.exchange', font=regular, fill=MUTED, anchor='rm')
-    if story_type == 'opinion':
+    if story_type == 'forecast':
+        label = 'پیش‌بینی کریپتو' if kind == 'crypto' else 'پیش‌بینی اقتصادی'
+    elif story_type == 'promotional':
+        label = 'محتوای معرفی'
+    elif story_type == 'opinion':
         label = 'تحلیل کریپتو' if kind == 'crypto' else 'تحلیل اقتصادی'
     else:
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
@@ -225,7 +232,7 @@ def _probe_video(path, ffprobe):
     return duration
 
 
-def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None, music_path=None):
+def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None, music_path=None, media=None):
     title = _safe_text(story.get('title_fa'), 500)
     summary = _safe_text(story.get('summary_fa'))
     source = _safe_text(story.get('source_name'), 180)
@@ -240,47 +247,9 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
     ffprobe = ffprobe or shutil.which('ffprobe')
     if not ffmpeg or not ffprobe:
         raise TrialReelError('FFmpeg and ffprobe are required to render and verify Trial Reels.')
-    with tempfile.TemporaryDirectory(prefix='kiani-trial-frames-', dir=STATE) as temp:
-        temp_root = Path(temp)
-        frames = []
-        for page in range(1, pages + 1):
-            body = chunks[page - 2] if 1 < page < pages else source
-            frame = _frame(title, body, kind, page, pages, asset_root, story_type)
-            path = temp_root / f'frame-{page:02d}.jpg'
-            frame.save(path, format='JPEG', quality=94, optimize=True)
-            frames.append(path)
-        filters = []
-        for index in range(len(frames)):
-            filters.append(f'[{index}:v]zoompan=z=\'min(zoom+0.00025,1.035)\':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p[v{index}]')
-        current = 'v0'
-        for index in range(1, len(frames)):
-            next_name = f'x{index}'
-            offset = (SEGMENT_SECONDS - CROSSFADE_SECONDS) * index
-            filters.append(f'[{current}][v{index}]xfade=transition=fade:duration={CROSSFADE_SECONDS}:offset={offset:.2f}[{next_name}]')
-            current = next_name
-        command = [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-threads', '2']
-        for frame in frames:
-            command.extend(['-loop', '1', '-framerate', '30', '-t', str(SEGMENT_SECONDS), '-i', str(frame)])
-        if music_path is None:
-            command.extend(['-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'])
-        else:
-            if Path(music_path).is_symlink() or not Path(music_path).is_file():
-                raise TrialReelError('The verified music file is unavailable.')
-            command.extend(['-stream_loop', '-1', '-i', str(music_path)])
-        filters.append(f'[{current}]scale=in_range=full:out_range=tv,format=yuv420p[vout]')
-        command.extend(['-filter_complex', ';'.join(filters), '-map', '[vout]',
-            '-map', f'{len(frames)}:a:0', '-shortest', '-c:v', 'libx264',
-            '-preset', 'veryfast', '-crf', '25', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-            '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
-            '-ac', '2'])
-        if music_path is not None:
-            duration = SEGMENT_SECONDS * len(frames) - CROSSFADE_SECONDS * (len(frames) - 1)
-            command.extend(['-af', f'volume=0.35,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0, duration-1):.2f}:d=1'])
-        command.append(str(destination))
-        try:
-            subprocess.run(command, capture_output=True, timeout=240, check=True)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-            raise TrialReelError('FFmpeg could not render the Trial Reel.') from None
+    import sys
+    from instagram_reel_motion import render
+    render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg)
     if destination.is_symlink() or not destination.is_file() or not 100_000 <= destination.stat().st_size <= 250_000_000:
         raise TrialReelError('The rendered Reel is missing or has an invalid file size.')
     os.chmod(destination, 0o644)
@@ -314,6 +283,17 @@ def _connect():
     con.execute('''CREATE TABLE IF NOT EXISTS daily_runs(
         posted_day TEXT PRIMARY KEY, status TEXT NOT NULL, started_at REAL NOT NULL,
         updated_at REAL NOT NULL, error_type TEXT)''')
+    con.execute('''CREATE TABLE IF NOT EXISTS scheduled_runs(
+        posted_day TEXT NOT NULL, slot TEXT NOT NULL, status TEXT NOT NULL,
+        started_at REAL NOT NULL, updated_at REAL NOT NULL, error_type TEXT,
+        trial_id TEXT, PRIMARY KEY(posted_day,slot))''')
+    # Retain the old daily latch as the historical 20:30 slot; never rewrite it.
+    con.execute('''INSERT OR IGNORE INTO scheduled_runs(posted_day,slot,status,started_at,updated_at,error_type,trial_id)
+        SELECT d.posted_day,'20:30',d.status,d.started_at,d.updated_at,d.error_type,
+        (SELECT r.trial_id FROM trial_reels r WHERE r.posted_day=d.posted_day
+         AND r.origin='daily_top_story' ORDER BY r.created_at LIMIT 1)
+        FROM daily_runs d''')
+    con.commit()
     return con
 
 
@@ -350,7 +330,11 @@ def _live_guard():
 
 
 def _caption(story, kind):
-    if story.get('story_type') == 'opinion':
+    if story.get('story_type') == 'forecast':
+        label = 'پیش‌بینی کریپتو' if kind == 'crypto' else 'پیش‌بینی اقتصادی'
+    elif story.get('story_type') == 'promotional':
+        label = 'محتوای معرفی'
+    elif story.get('story_type') == 'opinion':
         label = 'تحلیل کریپتو' if kind == 'crypto' else 'تحلیل اقتصادی'
     else:
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
@@ -369,26 +353,52 @@ def _update(con, trial_id, **values):
 
 def _mark_daily_result(con, trial_id, status):
     with con:
-        con.execute('''UPDATE daily_runs SET status=?,updated_at=? WHERE posted_day=(
-            SELECT posted_day FROM trial_reels WHERE trial_id=?)''', (status, time.time(), trial_id))
+        con.execute('UPDATE scheduled_runs SET status=?,updated_at=? WHERE trial_id=?',
+                    (status, time.time(), trial_id))
 
 
-def create_trial(story, kind, *, origin, asset_root, submission_id=None,
+def _article_allowed(origin, article_time, now):
+    if isinstance(article_time, bool) or not isinstance(article_time, (int, float)) or not math.isfinite(article_time) or article_time < 0:
+        return False
+    return origin == 'admin_link' or now - 86400 <= article_time <= now + 60
+
+def _enforce_daily_limit(con, origin, day):
+    used = con.execute('''SELECT COUNT(*) FROM trial_reels WHERE posted_day=? AND origin=? AND status IN
+        ('rendering','creating_container','container_processing','publishing','needs_review','published')''', (day, origin)).fetchone()[0]
+    maximum = MAX_ADMIN_PER_DAY if origin == 'admin_link' else MAX_PER_DAY
+    if used >= maximum:
+        if origin == 'admin_link':
+            raise TrialReelError('سقف ۵ ریل ادمین برای امروز به وقت استانبول تکمیل شده است.')
+        raise TrialReelError('A scheduled Trial Reel has already used today’s slot.')
+
+def check_admin_daily_limit():
+    with _connect() as con:
+        _enforce_daily_limit(con, 'admin_link', istanbul_day())
+
+def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,
                  public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE):
     """Reserve one daily slot, render a verified story, and save an API container."""
     if kind not in {'crypto', 'economy'} or origin not in {'daily_top_story', 'admin_link'}:
         raise TrialReelError('Trial Reel category or origin is unsupported.')
+    if origin == 'daily_top_story' and scheduled_slot not in AUTO_SLOTS:
+        raise TrialReelError('The automatic Trial Reel slot is invalid.')
     article_time = story.get('article_published_at')
-    if isinstance(article_time, bool) or not isinstance(article_time, (int, float)) or not time.time() - 86400 <= article_time <= time.time() + 60:
+    if not _article_allowed(origin, article_time, time.time()):
         raise TrialReelError('The original article is outside the fresh 24-hour window.')
     normalized = dict(story)
     for field, limit in (('source_url', 2048), ('source_name', 180), ('title_original', 800), ('title_fa', 500), ('summary_fa', 12000)):
         normalized[field] = _safe_text(normalized.get(field), limit)
     normalized['story_type'] = normalized.get('story_type', 'hard_news')
-    if normalized['story_type'] not in {'hard_news', 'opinion'}:
+    if normalized['story_type'] not in {'hard_news', 'opinion', 'forecast', 'roundup', 'promotional'}:
         raise TrialReelError('The selected story type is not eligible for Trial Reels.')
     source_key = _source_key(normalized['source_url'])
     caption = _caption(normalized, kind)
+    from instagram_reel_media import select as select_media, caption as media_caption
+    media = select_media(normalized)
+    if media:
+        caption += '\n\n' + media_caption(media)
+        if len(caption) > 2200:
+            raise TrialReelError('Trial Reel caption with image credits is too long.')
     trial_id = uuid.uuid4().hex
     posted_day = istanbul_day()
     public_root = Path(public_root)
@@ -405,10 +415,7 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
     video_path = public_root / ('kiani-trial-' + trial_id + '.mp4')
     with publisher_lock(), _connect() as con:
         con.execute('BEGIN IMMEDIATE')
-        used = con.execute('''SELECT COUNT(*) FROM trial_reels WHERE posted_day=? AND status IN
-            ('rendering','creating_container','container_processing','publishing','needs_review','published')''', (posted_day,)).fetchone()[0]
-        if used >= MAX_PER_DAY:
-            raise TrialReelError('A Trial Reel has already used today’s one-post limit.')
+        _enforce_daily_limit(con, origin, posted_day)
         duplicate = con.execute('''SELECT 1 FROM trial_reels WHERE source_key=? AND status IN
             ('rendering','creating_container','container_processing','publishing','needs_review','published') LIMIT 1''', (source_key,)).fetchone()
         if duplicate:
@@ -420,9 +427,30 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
             (trial_id, source_key, normalized['source_url'], kind, normalized['title_original'], normalized['title_fa'],
              normalized['summary_fa'], normalized['source_name'], float(article_time), posted_day, origin,
              submission_id, normalized['story_type'], str(video_path), caption, time.time(), time.time()))
+        if origin == 'daily_top_story':
+            result = con.execute('''UPDATE scheduled_runs SET trial_id=?,updated_at=?
+                WHERE posted_day=? AND slot=? AND status='selecting' AND trial_id IS NULL''',
+                (trial_id, time.time(), posted_day, scheduled_slot))
+            if result.rowcount != 1:
+                raise TrialReelError('Automatic Trial Reel slot reservation changed.')
     music_path = STATE / ('music-' + trial_id + '.ogg')
+    source_image_path = STATE / ('source-image-' + trial_id + '.jpg')
     try:
         _live_guard()
+        if normalized.get('image_url'):
+            try:
+                import crypto_news_trial as image_engine
+                from instagram_reel_source_image import fetch as fetch_source_image
+                fetch_source_image(image_engine, normalized['source_url'], normalized['image_url'], source_image_path)
+                media.insert(0, {'path':source_image_path, 'kind':'publisher'})
+                caption += '\n\nتصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
+                if len(caption)>2200: raise TrialReelError('Caption with image credit is too long.')
+                _update(con, trial_id, caption=caption, updated_at=time.time())
+            except TrialReelError:
+                raise
+            except Exception as exc:
+                print('Publisher image unavailable:', type(exc).__name__, flush=True)
+                raise TrialReelError('تصویر اصلی خبر در دسترس نیست؛ ریل بدون تصویر منتشر نشد.') from None
         from instagram_trial_music import select_order, retrieve_track, caption_credit
         previous = con.execute("SELECT music_json FROM trial_reels WHERE status='published' AND music_json IS NOT NULL ORDER BY published_at DESC LIMIT 1").fetchone()
         try:
@@ -443,8 +471,8 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
             _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
-        duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None)
-        if time.time() - article_time > 86400:
+        duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None, media=media)
+        if origin == 'daily_top_story' and time.time() - article_time > 86400:
             raise TrialReelError('The article expired while its Reel was being rendered.')
         public_url = public_base.rstrip('/') + '/' + quote(video_path.name)
         request = Request(public_url, headers={'Range': 'bytes=0-31', 'User-Agent': 'KianiExchange-TrialReel/1.0'})
@@ -483,10 +511,15 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
         row = con.execute('SELECT status FROM trial_reels WHERE trial_id=?', (trial_id,)).fetchone()
         if row and row['status'] == 'rendering':
             _update(con, trial_id, status='failed', error_type=type(exc).__name__, updated_at=time.time())
+            _mark_daily_result(con, trial_id, 'failed')
+        elif row and row['status'] == 'needs_review':
+            _mark_daily_result(con, trial_id, 'needs_review')
         raise
     finally:
         if music_path.is_file() and not music_path.is_symlink():
             music_path.unlink()
+        if source_image_path.is_file() and not source_image_path.is_symlink():
+            source_image_path.unlink()
 
 
 def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=None):
@@ -524,7 +557,7 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
         if not row:
             return results
         job = dict(row)
-        if time.time() - job['article_published_at'] > 86400:
+        if job['origin'] == 'daily_top_story' and time.time() - job['article_published_at'] > 86400:
             _update(con, job['trial_id'], status='failed', error_type='ArticleExpiredDuringProcessing', updated_at=time.time())
             _mark_daily_result(con, job['trial_id'], 'failed')
             results.append(dict(trial_id=job['trial_id'], submission_id=job['submission_id'], status='failed',
@@ -559,7 +592,7 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
         except Exception as exc:
             print('Trial Reel publishing deferred by quota/source reservation:', type(exc).__name__, flush=True)
             return results
-        if time.time() - job['article_published_at'] > 86400:
+        if job['origin'] == 'daily_top_story' and time.time() - job['article_published_at'] > 86400:
             _update(con, job['trial_id'], status='failed', error_type='ArticleExpiredBeforePublish', updated_at=time.time())
             _mark_daily_result(con, job['trial_id'], 'failed')
             results.append(dict(trial_id=job['trial_id'], submission_id=job['submission_id'], status='failed',
@@ -583,16 +616,26 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
     return results
 
 
-def daily_slot_used(day=None):
-    day = day or istanbul_day()
-    with _connect() as con:
-        return bool(con.execute('''SELECT 1 FROM trial_reels WHERE posted_day=? AND status IN
-            ('rendering','creating_container','container_processing','publishing','needs_review','published') LIMIT 1''',
-            (day,)).fetchone())
+from instagram_reel_usage import tracked as track_reel_usage
 
+def _slot_due(local, slot):
+    if slot not in AUTO_SLOTS:
+        raise TrialReelError('Unknown automatic Trial Reel slot.')
+    hour, minute = (int(value) for value in slot.split(':'))
+    due = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return due.timestamp() <= local.timestamp() < due.timestamp() + 600
 
-def run_daily(runtime_root, asset_root):
-    """Execute one 20:30 Istanbul selection attempt, with a durable daily latch."""
+def _reserve_auto_slot(con, day, slot, now):
+    _enforce_daily_limit(con, 'daily_top_story', day)
+    old = con.execute('SELECT status FROM scheduled_runs WHERE posted_day=? AND slot=?', (day, slot)).fetchone()
+    if old:
+        return False
+    con.execute("INSERT INTO scheduled_runs VALUES (?,?,'selecting',?,?,NULL,NULL)", (day, slot, now, now))
+    return True
+
+@track_reel_usage('daily_top_story')
+def run_daily(runtime_root, asset_root, slot):
+    """Execute one scheduled Istanbul selection attempt, with a durable slot latch."""
     import sys
     runtime_root = Path(runtime_root).resolve()
     sys.path[:0] = [str(runtime_root), str(runtime_root / 'selector_trial_runtime')]
@@ -606,18 +649,18 @@ def run_daily(runtime_root, asset_root):
     now = time.time()
     local = datetime.fromtimestamp(now, ZONE)
     day = local.date().isoformat()
-    if (local.hour, local.minute) < (20, 30):
-        print('Before 20:30 Istanbul; scheduled Trial Reel is not due.', flush=True)
+    if not _slot_due(local, slot):
+        print('Scheduled Trial Reel slot is outside its ten-minute start window.', flush=True)
         return None
     with publisher_lock(), _connect() as con:
-        if daily_slot_used(day):
-            print('An admin or scheduled Trial Reel already reserved today’s slot.', flush=True)
+        try:
+            reserved = _reserve_auto_slot(con, day, slot, now)
+        except TrialReelError:
+            print('The five automatic Trial Reel limit is already reserved.', flush=True)
             return None
-        old = con.execute('SELECT status FROM daily_runs WHERE posted_day=?', (day,)).fetchone()
-        if old:
-            print('Today’s automatic Trial Reel attempt was already recorded:', old['status'], flush=True)
+        if not reserved:
+            print('This automatic Trial Reel slot was already recorded.', flush=True)
             return None
-        con.execute('INSERT INTO daily_runs VALUES (?,\'selecting\',?,?,NULL)', (day, now, now))
     try:
         import crypto_news_trial as engine
         import instagram_ranked_news as ranked
@@ -630,13 +673,13 @@ def run_daily(runtime_root, asset_root):
                 source_db = ranked.SOURCES[kind]
                 with database(source_db) as con:
                     engine.init_trial(con)
-                    rows, audit = rank_events(con, kind, now)
+                    rows, audit = rank_events(con, kind, now, trial_relaxed=True)
                     if rows:
                         selected = select_main_stories(con, rows, kind, 1, now, audit, lambda: None)
                         candidates.extend((kind, item) for item in selected)
         if not candidates:
             with _connect() as con:
-                con.execute('UPDATE daily_runs SET status=\'no_candidate\',updated_at=? WHERE posted_day=?', (time.time(), day))
+                con.execute("UPDATE scheduled_runs SET status='no_candidate',updated_at=? WHERE posted_day=? AND slot=?", (time.time(), day, slot))
             print('No verified fresh eligible story ranked today; no Trial Reel was prepared.', flush=True)
             return None
         kind, row = max(candidates, key=lambda item: (item[1]['trial_score'], item[1]['article_published_at'], item[0] == 'crypto'))
@@ -646,22 +689,24 @@ def run_daily(runtime_root, asset_root):
             title, summary = ranked.translate(con, row)
         story = dict(source_url=row['source_url'], source_name=row['source_name'],
             title_original=row['title_original'], title_fa=title, summary_fa=summary,
+            image_url=row.get('image_url'),
             article_published_at=row['article_published_at'],
             story_type=row['assessment']['story_type'])
-        trial_id = create_trial(story, kind, origin='daily_top_story', asset_root=asset_root)
+        trial_id = create_trial(story, kind, origin='daily_top_story', asset_root=asset_root, scheduled_slot=slot)
         with _connect() as con:
-            con.execute('UPDATE daily_runs SET status=\'container_processing\',updated_at=? WHERE posted_day=?', (time.time(), day))
+            con.execute("UPDATE scheduled_runs SET status='container_processing',updated_at=? WHERE posted_day=? AND slot=? AND status='selecting'", (time.time(), day, slot))
         return trial_id
     except BaseException as exc:
         with _connect() as con:
-            con.execute('UPDATE daily_runs SET status=\'failed\',error_type=?,updated_at=? WHERE posted_day=?',
-                        (type(exc).__name__, time.time(), day))
+            con.execute("UPDATE scheduled_runs SET status='failed',error_type=?,updated_at=? WHERE posted_day=? AND slot=? AND trial_id IS NULL",
+                        (type(exc).__name__, time.time(), day, slot))
         raise
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--daily', action='store_true', required=True)
+    parser.add_argument('--slot', choices=AUTO_SLOTS, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--assets', type=Path, required=True)
     args = parser.parse_args()
@@ -669,7 +714,7 @@ def main():
         parser.error('Run as the existing Instagram publisher user, without sudo.')
     os.umask(0o077)
     try:
-        result = run_daily(args.runtime, args.assets)
+        result = run_daily(args.runtime, args.assets, args.slot)
         if result:
             print('Daily Trial Reel container queued:', result, flush=True)
         return 0
@@ -680,5 +725,6 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
