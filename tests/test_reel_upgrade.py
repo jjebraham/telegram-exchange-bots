@@ -77,6 +77,19 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(media.select({'title_original':'Bitcoin','title_fa':''},root),[])
 
 class TrialFilterTests(unittest.TestCase):
+    def test_five_admin_limit_counts_reservations_not_failed_or_auto(self):
+        con=sqlite3.connect(':memory:')
+        con.execute('CREATE TABLE trial_reels(posted_day TEXT, origin TEXT, status TEXT)')
+        for status in ('published','published','failed','needs_review','rendering'):
+            con.execute('INSERT INTO trial_reels VALUES(?,?,?)',('2026-10-29','admin_link',status))
+        con.execute('INSERT INTO trial_reels VALUES(?,?,?)',('2026-10-29','daily_top_story','published'))
+        con.execute('INSERT INTO trial_reels VALUES(?,?,?)',('2026-10-28','admin_link','published'))
+        reels._enforce_daily_limit(con,'admin_link','2026-10-29')
+        con.execute('INSERT INTO trial_reels VALUES(?,?,?)',('2026-10-29','admin_link','publishing'))
+        with self.assertRaises(reels.TrialReelError): reels._enforce_daily_limit(con,'admin_link','2026-10-29')
+        with self.assertRaises(reels.TrialReelError): reels._enforce_daily_limit(con,'daily_top_story','2026-10-29')
+        reels._enforce_daily_limit(con,'admin_link','2026-10-30')
+        con.close()
     def test_admin_unknown_or_old_date_bypasses_only_trial_freshness(self):
         now=time.time()
         self.assertTrue(reels._article_allowed('admin_link',0,now))

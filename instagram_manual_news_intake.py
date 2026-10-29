@@ -481,7 +481,12 @@ def process_trial_submission(con, record, runtime):
     import instagram_ranked_news as ranked
     from instagram_crypto_news import NewsError, database
     from instagram_news_batch import guard
-    from instagram_trial_reels import TrialReelError, create_trial
+    from instagram_trial_reels import TrialReelError, create_trial, check_admin_daily_limit
+
+    try:
+        check_admin_daily_limit()
+    except TrialReelError as exc:
+        raise IntakeError(str(exc)) from None
 
     update_id = record['update_id']
     source_url, source_key = record['source_url'], record['source_key']

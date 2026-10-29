@@ -4,7 +4,7 @@
 
 The Trial Reel renderer reveals Persian text word by word and mixes synthesized typing sounds with the already reviewed music. Approved illustrative media can be configured separately under the private `approved-media` directory; no external images are installed by this update. Without a matching approved image, it renders the text cover. Visual assets require explicit review and appropriate licenses before use.
 
-The Trial-only selector can include opinions, forecasts, roundups and promotional material. Forecast and promotional labels are displayed; ordinary Feed selection still uses its original criteria. Admin submissions do not require a publication timestamp or a 24-hour age check; unknown time is stored as zero, not as an invented publication time. Automatic selection remains fresh. Reviewed publisher, readable article text, duplicate Trial Reel and Meta quota checks still apply. Daily automatic Reels are limited to one/day; admin Reels do not consume that cap.
+The Trial-only selector can include opinions, forecasts, roundups and promotional material. Forecast and promotional labels are displayed; ordinary Feed selection still uses its original criteria. Admin submissions do not require a publication timestamp or a 24-hour age check; unknown time is stored as zero, not as an invented publication time. Automatic selection remains fresh. Reviewed publisher, readable article text, duplicate Trial Reel and Meta quota checks still apply. Up to five admin Reels per Istanbul day are allowed, separately from one automatic Reel.
 
 The private bot sends configured admins an estimated DeepSeek cost range after an automatic or manual Trial Reel preparation attempt. It counts the model calls made during that attempt, including retries; a failed or missing usage response is reported as unknown. Previously cached material has no new API charge. Prices use the DeepSeek Flash peak/off-peak rates published on 2026-10-29 and expire 2026-11-29 UTC; after that estimates are unknown until updated. Amounts exclude server and other provider costs. The notice is not a final invoice, and a prepared Reel is not necessarily published. The private `report_reel_usage.py` script provides individual request counts.
 
@@ -20,7 +20,7 @@ This add-on creates one original Persian text-card Reel each Istanbul day. At 20
 ## Publishing and safeguards
 
 - Automatic selection runs at 20:30 `Europe/Istanbul`; it does not run immediately during installation.
-- Automatic and admin requests share a one-Reel-per-Istanbul-calendar-day limit.
+- Up to five admin Trial Reels and one automatic Trial Reel may be reserved per Istanbul calendar day, subject to Meta quota and existing Story reservations. Published, in-progress and unresolved attempts count; definite failures do not.
 - The video is published with `share_to_feed=false` so it stays out of the normal feed while Instagram tests it with non-followers.
 - Reels are created with `media_type=REELS` and `trial_params.graduation_strategy=SS_PERFORMANCE`. Instagram, not this publisher, decides whether and when a Trial Reel is shared with followers. Meta does not expose a numeric auto-graduation threshold to this system.
 - A rejected/uncertain Meta response never falls back to an ordinary Reel. An uncertain publish is held for review and reserves that day's slot.

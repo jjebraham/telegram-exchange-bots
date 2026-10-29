@@ -32,6 +32,7 @@ PUBLIC_ROOT = Path('/var/www/peerexo.com/public/instagram-rates/trial-reels')
 PUBLIC_BASE = 'https://peerexo.com/instagram-rates/trial-reels'
 ZONE = ZoneInfo('Europe/Istanbul')
 MAX_PER_DAY = 1
+MAX_ADMIN_PER_DAY = 5
 PENDING = {'rendering', 'creating_container', 'container_processing', 'publishing', 'needs_review'}
 DECISIVE = {'published', 'needs_review', 'container_processing', 'publishing', 'creating_container'}
 SEGMENT_SECONDS = 5.0
@@ -349,6 +350,19 @@ def _article_allowed(origin, article_time, now):
         return False
     return origin == 'admin_link' or now - 86400 <= article_time <= now + 60
 
+def _enforce_daily_limit(con, origin, day):
+    used = con.execute('''SELECT COUNT(*) FROM trial_reels WHERE posted_day=? AND origin=? AND status IN
+        ('rendering','creating_container','container_processing','publishing','needs_review','published')''', (day, origin)).fetchone()[0]
+    maximum = MAX_ADMIN_PER_DAY if origin == 'admin_link' else MAX_PER_DAY
+    if used >= maximum:
+        if origin == 'admin_link':
+            raise TrialReelError('سقف ۵ ریل ادمین برای امروز به وقت استانبول تکمیل شده است.')
+        raise TrialReelError('A scheduled Trial Reel has already used today’s slot.')
+
+def check_admin_daily_limit():
+    with _connect() as con:
+        _enforce_daily_limit(con, 'admin_link', istanbul_day())
+
 def create_trial(story, kind, *, origin, asset_root, submission_id=None,
                  public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE):
     """Reserve one daily slot, render a verified story, and save an API container."""
@@ -387,10 +401,7 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
     video_path = public_root / ('kiani-trial-' + trial_id + '.mp4')
     with publisher_lock(), _connect() as con:
         con.execute('BEGIN IMMEDIATE')
-        used = con.execute('''SELECT COUNT(*) FROM trial_reels WHERE posted_day=? AND origin='daily_top_story' AND status IN
-            ('rendering','creating_container','container_processing','publishing','needs_review','published')''', (posted_day,)).fetchone()[0]
-        if origin == 'daily_top_story' and used >= MAX_PER_DAY:
-            raise TrialReelError('A Trial Reel has already used today’s one-post limit.')
+        _enforce_daily_limit(con, origin, posted_day)
         duplicate = con.execute('''SELECT 1 FROM trial_reels WHERE source_key=? AND status IN
             ('rendering','creating_container','container_processing','publishing','needs_review','published') LIMIT 1''', (source_key,)).fetchone()
         if duplicate:
