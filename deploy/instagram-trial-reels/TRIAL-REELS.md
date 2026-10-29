@@ -40,3 +40,33 @@ The automatic candidate selector can spend the normal source collection and Deep
 `SS_PERFORMANCE` requests Instagram's automatic graduation behavior. It is not a promise of follower distribution or reach. Meta's Trial Reels explanation says Instagram bases its automatic decision on views during the first 72 hours; the account's API access/eligibility is ultimately confirmed only when Meta accepts the first Trial Reel container.
 
 References: [Meta Trial Reels announcement](https://about.fb.com/news/2024/12/trial-reels-try-content-non-followers-first-see-what-perfoms-best/) and [Instagram Content Publishing API guide](https://developers.facebook.com/docs/instagram-platform/content-publishing/).
+
+# Direct Reels
+
+The private admin bot also supports `/reel <article URL>`. It uses the same
+reviewed publisher/source boundary, Persian translation, animated layout,
+publisher image, music selection, public HTTPS asset checks and Meta container
+polling as `/trial`, but publishes a normal follower-facing Reel
+(`share_to_feed=true`, with no Trial graduation parameters).
+
+Direct-Reel limits are independent of Trial-Reel limits: at most 10 admin
+direct Reels and 2 automatically selected direct Reels per Istanbul day. The
+automatic slots are 12:00 and 18:00 Europe/Istanbul. Missed slots do not catch
+up. Both modes still obey the live Meta publishing quota and protected Story
+reservations.
+
+Only direct Reels published after the direct-retention activation cutoff are
+eligible for review. At two hours, the worker reads the Reel's Views. At or
+above 200 Views it keeps the Reel. Below 200, it requires a second fresh low
+reading at least ten minutes later, verifies the same Reel is still owned by
+the configured account, checks the current token's verified insights and
+content-management permissions, and performs a final fresh Views check. The
+bounded assessment window closes 30 minutes after the two-hour point. Missing
+metrics, expired windows, API pressure, uncertain ownership, or missing
+permission evidence means keep or defer; no blind delete retry or replacement
+post is made. Any uncertain delete response pauses direct-Reel deletion for
+manual review.
+
+Trial Reels remain outside this direct-Reel deletion policy. Existing ordinary
+news-retention decisions and all protected rates, gold, calendars, price
+carousels and Stories remain governed by their own existing rules.

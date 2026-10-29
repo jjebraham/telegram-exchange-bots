@@ -1,120 +1,4 @@
-#!/usr/bin/env python3
-"""Admin-only Telegram intake for verified, automatically published news."""
-from __future__ import annotations
-
-import argparse
-import fcntl
-import hashlib
-import io
-import json
-import os
-from pathlib import Path
-import re
-import shlex
-import sqlite3
-import sys
-import time
-from datetime import datetime
-from urllib.parse import urlsplit
-from urllib.error import HTTPError
-from urllib.request import Request, build_opener, urlopen
-
-HOME = Path.home()
-STATE = HOME / '.local/state/kiani-instagram-manual-news'
-DB = STATE / 'intake.sqlite3'
-CONFIG_DEFAULT = HOME / '.config/kiani-instagram-manual-news/config.json'
-ADMIN_IDS = re.compile(r'^[0-9]{5,20}$')
-URL_RE = re.compile(r'https?://[^\s<>]+', re.IGNORECASE)
-MAX_TELEGRAM_BODY = 1_000_000
-POLL_TIMEOUT = 20
-
-
-class IntakeError(RuntimeError):
-    pass
-
-
-def canonical_url(value):
-    from instagram_crypto_news import canonical_url as normalize
-    return normalize(value)
-
-
-def url_in(text):
-    found = [match.group(0).rstrip('.,;:!?)]}»”\'"') for match in URL_RE.finditer(str(text or ''))]
-    if len(found) != 1:
-        return None
-    value = found[0]
-    if len(value) > 2048:
-        return None
-    parts = urlsplit(value)
-    if parts.scheme not in {'http', 'https'} or not parts.hostname or parts.username or parts.password:
-        return None
-    return value
-
-
-def open_database():
-    if STATE.is_symlink():
-        raise IntakeError('The private intake directory is unsafe.')
-    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(STATE, 0o700)
-    if DB.is_symlink():
-        raise IntakeError('The intake database path is unsafe.')
-    con = sqlite3.connect(DB, timeout=15)
-    os.chmod(DB, 0o600)
-    con.row_factory = sqlite3.Row
-    con.executescript('''
-        PRAGMA journal_mode=WAL;
-        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS submissions(
-            update_id INTEGER PRIMARY KEY, admin_id TEXT NOT NULL, chat_id TEXT NOT NULL,
-            message_id INTEGER NOT NULL, source_url TEXT, source_key TEXT,
-            received_at REAL NOT NULL, status TEXT NOT NULL, kind TEXT,
-            request_type TEXT NOT NULL DEFAULT 'feed',
-            title_fa TEXT, media_id TEXT, response TEXT NOT NULL DEFAULT '',
-            reply_sent INTEGER NOT NULL DEFAULT 0, error_code TEXT);
-        CREATE INDEX IF NOT EXISTS manual_news_source ON submissions(source_key,received_at);
-        CREATE INDEX IF NOT EXISTS manual_news_pending ON submissions(status,received_at);
-    ''')
-    columns = {row['name'] for row in con.execute('PRAGMA table_info(submissions)')}
-    if 'request_type' not in columns:
-        con.execute("ALTER TABLE submissions ADD COLUMN request_type TEXT NOT NULL DEFAULT 'feed'")
-    return con
-
-
-def set_offset(con, offset):
-    con.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('telegram_offset', str(offset)))
-
-
-def get_offset(con):
-    row = con.execute("SELECT value FROM settings WHERE key='telegram_offset'").fetchone()
-    return int(row['value']) if row else None
-
-
-def private_json(path):
-    if path.is_symlink() or not path.is_file():
-        raise IntakeError('Private Telegram configuration is missing or unsafe.')
-    info = path.stat()
-    if hasattr(os, 'getuid') and info.st_uid != os.getuid():
-        raise IntakeError('Private Telegram configuration has an unexpected owner.')
-    if info.st_mode & 0o077:
-        raise IntakeError('Private Telegram configuration permissions are too open.')
-    try:
-        data = json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        raise IntakeError('Private Telegram configuration cannot be read.') from None
-    if not isinstance(data, dict) or data.get('schema_version') != 1:
-        raise IntakeError('Private Telegram configuration schema is unsupported.')
-    token = data.get('bot_token')
-    admins = data.get('admin_ids')
-    if not isinstance(token, str) or not re.fullmatch(r'[0-9]{5,15}:[A-Za-z0-9_-]{20,}', token):
-        raise IntakeError('Telegram bot token is invalid.')
-    if not isinstance(admins, list) or not admins or any(not isinstance(x, str) or not ADMIN_IDS.fullmatch(x) for x in admins):
-        raise IntakeError('At least one numeric admin account ID is required.')
-    return token, set(admins)
-
-
-def telegram(token, method, payload, *, timeout=35):
-    url = 'https://api.telegram.org/bot' + token + '/' + method
-    request = Request(url, data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+mps(payload, ensure_ascii=False).encode('utf-8'),
                       headers={'Content-Type': 'application/json', 'Accept': 'application/json',
                                'User-Agent': 'KianiInstagramManualNews/1.0'})
     try:
@@ -174,74 +58,23 @@ def ingest(con, updates, admins):
             text = str(raw_text).strip()
             if text.startswith(('/start', '/help')):
                 final_messages.append((update['update_id'], chat_id,
-                    'برای خبر معمولی، لینک را بفرستید. برای درخواست Trial Reel، دستور /trial را پیش از لینک بنویسید؛ نمونه: /trial https://example.com/news. این ریل ابتدا برای غیردنبال‌کنندگان است و در صورت تشخیص عملکرد خوب ممکن است اینستاگرام آن را خودکار با دنبال‌کنندگان به‌اشتراک بگذارد.'))
+                    'برای خبر معمولی، لینک را بفرستید. برای Trial Reel از /trial و برای انتشار مستقیم Reel از /reel پیش از لینک استفاده کنید؛ نمونه: /reel https://example.com/news. انتشار مستقیم در فید دیده می‌شود و اگر در دو ساعت به ۲۰۰ بازدید نرسد، پس از دو بررسی کم‌بودن بازدید ممکن است حذف شود.'))
                 continue
             trial_match = re.match(r'^/trial(?:@[A-Za-z0-9_]+)?(?:\s|$)', text, re.IGNORECASE)
+            reel_match = re.match(r'^/reel(?:@[A-Za-z0-9_]+)?(?:\s|$)', text, re.IGNORECASE)
             malformed_trial = text.lower().startswith('/trial') and not trial_match
-            request_type = 'trial' if trial_match else 'feed'
-            link_text = text[trial_match.end():] if trial_match else text
-            if malformed_trial:
-                response = 'برای ساخت Trial Reel لینک را بعد از دستور بفرستید؛ نمونه: /trial https://example.com/news'
-                con.execute('''INSERT OR IGNORE INTO submissions
-                    (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
-                    VALUES (?,?,?,?,?,'rejected','trial',?,0)''',
-                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)), time.time(), response))
-                final_messages.append((update['update_id'], chat_id, response))
-                continue
-            matches = list(URL_RE.finditer(link_text))
-            source_url = url_in(link_text)
-            if source_url is None:
-                response = ('فقط یک لینک خبر در هر پیام بفرستید.' if len(matches) > 1 else
-                            'یک لینک کامل خبر بفرستید؛ رسانه باید در فهرست منابع بررسی‌شده باشد.')
+            malformed_reel = text.lower().startswith('/reel') and not reel_match
+            request_type = 'trial' if trial_match else 'direct_reel' if reel_match else 'feed'
+            command_match = trial_match or reel_match
+            link_text = text[command_match.end():] if command_match else text
+            if malformed_trial or malformed_reel:
+                response = ('برای ساخت Trial Reel لینک را بعد از دستور بفرستید؛ نمونه: /trial https://example.com/news'
+                            if malformed_trial else
+                            'برای انتشار مستقیم Reel لینک را بعد از دستور بفرستید؛ نمونه: /reel https://example.com/news')
                 con.execute('''INSERT OR IGNORE INTO submissions
                     (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
                     VALUES (?,?,?,?,?,'rejected',?,?,0)''',
-                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)), time.time(), request_type, response))
-                final_messages.append((update['update_id'], chat_id, response))
-                continue
-            try:
-                normalized = canonical_url(source_url)
-                source_key = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
-            except Exception:
-                con.execute('''INSERT OR IGNORE INTO submissions
-                    (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
-                    VALUES (?,?,?,?,?,'rejected',?,?,0)''',
-                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)),
-                     time.time(), request_type, 'لینک قابل پردازش نیست. نشانی مقاله را بررسی کنید.'))
-                continue
-            con.execute('''INSERT OR IGNORE INTO submissions
-                (update_id,admin_id,chat_id,message_id,source_url,source_key,received_at,status,request_type,response,reply_sent)
-                VALUES (?,?,?,?,?,?,?,'received',?,'',0)''',
-                (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)),
-                 source_url, source_key, time.time(), request_type))
-            saved = con.execute('SELECT status,response FROM submissions WHERE update_id=?', (update['update_id'],)).fetchone()
-            if saved and saved['status'] == 'received':
-                acknowledgements.append((update['update_id'], chat_id,
-                    'لینک دریافت شد؛ منبع، تازگی و محتوای خبر را بررسی می‌کنم.'))
-    return acknowledgements, final_messages
-
-
-def recent_duplicate(con, source_key, except_update):
-    row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
-        AND status IN ('received','received_trial','processing','trial_processing','trial_pending','published','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
-        (source_key, except_update)).fetchone()
-    return dict(row) if row else None
-
-def recent_trial_duplicate(con, source_key, except_update):
-    row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
-        AND request_type='trial' AND status IN ('received','received_trial','processing','trial_processing','trial_pending','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
-        (source_key, except_update)).fetchone()
-    return dict(row) if row else None
-
-
-def load_publish_env():
-    from economy_news_translation import load_translation_env
-    load_translation_env(HOME / 'sub/.env')
-    path = HOME / '.kiani-instagram.env'
-    if path.is_symlink() or not path.is_file():
-        raise IntakeError('The existing private Instagram publishing configuration is unavailable.')
-    info = path.stat()
-    if ((hasattr(os, 'getuid') and info.st_uid != os.getuid()) or info.st_mode & 0o077):
+             tuid()) or info.st_mode & 0o077):
         raise IntakeError('The existing Instagram configuration has unsafe ownership or permissions.')
     allowed = {'INSTAGRAM_USER_ID', 'INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_GRAPH_API_VERSION'}
     for line in path.read_text(encoding='utf-8').splitlines():
@@ -544,19 +377,101 @@ def process_trial_submission(con, record, runtime):
     return kind, title, trial_id
 
 
+@track_reel_usage('admin_direct')
+def process_direct_reel_submission(con, record, runtime):
+    """Prepare an admin-selected story as a normal follower-facing Reel."""
+    import crypto_news_trial as engine
+    import instagram_ranked_news as ranked
+    from instagram_crypto_news import database
+    from instagram_news_batch import guard
+    from instagram_trial_reels import TrialReelError, create_reel, check_admin_daily_limit
+
+    try:
+        check_admin_daily_limit('direct')
+    except TrialReelError as exc:
+        raise IntakeError(str(exc)) from None
+
+    update_id = record['update_id']
+    source_url, source_key = record['source_url'], record['source_key']
+    with con:
+        duplicate = recent_direct_reel_duplicate(con, source_key, update_id)
+        if duplicate:
+            raise IntakeError('این لینک قبلاً برای ریل دریافت یا منتشر شده است؛ ریل تکراری ساخته نشد.')
+        con.execute("UPDATE submissions SET status='direct_reel_processing',response='' WHERE update_id=? AND status='received'",
+                    (update_id,))
+
+    now = time.time()
+    ranked.configure_engine('crypto')
+    material = engine.source_material(dict(id='direct-reel-' + str(update_id),
+        source_url=source_url, title_original='', source_name=''), now, admin_override=True)
+    final_url = canonical_url(material['source_url'])
+    final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
+    with con:
+        if recent_direct_reel_duplicate(con, final_key, update_id):
+            raise IntakeError('این خبر از نشانی نهایی دیگری قبلاً برای ریل دریافت یا منتشر شده است.')
+        con.execute('UPDATE submissions SET source_url=?,source_key=? WHERE update_id=?',
+                    (final_url, final_key, update_id))
+
+    assessment_path = STATE / 'assessment.sqlite3'
+    with sqlite3.connect(assessment_path, timeout=15) as assessment_db:
+        assessment_db.row_factory = sqlite3.Row
+        os.chmod(assessment_path, 0o600)
+        engine.init_trial(assessment_db)
+        # Admin-selected Reels use the same reviewed publisher/source boundary
+        # and relaxed news/opinion assessment as /trial, not ordinary Feed rules.
+        try:
+            kind, row = classify(engine, ranked, assessment_db, material, time.time(), trial_relaxed=True)
+        except Exception as exc:
+            print('Direct Reel classification unavailable; using crypto category:', type(exc).__name__, flush=True)
+            kind, row = 'crypto', dict(material, assessment={'story_type': 'opinion'})
+        record['kind'] = kind
+        ranked.configure_engine(kind)
+        with ranked.locks(kind):
+            try:
+                guard()
+            except Exception as exc:
+                raise IntakeError('ظرفیت امن انتشار یا رزرو استوری در حال حاضر کافی نیست؛ ریل منتشر نشد.') from exc
+            title, summary = ranked.translate(assessment_db, row)
+            story = dict(source_url=final_url, source_name=material['source_name'],
+                title_original=material['title_original'], title_fa=title, summary_fa=summary,
+                image_url=material.get('image_url'), article_published_at=material['article_published_at'],
+                story_type=row['assessment']['story_type'])
+            asset_root = Path.home() / 'kiani-instagram-publisher'
+            if not asset_root.is_dir():
+                raise IntakeError('فایل‌های طراحی رسمی برای Reel در دسترس نیستند.')
+            try:
+                reel_id = create_reel(story, kind, origin='admin_direct', reel_mode='direct',
+                    asset_root=asset_root, submission_id=update_id)
+            except TrialReelError as exc:
+                raise IntakeError(str(exc)) from None
+    return kind, title, reel_id
+
+
 def record_trial_results(con, token, results):
     for result in results:
         submission_id = result.get('submission_id')
         if not submission_id:
             continue
         status = result['status']
-        if status == 'published':
+        is_direct = result.get('origin') in {'admin_direct', 'daily_direct'}
+        if status == 'published' and is_direct:
+            final_status = 'direct_reel_published'
+            response = ('Reel منتشر شد و در فید صفحه قابل مشاهده است؛ بررسی بازدید دو ساعت پس از انتشار انجام می‌شود. '
+                        'اگر دو بررسی معتبر هر دو کمتر از ۲۰۰ بازدید نشان دهند، ممکن است در بازه بررسی حذف شود.\n' +
+                        result.get('title_fa', '') + '\nشناسه ریل: ' + str(result.get('media_id', '')))
+        elif status == 'published':
             final_status = 'trial_published'
             response = ('Trial Reel منتشر شد؛ ابتدا به غیردنبال‌کنندگان نمایش داده می‌شود. اگر اینستاگرام عملکرد آن را خوب تشخیص دهد، ممکن است خودکار برای دنبال‌کنندگان نیز به‌اشتراک گذاشته شود.\n' +
                         result.get('title_fa', '') + '\nشناسه ریل: ' + str(result.get('media_id', '')))
+        elif status == 'failed' and is_direct:
+            final_status = 'rejected'
+            response = 'Reel آماده یا منتشر نشد؛ وضعیت ساخت و محدودیت‌های انتشار را بررسی کنید و در صورت نیاز بعداً دوباره لینک را بفرستید.'
         elif status == 'failed':
             final_status = 'rejected'
             response = 'Trial Reel آماده یا منتشر نشد؛ اینستاگرام وضعیت ساخت و محدودیت‌های انتشار را نپذیرفت. لینک را بررسی کنید و در صورت نیاز بعداً دوباره بفرستید.'
+        elif is_direct:
+            final_status = 'needs_review'
+            response = 'نتیجه انتشار Reel قطعی نیست؛ برای جلوگیری از انتشار تکراری، تلاش خودکار متوقف شد و سهم امروز محفوظ ماند. وضعیت اینستاگرام را بررسی کنید.'
         else:
             final_status = 'needs_review'
             response = 'نتیجه انتشار Trial Reel قطعی نیست؛ برای جلوگیری از انتشار تکراری، تلاش خودکار متوقف شد و سهم امروز محفوظ ماند. وضعیت را در اینستاگرام بررسی کنید.'
@@ -591,7 +506,7 @@ def deliver_unsent(con, token):
 
 
 def recover_interrupted(con):
-    rows = con.execute("SELECT update_id,request_type FROM submissions WHERE status IN ('processing','trial_processing')").fetchall()
+    rows = con.execute("SELECT update_id,request_type FROM submissions WHERE status IN ('processing','trial_processing','direct_reel_processing')").fetchall()
     if rows:
         with con:
             for row in rows:
@@ -655,6 +570,14 @@ def run_once(config_path, runtime):
                                     title + '\nشناسه پیگیری: ' + trial_id)
                         finish(con, token, record, 'trial_pending', response, kind=kind, title=title, media_id=trial_id)
                         print('Admin Trial Reel queued:', kind, trial_id, flush=True)
+                    elif record.get('request_type') == 'direct_reel':
+                        kind, title, reel_id = process_direct_reel_submission(con, record, runtime)
+                        response = ('درخواست Reel مستقیم پذیرفته شد و ویدئو برای انتشار در فید آماده شده است. '
+                                    'پس از انتشار، بازدید آن در دو ساعت نخست بررسی می‌شود.\n' +
+                                    title + '\nشناسه پیگیری: ' + reel_id)
+                        finish(con, token, record, 'direct_reel_pending', response,
+                               kind=kind, title=title, media_id=reel_id)
+                        print('Admin direct Reel queued:', kind, reel_id, flush=True)
                     else:
                         kind, title, media_id = process_submission(con, record, runtime)
                         response = ('پست خبری منتشر شد.\n' + title + '\nشناسه پست: ' + media_id +
@@ -662,7 +585,7 @@ def run_once(config_path, runtime):
                         finish(con, token, record, 'published', response, kind=kind, title=title, media_id=media_id)
                         print('Manual news published:', kind, media_id, flush=True)
                 except HTTPError as exc:
-                    if record.get('request_type') == 'trial' and exc.code == 429:
+                    if record.get('request_type') in {'trial', 'direct_reel'} and exc.code == 429:
                         finish(con, token, record, 'rejected', 'رسانه فعلاً درخواست‌های زیادی دریافت کرده است (HTTP 429). لطفاً بعداً دوباره لینک را بفرستید.', code='SourceRateLimited429')
                     else:
                         finish(con, token, record, 'rejected', f'دسترسی به منبع با خطای HTTP {exc.code} انجام نشد؛ لطفاً بعداً دوباره تلاش کنید.', code='SourceHTTPError')
@@ -672,6 +595,33 @@ def run_once(config_path, runtime):
                     finish(con, token, record, 'rejected', str(exc), code=code)
                     print('Manual news declined:', code, flush=True)
                 except Exception as exc:
+                    if record.get('request_type') == 'direct_reel':
+                        reel_state = None
+                        try:
+                            from instagram_trial_reels import _connect
+                            with _connect() as reel_con:
+                                found = reel_con.execute('''SELECT trial_id,status,media_id,title_fa,origin
+                                    FROM trial_reels WHERE submission_id=? AND reel_mode='direct'
+                                    ORDER BY created_at DESC LIMIT 1''', (record['update_id'],)).fetchone()
+                                reel_state = dict(found) if found else None
+                        except Exception:
+                            reel_state = None
+                        if reel_state and reel_state['status'] == 'published':
+                            response = ('Reel منتشر شده است و در فید صفحه قابل مشاهده است.\n' +
+                                reel_state['title_fa'] + '\nشناسه ریل: ' + str(reel_state['media_id']))
+                            finish(con, token, record, 'direct_reel_published', response,
+                                   kind=record.get('kind'), title=reel_state['title_fa'], media_id=reel_state['media_id'])
+                        elif reel_state and reel_state['status'] in {'publishing','needs_review','creating_container','container_processing'}:
+                            finish(con, token, record, 'needs_review',
+                                'نتیجه انتشار Reel قطعی نیست؛ برای جلوگیری از انتشار تکراری، تلاش خودکار متوقف شد. وضعیت اینستاگرام را بررسی کنید.',
+                                code='UncertainDirectReelPublish')
+                        else:
+                            finish(con, token, record, 'rejected',
+                                'این Reel منتشر نشد؛ منبع یا ظرفیت انتشار شرایط لازم را نداشت. لینک را بررسی کنید و در صورت نیاز دوباره بفرستید.',
+                                code=type(exc).__name__)
+                        print('Direct Reel processing stopped:', type(exc).__name__, flush=True)
+                        deliver_notices(token, admins, send_message)
+                        return 0
                     state = None
                     for kind in ([record.get('kind')] if record.get('kind') in {'crypto', 'economy'} else ['crypto', 'economy']):
                         try:
@@ -724,4 +674,5 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
