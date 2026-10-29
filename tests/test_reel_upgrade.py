@@ -6,7 +6,10 @@ import tempfile
 import unittest
 import sys
 import types
+import importlib.util
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from io import BytesIO
 from unittest.mock import patch
 
@@ -98,6 +101,17 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(media.select({'title_original':'Bitcoin','title_fa':''},root),[])
 
 class TrialFilterTests(unittest.TestCase):
+    def test_cron_slots_replace_old_block_and_preserve_other_jobs(self):
+        spec=importlib.util.spec_from_file_location('trial_activation',ROOT/'deploy/instagram-trial-reels/activate_trial_reels.py')
+        activation=importlib.util.module_from_spec(spec); spec.loader.exec_module(activation)
+        before=('15 7 * * * /existing-job\n'+activation.BEGIN+'\nCRON_TZ=Europe/Istanbul\n30 20 * * * /old\n'+activation.END+'\n').encode()
+        commands=[f'{m} {h} * * * /trial --slot {h:02d}:{m:02d}' for h,m in ((11,0),(13,0),(15,0),(17,0),(20,30))]
+        result=activation.replace_trial_cron(before,commands)
+        self.assertIn(b'15 7 * * * /existing-job',result)
+        self.assertNotIn(b'/old',result)
+        self.assertEqual(sum(command.encode() in result for command in commands),5)
+        self.assertEqual(activation.replace_trial_cron(result,commands),result)
+
     def test_five_admin_limit_counts_reservations_not_failed_or_auto(self):
         con=sqlite3.connect(':memory:')
         con.execute('CREATE TABLE trial_reels(posted_day TEXT, origin TEXT, status TEXT)')
@@ -108,9 +122,36 @@ class TrialFilterTests(unittest.TestCase):
         reels._enforce_daily_limit(con,'admin_link','2026-10-29')
         con.execute('INSERT INTO trial_reels VALUES(?,?,?)',('2026-10-29','admin_link','publishing'))
         with self.assertRaises(reels.TrialReelError): reels._enforce_daily_limit(con,'admin_link','2026-10-29')
+        reels._enforce_daily_limit(con,'daily_top_story','2026-10-29')
+        for _ in range(4):
+            con.execute('INSERT INTO trial_reels VALUES(?,?,?)',('2026-10-29','daily_top_story','published'))
         with self.assertRaises(reels.TrialReelError): reels._enforce_daily_limit(con,'daily_top_story','2026-10-29')
         reels._enforce_daily_limit(con,'admin_link','2026-10-30')
         con.close()
+
+    def test_slot_window_and_preserve_previous_daily_latch(self):
+        zone=ZoneInfo('Europe/Istanbul')
+        self.assertTrue(reels._slot_due(datetime(2026,10,29,11,0,tzinfo=zone),'11:00'))
+        self.assertFalse(reels._slot_due(datetime(2026,10,29,11,10,tzinfo=zone),'11:00'))
+        self.assertFalse(reels._slot_due(datetime(2026,10,29,10,59,tzinfo=zone),'11:00'))
+        with tempfile.TemporaryDirectory() as tmp:
+            state=Path(tmp)/'state'
+            with patch.object(reels,'STATE',state),patch.object(reels,'DB',state/'trials.sqlite3'):
+                con=reels._connect()
+                con.execute("INSERT INTO daily_runs VALUES('2026-10-29','published',1,2,NULL)")
+                con.commit(); con.close()
+                con=reels._connect()
+                row=con.execute("SELECT status FROM scheduled_runs WHERE posted_day='2026-10-29' AND slot='20:30'").fetchone()
+                self.assertEqual(row['status'],'published')
+                self.assertFalse(reels._reserve_auto_slot(con,'2026-10-29','20:30',3))
+                self.assertTrue(reels._reserve_auto_slot(con,'2026-10-29','11:00',3))
+                self.assertFalse(reels._reserve_auto_slot(con,'2026-10-29','11:00',3))
+                self.assertTrue(reels._reserve_auto_slot(con,'2026-10-29','13:00',3))
+                con.execute("UPDATE scheduled_runs SET trial_id='example' WHERE posted_day='2026-10-29' AND slot='11:00'")
+                reels._mark_daily_result(con,'example','published')
+                self.assertEqual(con.execute("SELECT status FROM scheduled_runs WHERE slot='11:00'").fetchone()['status'],'published')
+                self.assertEqual(con.execute("SELECT status FROM scheduled_runs WHERE slot='13:00'").fetchone()['status'],'selecting')
+                con.commit(); con.close()
     def test_admin_unknown_or_old_date_bypasses_only_trial_freshness(self):
         now=time.time()
         self.assertTrue(reels._article_allowed('admin_link',0,now))

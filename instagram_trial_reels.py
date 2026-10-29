@@ -31,8 +31,9 @@ DB = STATE / 'trial_reels.sqlite3'
 PUBLIC_ROOT = Path('/var/www/peerexo.com/public/instagram-rates/trial-reels')
 PUBLIC_BASE = 'https://peerexo.com/instagram-rates/trial-reels'
 ZONE = ZoneInfo('Europe/Istanbul')
-MAX_PER_DAY = 1
+MAX_PER_DAY = 5
 MAX_ADMIN_PER_DAY = 5
+AUTO_SLOTS = ('11:00', '13:00', '15:00', '17:00', '20:30')
 PENDING = {'rendering', 'creating_container', 'container_processing', 'publishing', 'needs_review'}
 DECISIVE = {'published', 'needs_review', 'container_processing', 'publishing', 'creating_container'}
 SEGMENT_SECONDS = 5.0
@@ -282,6 +283,17 @@ def _connect():
     con.execute('''CREATE TABLE IF NOT EXISTS daily_runs(
         posted_day TEXT PRIMARY KEY, status TEXT NOT NULL, started_at REAL NOT NULL,
         updated_at REAL NOT NULL, error_type TEXT)''')
+    con.execute('''CREATE TABLE IF NOT EXISTS scheduled_runs(
+        posted_day TEXT NOT NULL, slot TEXT NOT NULL, status TEXT NOT NULL,
+        started_at REAL NOT NULL, updated_at REAL NOT NULL, error_type TEXT,
+        trial_id TEXT, PRIMARY KEY(posted_day,slot))''')
+    # Retain the old daily latch as the historical 20:30 slot; never rewrite it.
+    con.execute('''INSERT OR IGNORE INTO scheduled_runs(posted_day,slot,status,started_at,updated_at,error_type,trial_id)
+        SELECT d.posted_day,'20:30',d.status,d.started_at,d.updated_at,d.error_type,
+        (SELECT r.trial_id FROM trial_reels r WHERE r.posted_day=d.posted_day
+         AND r.origin='daily_top_story' ORDER BY r.created_at LIMIT 1)
+        FROM daily_runs d''')
+    con.commit()
     return con
 
 
@@ -341,8 +353,8 @@ def _update(con, trial_id, **values):
 
 def _mark_daily_result(con, trial_id, status):
     with con:
-        con.execute('''UPDATE daily_runs SET status=?,updated_at=? WHERE posted_day=(
-            SELECT posted_day FROM trial_reels WHERE trial_id=? AND origin='daily_top_story')''', (status, time.time(), trial_id))
+        con.execute('UPDATE scheduled_runs SET status=?,updated_at=? WHERE trial_id=?',
+                    (status, time.time(), trial_id))
 
 
 def _article_allowed(origin, article_time, now):
@@ -363,11 +375,13 @@ def check_admin_daily_limit():
     with _connect() as con:
         _enforce_daily_limit(con, 'admin_link', istanbul_day())
 
-def create_trial(story, kind, *, origin, asset_root, submission_id=None,
+def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,
                  public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE):
     """Reserve one daily slot, render a verified story, and save an API container."""
     if kind not in {'crypto', 'economy'} or origin not in {'daily_top_story', 'admin_link'}:
         raise TrialReelError('Trial Reel category or origin is unsupported.')
+    if origin == 'daily_top_story' and scheduled_slot not in AUTO_SLOTS:
+        raise TrialReelError('The automatic Trial Reel slot is invalid.')
     article_time = story.get('article_published_at')
     if not _article_allowed(origin, article_time, time.time()):
         raise TrialReelError('The original article is outside the fresh 24-hour window.')
@@ -413,6 +427,12 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
             (trial_id, source_key, normalized['source_url'], kind, normalized['title_original'], normalized['title_fa'],
              normalized['summary_fa'], normalized['source_name'], float(article_time), posted_day, origin,
              submission_id, normalized['story_type'], str(video_path), caption, time.time(), time.time()))
+        if origin == 'daily_top_story':
+            result = con.execute('''UPDATE scheduled_runs SET trial_id=?,updated_at=?
+                WHERE posted_day=? AND slot=? AND status='selecting' AND trial_id IS NULL''',
+                (trial_id, time.time(), posted_day, scheduled_slot))
+            if result.rowcount != 1:
+                raise TrialReelError('Automatic Trial Reel slot reservation changed.')
     music_path = STATE / ('music-' + trial_id + '.ogg')
     source_image_path = STATE / ('source-image-' + trial_id + '.jpg')
     try:
@@ -491,6 +511,9 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
         row = con.execute('SELECT status FROM trial_reels WHERE trial_id=?', (trial_id,)).fetchone()
         if row and row['status'] == 'rendering':
             _update(con, trial_id, status='failed', error_type=type(exc).__name__, updated_at=time.time())
+            _mark_daily_result(con, trial_id, 'failed')
+        elif row and row['status'] == 'needs_review':
+            _mark_daily_result(con, trial_id, 'needs_review')
         raise
     finally:
         if music_path.is_file() and not music_path.is_symlink():
@@ -593,19 +616,26 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
     return results
 
 
-def daily_slot_used(day=None):
-    day = day or istanbul_day()
-    with _connect() as con:
-        return bool(con.execute('''SELECT 1 FROM trial_reels WHERE posted_day=? AND origin='daily_top_story' AND status IN
-            ('rendering','creating_container','container_processing','publishing','needs_review','published') LIMIT 1''',
-            (day,)).fetchone())
-
-
 from instagram_reel_usage import tracked as track_reel_usage
 
+def _slot_due(local, slot):
+    if slot not in AUTO_SLOTS:
+        raise TrialReelError('Unknown automatic Trial Reel slot.')
+    hour, minute = (int(value) for value in slot.split(':'))
+    due = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return due.timestamp() <= local.timestamp() < due.timestamp() + 600
+
+def _reserve_auto_slot(con, day, slot, now):
+    _enforce_daily_limit(con, 'daily_top_story', day)
+    old = con.execute('SELECT status FROM scheduled_runs WHERE posted_day=? AND slot=?', (day, slot)).fetchone()
+    if old:
+        return False
+    con.execute("INSERT INTO scheduled_runs VALUES (?,?,'selecting',?,?,NULL,NULL)", (day, slot, now, now))
+    return True
+
 @track_reel_usage('daily_top_story')
-def run_daily(runtime_root, asset_root):
-    """Execute one 20:30 Istanbul selection attempt, with a durable daily latch."""
+def run_daily(runtime_root, asset_root, slot):
+    """Execute one scheduled Istanbul selection attempt, with a durable slot latch."""
     import sys
     runtime_root = Path(runtime_root).resolve()
     sys.path[:0] = [str(runtime_root), str(runtime_root / 'selector_trial_runtime')]
@@ -619,18 +649,18 @@ def run_daily(runtime_root, asset_root):
     now = time.time()
     local = datetime.fromtimestamp(now, ZONE)
     day = local.date().isoformat()
-    if (local.hour, local.minute) < (20, 30):
-        print('Before 20:30 Istanbul; scheduled Trial Reel is not due.', flush=True)
+    if not _slot_due(local, slot):
+        print('Scheduled Trial Reel slot is outside its ten-minute start window.', flush=True)
         return None
     with publisher_lock(), _connect() as con:
-        if daily_slot_used(day):
-            print('A scheduled Trial Reel already reserved today’s slot.', flush=True)
+        try:
+            reserved = _reserve_auto_slot(con, day, slot, now)
+        except TrialReelError:
+            print('The five automatic Trial Reel limit is already reserved.', flush=True)
             return None
-        old = con.execute('SELECT status FROM daily_runs WHERE posted_day=?', (day,)).fetchone()
-        if old:
-            print('Today’s automatic Trial Reel attempt was already recorded:', old['status'], flush=True)
+        if not reserved:
+            print('This automatic Trial Reel slot was already recorded.', flush=True)
             return None
-        con.execute('INSERT INTO daily_runs VALUES (?,\'selecting\',?,?,NULL)', (day, now, now))
     try:
         import crypto_news_trial as engine
         import instagram_ranked_news as ranked
@@ -649,7 +679,7 @@ def run_daily(runtime_root, asset_root):
                         candidates.extend((kind, item) for item in selected)
         if not candidates:
             with _connect() as con:
-                con.execute('UPDATE daily_runs SET status=\'no_candidate\',updated_at=? WHERE posted_day=?', (time.time(), day))
+                con.execute("UPDATE scheduled_runs SET status='no_candidate',updated_at=? WHERE posted_day=? AND slot=?", (time.time(), day, slot))
             print('No verified fresh eligible story ranked today; no Trial Reel was prepared.', flush=True)
             return None
         kind, row = max(candidates, key=lambda item: (item[1]['trial_score'], item[1]['article_published_at'], item[0] == 'crypto'))
@@ -662,20 +692,21 @@ def run_daily(runtime_root, asset_root):
             image_url=row.get('image_url'),
             article_published_at=row['article_published_at'],
             story_type=row['assessment']['story_type'])
-        trial_id = create_trial(story, kind, origin='daily_top_story', asset_root=asset_root)
+        trial_id = create_trial(story, kind, origin='daily_top_story', asset_root=asset_root, scheduled_slot=slot)
         with _connect() as con:
-            con.execute('UPDATE daily_runs SET status=\'container_processing\',updated_at=? WHERE posted_day=?', (time.time(), day))
+            con.execute("UPDATE scheduled_runs SET status='container_processing',updated_at=? WHERE posted_day=? AND slot=? AND status='selecting'", (time.time(), day, slot))
         return trial_id
     except BaseException as exc:
         with _connect() as con:
-            con.execute('UPDATE daily_runs SET status=\'failed\',error_type=?,updated_at=? WHERE posted_day=?',
-                        (type(exc).__name__, time.time(), day))
+            con.execute("UPDATE scheduled_runs SET status='failed',error_type=?,updated_at=? WHERE posted_day=? AND slot=? AND trial_id IS NULL",
+                        (type(exc).__name__, time.time(), day, slot))
         raise
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--daily', action='store_true', required=True)
+    parser.add_argument('--slot', choices=AUTO_SLOTS, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--assets', type=Path, required=True)
     args = parser.parse_args()
@@ -683,7 +714,7 @@ def main():
         parser.error('Run as the existing Instagram publisher user, without sudo.')
     os.umask(0o077)
     try:
-        result = run_daily(args.runtime, args.assets)
+        result = run_daily(args.runtime, args.assets, args.slot)
         if result:
             print('Daily Trial Reel container queued:', result, flush=True)
         return 0
