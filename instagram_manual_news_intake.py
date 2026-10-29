@@ -530,6 +530,7 @@ def process_trial_submission(con, record, runtime):
             title, summary = ranked.translate(assessment_db, row)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
+                image_url=material.get('image_url'),
                 article_published_at=material['article_published_at'],
                 story_type=row['assessment']['story_type'])
             asset_root = Path.home() / 'kiani-instagram-publisher'

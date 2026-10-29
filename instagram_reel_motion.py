@@ -43,7 +43,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 if len(rows)>5: raise t.TrialReelError('The headline is too long for the Reel cover.')
                 for i,row in enumerate(rows): d.text((930,855+i*int(font.size*1.42)),t._rtl(row),font=font,fill='white',anchor='rt')
                 d.rounded_rectangle((110,335,340,395),radius=20,fill=t.INK)
-                d.text((225,365),t._rtl('تصویر نمادین'),font=t._font(asset_root,23,True),fill='white',anchor='mm')
+                label='تصویر خبر' if item.get('kind')=='publisher' else 'تصویر نمادین'
+                d.text((225,365),t._rtl(label),font=t._font(asset_root,23,True),fill='white',anchor='mm')
                 add(img,1.5)
         else:
             add(cover,4.5)

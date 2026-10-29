@@ -7,10 +7,12 @@ import unittest
 import sys
 import types
 import time
+from io import BytesIO
 from unittest.mock import patch
 
 import instagram_reel_media as media
 import instagram_reel_usage as usage
+import instagram_reel_source_image as source_image
 sys.modules.setdefault('fcntl', types.ModuleType('fcntl'))
 import instagram_manual_news_intake as intake
 ROOT = Path(__file__).parent if (Path(__file__).parent/'selector_trial_runtime').is_dir() else Path(__file__).resolve().parents[1]
@@ -62,6 +64,25 @@ class UsageTests(unittest.TestCase):
                 self.assertNotIn(b'private article text',(state/'usage.sqlite3').read_bytes())
 
 class MediaTests(unittest.TestCase):
+    def test_publisher_image_is_checked_and_saved(self):
+        from PIL import Image
+        raw=BytesIO(); Image.new('RGB',(300,200),'red').save(raw,format='PNG')
+        class Headers:
+            def get_content_type(self): return 'image/png'
+        class Response:
+            headers=Headers()
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def geturl(self): return 'https://cdn.decrypt.co/lead.png'
+            def read(self,n): return raw.getvalue()
+        opener=types.SimpleNamespace(open=lambda *a,**k:Response())
+        with tempfile.TemporaryDirectory() as tmp, patch.object(source_image,'build_opener',return_value=opener):
+            p=source_image.fetch(engine,'https://decrypt.co/story','https://cdn.decrypt.co/lead.png',Path(tmp)/'lead.jpg')
+            self.assertTrue(p.is_file())
+            with Image.open(p) as img: self.assertEqual(img.size,(300,200))
+            with self.assertRaises((ValueError, engine.NewsError)):
+                source_image.fetch(engine,'https://decrypt.co/story','https://example.com/lead.png',Path(tmp)/'other.jpg')
+
     def test_only_approved_matching_pinned_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); data=b'x'*1200; (root/'image.jpg').write_bytes(data)

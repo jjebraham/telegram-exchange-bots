@@ -17,6 +17,7 @@ FILES = (
     'instagram_reel_usage.py',
     'report_reel_usage.py',
     'instagram_reel_media.py',
+    'instagram_reel_source_image.py',
     'instagram_reel_motion.py',
     'instagram_ranked_news.py',
     'crypto_news_trial.py',

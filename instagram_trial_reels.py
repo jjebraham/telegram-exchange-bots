@@ -414,8 +414,23 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
              normalized['summary_fa'], normalized['source_name'], float(article_time), posted_day, origin,
              submission_id, normalized['story_type'], str(video_path), caption, time.time(), time.time()))
     music_path = STATE / ('music-' + trial_id + '.ogg')
+    source_image_path = STATE / ('source-image-' + trial_id + '.jpg')
     try:
         _live_guard()
+        if normalized.get('image_url'):
+            try:
+                import crypto_news_trial as image_engine
+                from instagram_reel_source_image import fetch as fetch_source_image
+                fetch_source_image(image_engine, normalized['source_url'], normalized['image_url'], source_image_path)
+                media.insert(0, {'path':source_image_path, 'kind':'publisher'})
+                caption += '\n\nتصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
+                if len(caption)>2200: raise TrialReelError('Caption with image credit is too long.')
+                _update(con, trial_id, caption=caption, updated_at=time.time())
+            except TrialReelError:
+                raise
+            except Exception as exc:
+                print('Publisher image unavailable:', type(exc).__name__, flush=True)
+                raise TrialReelError('تصویر اصلی خبر در دسترس نیست؛ ریل بدون تصویر منتشر نشد.') from None
         from instagram_trial_music import select_order, retrieve_track, caption_credit
         previous = con.execute("SELECT music_json FROM trial_reels WHERE status='published' AND music_json IS NOT NULL ORDER BY published_at DESC LIMIT 1").fetchone()
         try:
@@ -480,6 +495,8 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
     finally:
         if music_path.is_file() and not music_path.is_symlink():
             music_path.unlink()
+        if source_image_path.is_file() and not source_image_path.is_symlink():
+            source_image_path.unlink()
 
 
 def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=None):
@@ -642,6 +659,7 @@ def run_daily(runtime_root, asset_root):
             title, summary = ranked.translate(con, row)
         story = dict(source_url=row['source_url'], source_name=row['source_name'],
             title_original=row['title_original'], title_fa=title, summary_fa=summary,
+            image_url=row.get('image_url'),
             article_published_at=row['article_published_at'],
             story_type=row['assessment']['story_type'])
         trial_id = create_trial(story, kind, origin='daily_top_story', asset_root=asset_root)
