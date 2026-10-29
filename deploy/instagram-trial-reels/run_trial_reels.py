@@ -13,6 +13,7 @@ import sys
 FILES = (
     'instagram_manual_news_intake.py',
     'instagram_trial_reels.py',
+    'instagram_trial_music.py',
     'instagram_ranked_news.py',
     'crypto_news_trial.py',
     'instagram_news_batch.py',
@@ -85,3 +86,4 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Trial Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+

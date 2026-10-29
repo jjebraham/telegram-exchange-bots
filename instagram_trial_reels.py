@@ -225,7 +225,7 @@ def _probe_video(path, ffprobe):
     return duration
 
 
-def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None):
+def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None, music_path=None):
     title = _safe_text(story.get('title_fa'), 500)
     summary = _safe_text(story.get('summary_fa'))
     source = _safe_text(story.get('source_name'), 180)
@@ -261,13 +261,22 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
         command = [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-threads', '2']
         for frame in frames:
             command.extend(['-loop', '1', '-framerate', '30', '-t', str(SEGMENT_SECONDS), '-i', str(frame)])
-        command.extend(['-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'])
+        if music_path is None:
+            command.extend(['-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'])
+        else:
+            if Path(music_path).is_symlink() or not Path(music_path).is_file():
+                raise TrialReelError('The verified music file is unavailable.')
+            command.extend(['-stream_loop', '-1', '-i', str(music_path)])
         filters.append(f'[{current}]scale=in_range=full:out_range=tv,format=yuv420p[vout]')
         command.extend(['-filter_complex', ';'.join(filters), '-map', '[vout]',
             '-map', f'{len(frames)}:a:0', '-shortest', '-c:v', 'libx264',
             '-preset', 'veryfast', '-crf', '25', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
             '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
-            str(destination)])
+            '-ac', '2'])
+        if music_path is not None:
+            duration = SEGMENT_SECONDS * len(frames) - CROSSFADE_SECONDS * (len(frames) - 1)
+            command.extend(['-af', f'volume=0.35,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0, duration-1):.2f}:d=1'])
+        command.append(str(destination))
         try:
             subprocess.run(command, capture_output=True, timeout=240, check=True)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
@@ -298,6 +307,8 @@ def _connect():
     columns = {row['name'] for row in con.execute('PRAGMA table_info(trial_reels)')}
     if 'story_type' not in columns:
         con.execute("ALTER TABLE trial_reels ADD COLUMN story_type TEXT NOT NULL DEFAULT 'hard_news'")
+    if 'music_json' not in columns:
+        con.execute('ALTER TABLE trial_reels ADD COLUMN music_json TEXT')
     con.execute('CREATE INDEX IF NOT EXISTS trial_reels_day_status ON trial_reels(posted_day,status)')
     con.execute('CREATE INDEX IF NOT EXISTS trial_reels_source_status ON trial_reels(source_key,status)')
     con.execute('''CREATE TABLE IF NOT EXISTS daily_runs(
@@ -409,9 +420,30 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
             (trial_id, source_key, normalized['source_url'], kind, normalized['title_original'], normalized['title_fa'],
              normalized['summary_fa'], normalized['source_name'], float(article_time), posted_day, origin,
              submission_id, normalized['story_type'], str(video_path), caption, time.time(), time.time()))
+    music_path = STATE / ('music-' + trial_id + '.ogg')
     try:
         _live_guard()
-        duration = render_video(normalized, kind, video_path, asset_root)
+        from instagram_trial_music import select_order, retrieve_track, caption_credit
+        previous = con.execute("SELECT music_json FROM trial_reels WHERE status='published' AND music_json IS NOT NULL ORDER BY published_at DESC LIMIT 1").fetchone()
+        try:
+            last_title = json.loads(previous['music_json']).get('title') if previous else None
+        except (ValueError, TypeError, AttributeError):
+            last_title = None
+        music = None
+        for candidate in select_order(normalized, last_title):
+            try:
+                music = retrieve_track(candidate, music_path)
+                break
+            except Exception as exc:
+                print('Music source unavailable or unverified:', type(exc).__name__, flush=True)
+        if music:
+            caption += '\n\n' + caption_credit(music)
+            if len(caption) > 2200:
+                raise TrialReelError('Trial Reel caption with music credit is too long.')
+            _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
+        else:
+            print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
+        duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None)
         if time.time() - article_time > 86400:
             raise TrialReelError('The article expired while its Reel was being rendered.')
         public_url = public_base.rstrip('/') + '/' + quote(video_path.name)
@@ -452,6 +484,9 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
         if row and row['status'] == 'rendering':
             _update(con, trial_id, status='failed', error_type=type(exc).__name__, updated_at=time.time())
         raise
+    finally:
+        if music_path.is_file() and not music_path.is_symlink():
+            music_path.unlink()
 
 
 def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=None):
@@ -645,4 +680,5 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
