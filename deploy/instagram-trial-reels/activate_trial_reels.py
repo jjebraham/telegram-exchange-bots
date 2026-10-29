@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Install the private admin Trial Reel command and five daily selector slots."""
+"""Install private Trial/Direct Reel commands and their daily selector slots."""
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import fcntl
 import importlib.util
 import json
@@ -64,7 +65,8 @@ def replace_trial_cron(original, commands):
         if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
             raise RuntimeError('The existing Trial Reel cron block is incomplete or repeated.')
         lines = lines[:starts[0]] + lines[ends[0] + 1:]
-    if any('run-kiani-instagram-trial-reels.sh' in line and not line.lstrip().startswith('#') for line in lines):
+    if any(('run-kiani-instagram-trial-reels.sh' in line or
+            'run-kiani-instagram-direct-reels.sh' in line) and not line.lstrip().startswith('#') for line in lines):
         raise RuntimeError('A Trial Reel launcher is scheduled outside its managed cron block.')
     if lines and lines[-1].strip():
         lines.append('')
@@ -97,7 +99,8 @@ def main():
         raise RuntimeError('The reviewed runtime is outside the pinned private source directory.')
     if not all((runtime / name).is_file() and not (runtime / name).is_symlink() for name in (
             'instagram_trial_reels.py', 'instagram_trial_music.py', 'instagram_reel_motion.py', 'instagram_reel_media.py', 'instagram_reel_source_image.py',
-            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py')):
+            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py',
+            'instagram_direct_reel_retention.py')):
         raise RuntimeError('A required Trial Reel runtime file is missing or unsafe.')
 
     publisher = home / 'kiani-instagram-publisher'
@@ -137,10 +140,28 @@ def main():
     module.load_publish_env()
 
     from instagram_news_batch import activation, guard
+    from instagram_insights_data import Graph, read_db
+    from instagram_news_retention import permission_proof
+    from instagram_direct_reel_retention import enable as enable_direct_retention, _meta as direct_meta
     activation()
     reservation = guard()
     print('Existing publishing quota and scheduled Story reservations verified; remaining:',
           reservation.get('remaining'), flush=True)
+    graph = Graph()
+    insights_db = home / '.local/state/kiani-instagram-insights/insights.sqlite3'
+    with read_db(insights_db) as audit:
+        permission_proof(audit, graph)
+    direct_db = home / '.local/state/kiani-instagram-trial-reels/trial_reels.sqlite3'
+    if direct_db.is_symlink():
+        raise RuntimeError('The direct Reel state database is a symlink.')
+    if direct_db.exists():
+        import sqlite3
+        with sqlite3.connect(direct_db.as_uri() + '?mode=ro', uri=True) as prior:
+            prior.row_factory = sqlite3.Row
+            tables = {row['name'] for row in prior.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'direct_reel_retention_meta' in tables and direct_meta(prior, 'paused'):
+                raise RuntimeError('Direct Reel deletion is paused for manual review; resolve that state before installation.')
+    print('Direct Reel deletion permission proof verified for the current account and token.', flush=True)
 
     if subprocess.run(['systemctl', 'is-active', '--quiet', 'cron'], timeout=15).returncode:
         raise RuntimeError('The existing cron service is not active.')
@@ -160,10 +181,14 @@ def main():
         manual_log = home / 'kiani-instagram-manual-news.log'
         daily_launcher = home / 'run-kiani-instagram-trial-reels.sh'
         daily_log = home / 'kiani-instagram-trial-reels-cron.log'
+        direct_launcher = home / 'run-kiani-instagram-direct-reels.sh'
+        direct_log = home / 'kiani-instagram-direct-reels-cron.log'
         original = cron_read()
         require_manual_cron(original, manual_launcher, manual_log)
         slots = ((11, 0), (13, 0), (15, 0), (17, 0), (20, 30))
         daily_commands = [f'{minute} {hour} * * * {shlex.quote(str(daily_launcher))} --slot {hour:02d}:{minute:02d} >> {shlex.quote(str(daily_log))} 2>&1' for hour, minute in slots]
+        direct_slots = ((12, 0), (18, 0))
+        daily_commands += [f'{minute} {hour} * * * {shlex.quote(str(direct_launcher))} --slot {hour:02d}:{minute:02d} >> {shlex.quote(str(direct_log))} 2>&1' for hour, minute in direct_slots]
         replacement = replace_trial_cron(original, daily_commands)
         if subprocess.run(['systemctl', 'is-active', '--quiet', 'cron'], timeout=15).returncode:
             raise RuntimeError('Cron stopped during setup; nothing was scheduled.')
@@ -175,8 +200,11 @@ def main():
         daily_script = prefix + 'exec ' + shlex.quote(str(python)) + ' -u ' + \
             shlex.quote(str(runtime / 'instagram_trial_reels.py')) + ' --daily --runtime ' + \
             shlex.quote(str(runtime)) + ' --assets ' + shlex.quote(str(publisher)) + ' "$@"\n'
+        direct_script = prefix + 'exec ' + shlex.quote(str(python)) + ' -u ' + \
+            shlex.quote(str(runtime / 'instagram_trial_reels.py')) + ' --direct-daily --runtime ' + \
+            shlex.quote(str(runtime)) + ' --assets ' + shlex.quote(str(publisher)) + ' "$@"\n'
 
-        paths = (manual_launcher, daily_launcher)
+        paths = (manual_launcher, daily_launcher, direct_launcher)
         old_files = {}
         for path in paths:
             if path.exists():
@@ -187,6 +215,7 @@ def main():
                 old_files[path] = None
         backup = Path(tempfile.mkdtemp(prefix='kiani-trial-reels-backup-', dir=home))
         (backup / 'crontab.txt').write_bytes(original)
+        config_original = (bot_config.read_bytes(), bot_config.stat().st_mode & 0o777)
         for path, old in old_files.items():
             if old:
                 (backup / path.name).write_bytes(old[0])
@@ -196,6 +225,7 @@ def main():
                 raise RuntimeError('The crontab changed during setup; retry after review.')
             atomic(manual_launcher, manual_script.encode(), 0o700)
             atomic(daily_launcher, daily_script.encode(), 0o700)
+            atomic(direct_launcher, direct_script.encode(), 0o700)
             if replacement != original:
                 subprocess.run(['crontab', '-'], input=replacement, check=True,
                                capture_output=True, timeout=15)
@@ -204,12 +234,14 @@ def main():
             config = json.loads(bot_config.read_text(encoding='utf-8'))
             config['installed_revision'] = args.revision
             atomic(bot_config, (json.dumps(config, ensure_ascii=False, indent=2) + '\n').encode(), 0o600)
+            enabled_after = enable_direct_retention()
         except BaseException:
             for path, old in old_files.items():
                 if old:
                     atomic(path, old[0], old[1])
                 elif path.exists():
                     path.unlink()
+            atomic(bot_config, config_original[0], config_original[1])
             if cron_read() == replacement and replacement != original:
                 subprocess.run(['crontab', '-'], input=original, check=True,
                                capture_output=True, timeout=15)
@@ -217,15 +249,19 @@ def main():
 
     print('Existing Telegram bot:', '@' + str(json.loads(bot_config.read_text()).get('bot_username', 'configured')))
     print('Authorized private admins:', len(admins))
-    print('Admin command: /trial <one approved publisher article URL>; publication timestamp optional.')
+    print('Admin commands: /trial <reviewed publisher URL> and /reel <reviewed publisher URL>.')
+    print('Direct Reel: up to 10 admin posts/day; 200 views at two hours, with two low readings 10 minutes apart.')
     print('Automatic Trial Reel slots: 11:00, 13:00, 15:00, 17:00 and 20:30 Europe/Istanbul.')
     print('Istanbul daily limits: up to 5 admin Trial Reels plus 5 automatic; Meta quota applies.')
-    print('Graduation: SS_PERFORMANCE; Instagram decides whether to share with followers.')
+    print('Automatic direct Reels: 12:00 and 18:00 Europe/Istanbul; up to 2/day.')
+    print('Direct Reel retention enrolled after:', datetime.fromtimestamp(enabled_after).isoformat(), flush=True)
+    print('Trial graduation: SS_PERFORMANCE; Instagram decides whether to share Trial Reels with followers.')
     print('Trial Reels are excluded from ordinary Feed deletion and delayed-Story workers.')
     print('Bounded status polling runs through the existing private Telegram worker.')
     print('No Reel was created or published during installation.')
     print('Manual-news launcher:', manual_launcher)
     print('Trial Reel launcher:', daily_launcher)
+    print('Direct Reel launcher:', direct_launcher)
     print('Daily log:', daily_log)
     print('Backup:', backup)
     return 0
@@ -237,7 +273,8 @@ if __name__ == '__main__':
         raise SystemExit(main())
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
-              f'Trial Reel activation stopped ({type(exc).__name__}).', file=sys.stderr)
+              f'Instagram Reel activation stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 
 

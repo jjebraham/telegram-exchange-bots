@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract a pinned Trial Reel runtime and optionally activate its schedules."""
+"""Extract the pinned Trial/Direct Reel runtime and optionally activate it."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,7 @@ import sys
 FILES = (
     'instagram_manual_news_intake.py',
     'instagram_trial_reels.py',
+    'instagram_direct_reel_retention.py',
     'instagram_trial_music.py',
     'instagram_reel_usage.py',
     'report_reel_usage.py',
@@ -80,7 +81,7 @@ def main():
                    '--runtime', str(root), '--revision', args.revision]
         env = dict(os.environ, PYTHONIOENCODING='utf-8', TZ='Europe/Istanbul')
         return subprocess.run(command, check=False, cwd=root, env=env).returncode
-    print('Runtime prepared only. Add --install to activate the admin command and daily schedule.', flush=True)
+    print('Runtime prepared only. Add --install to activate /trial, /reel and their daily schedules.', flush=True)
     return 0
 
 
@@ -89,7 +90,8 @@ if __name__ == '__main__':
         raise SystemExit(main())
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
-              f'Trial Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
+              f'Instagram Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 
 

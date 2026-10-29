@@ -130,7 +130,7 @@ def deliver_notices(token, admins, send):
                 amount='۰ دلار؛ هیچ درخواست DeepSeek در این تلاش ثبت نشد.'
             else:
                 amount=f'حدود ${estimate_range[0]:.6f} تا ${estimate_range[1]:.6f} (تخمین؛ تعرفه ممکن است تغییر کند).'
-            label='دستی' if origin=='admin_link' else 'خودکار'
+            label='دستی' if origin in {'admin_link','admin_direct'} else 'خودکار'
             msg=f'هزینه تخمینی DeepSeek برای تلاش ریل {label}: {amount}\nدرخواست‌های مدل: {len(calls)} | وضعیت آماده‌سازی: {outcome}\nشناسه ریل: {reference or "هنوز ایجاد نشده"}\nاین مبلغ شامل هزینه سرور نیست و صورتحساب نهایی محسوب نمی‌شود.'
             try: send(token,admin,msg)
             except Exception: continue
@@ -138,4 +138,5 @@ def deliver_notices(token, admins, send):
                 con.execute('UPDATE notices SET sent_at=? WHERE run_id=? AND admin_id=?',(time.time(),run,admin))
     except (OSError,sqlite3.Error,RuntimeError):
         print('Trial Reel cost notice deferred.',flush=True)
+
 
