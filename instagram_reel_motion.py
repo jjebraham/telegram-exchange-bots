@@ -25,29 +25,91 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
             elapsed+=seconds
 
         cover=t._frame(title,source,kind,1,pages,asset_root,story_type)
+        title_words = title.split()
+        hook_frames = 60
+        hook_seconds = 4.0
+        previous_revealed = 0
+
         if media:
-            for index in range(3):
-                item=media[index%len(media)]
-                with Image.open(item['path']) as pic:
-                    pic.verify()
-                with Image.open(item['path']) as pic:
-                    if pic.width*pic.height>40000000: raise t.TrialReelError('Illustrative image is too large.')
-                    enlarged=ImageOps.fit(pic.convert('RGB'),(1110,625),Image.Resampling.LANCZOS)
-                    x=round((1110-888)*(.25,.5,.75)[index]); y=(625-500)//2
-                    photo=enlarged.crop((x,y,x+888,y+500))
-                img=cover.copy(); img.paste(photo,(96,315))
-                d=ImageDraw.Draw(img)
-                d.rounded_rectangle((96,815,984,1300),radius=38,fill=t.INK)
-                font=t._font(asset_root,56,True); rows=t._wrap(d,title,font,740)
-                if len(rows)>4: font=t._font(asset_root,48,True); rows=t._wrap(d,title,font,740)
-                if len(rows)>5: raise t.TrialReelError('The headline is too long for the Reel cover.')
-                for i,row in enumerate(rows): d.text((930,855+i*int(font.size*1.42)),t._rtl(row),font=font,fill='white',anchor='rt')
-                d.rounded_rectangle((110,335,340,395),radius=20,fill=t.INK)
-                label='تصویر خبر' if item.get('kind')=='publisher' else 'تصویر نمادین'
-                d.text((225,365),t._rtl(label),font=t._font(asset_root,23,True),fill='white',anchor='mm')
-                add(img,1.5)
+            item = media[0]
+            with Image.open(item['path']) as original:
+                original.verify()
+            with Image.open(item['path']) as original:
+                if original.width * original.height > 40_000_000:
+                    raise t.TrialReelError('Article image is too large.')
+                original = original.convert('RGB')
+                title_font = t._font(asset_root, 56, True)
+                title_rows = t._wrap(ImageDraw.Draw(cover), title, title_font, 740)
+                if len(title_rows) > 4:
+                    title_font = t._font(asset_root, 48, True)
+                    title_rows = t._wrap(ImageDraw.Draw(cover), title, title_font, 740)
+                if len(title_rows) > 5:
+                    raise t.TrialReelError('The headline is too long for the Reel cover.')
+
+                for index in range(hook_frames):
+                    phase = index / max(hook_frames - 1, 1)
+                    zoom = 1.04 + 0.12 * phase
+                    scaled_w = round(888 * zoom)
+                    scaled_h = round(500 * zoom)
+                    enlarged = ImageOps.fit(
+                        original, (scaled_w, scaled_h),
+                        Image.Resampling.LANCZOS, centering=(0.5, 0.48 + 0.08 * phase))
+                    max_x = max(0, scaled_w - 888)
+                    max_y = max(0, scaled_h - 500)
+                    left = round(max_x * (0.12 + 0.76 * phase))
+                    top = round(max_y * (0.80 - 0.60 * phase))
+                    photo = enlarged.crop((left, top, left + 888, top + 500))
+
+                    img = cover.copy()
+                    img.paste(photo, (96, 315))
+                    d = ImageDraw.Draw(img)
+                    d.rounded_rectangle((96, 815, 984, 1300), radius=38, fill=t.INK)
+                    d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
+                    label = 'تصویر خبر' if item.get('kind') == 'publisher' else 'تصویر نمادین'
+                    d.text((225, 365), t._rtl(label),
+                           font=t._font(asset_root, 23, True), fill='white', anchor='mm')
+
+                    reveal_progress = max(0.0, min(1.0, (phase - 0.04) / 0.72))
+                    revealed = min(len(title_words), int(reveal_progress * len(title_words)) + (1 if reveal_progress else 0))
+                    visible = ' '.join(title_words[:revealed])
+                    if visible:
+                        rows = t._wrap(d, visible, title_font, 740)
+                        for row_index, row in enumerate(rows):
+                            d.text((930, 855 + row_index * int(title_font.size * 1.42)),
+                                   t._rtl(row), font=title_font, fill='white', anchor='rt')
+                    add(img, hook_seconds / hook_frames, revealed > previous_revealed)
+                    previous_revealed = revealed
+
+                add(img, 0.6)
         else:
-            add(cover,4.5)
+            title_font = t._font(asset_root, 72, True)
+            title_rows = t._wrap(ImageDraw.Draw(cover), title, title_font, 820)
+            if len(title_rows) > 6:
+                title_font = t._font(asset_root, 60, True)
+                title_rows = t._wrap(ImageDraw.Draw(cover), title, title_font, 820)
+            if len(title_rows) > 7:
+                raise t.TrialReelError('The headline is too long for the Reel cover.')
+            for index in range(hook_frames):
+                phase = index / max(hook_frames - 1, 1)
+                img = cover.copy()
+                d = ImageDraw.Draw(img)
+                d.rounded_rectangle((96, 320, 984, 1080), radius=42, fill=t.INK)
+                d.ellipse((820, 382, 906, 468), fill=t.GOLD)
+                d.text((863, 425), '!', font=t._font(asset_root, 54, True), fill=t.INK, anchor='mm')
+                reveal_progress = max(0.0, min(1.0, (phase - 0.04) / 0.72))
+                revealed = min(len(title_words), int(reveal_progress * len(title_words)) + (1 if reveal_progress else 0))
+                visible = ' '.join(title_words[:revealed])
+                if visible:
+                    rows = t._wrap(d, visible, title_font, 820)
+                    for row_index, row in enumerate(rows):
+                        d.text((930, 540 + row_index * int(title_font.size * 1.45)),
+                               t._rtl(row), font=title_font, fill='white', anchor='rt')
+                d.text((930, 1000), t._rtl('خبر را در چند ثانیه بخوانید'),
+                       font=t._font(asset_root, 32, True), fill='#BCEBD3', anchor='rt')
+                add(img, hook_seconds / hook_frames, revealed > previous_revealed)
+                previous_revealed = revealed
+            add(img, 0.6)
+
         for page,body in enumerate(chunks,2):
             if page-2 < extra_count:
                 item=media[page-1]
