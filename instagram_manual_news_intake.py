@@ -252,7 +252,7 @@ def load_publish_env():
     os.environ['INSTAGRAM_PUBLISH_MODE'] = 'feed'
 
 
-def classify(engine, ranked, con, material, now, *, allow_opinion=False):
+def classify(engine, ranked, con, material, now, *, allow_opinion=False, trial_relaxed=False):
     scored = {}
     for kind in ('crypto', 'economy'):
         ranked.configure_engine(kind)
@@ -261,6 +261,9 @@ def classify(engine, ranked, con, material, now, *, allow_opinion=False):
             raise IntakeError('DeepSeek did not return one validated assessment.')
         row = rows[0]
         assessment = row['assessment']
+        if trial_relaxed:
+            scored[kind] = row
+            continue
         eligible = (assessment['story_type'] == 'hard_news' or allow_opinion and
                     assessment['story_type'] == 'opinion' and assessment['usefulness']['points'] > 0)
         eligible = (eligible and
@@ -276,6 +279,8 @@ def classify(engine, ranked, con, material, now, *, allow_opinion=False):
         return next(iter(scored.items()))
     crypto_relevance = scored['crypto']['assessment']['relevance']['points']
     economy_relevance = scored['economy']['assessment']['relevance']['points']
+    if trial_relaxed:
+        return ('crypto', scored['crypto']) if crypto_relevance >= economy_relevance else ('economy', scored['economy'])
     if abs(crypto_relevance - economy_relevance) < 10:
         raise IntakeError('The news category is ambiguous; this link was not posted.')
     return ('crypto', scored['crypto']) if crypto_relevance > economy_relevance else ('economy', scored['economy'])
@@ -460,6 +465,9 @@ def process_submission(con, record, runtime):
                 return kind, saved['title_fa'], media_id
 
 
+from instagram_reel_usage import tracked as track_reel_usage
+
+@track_reel_usage('admin_link')
 def process_trial_submission(con, record, runtime):
     """Verify and queue a private-admin link as an isolated Trial Reel."""
     import crypto_news_trial as engine
@@ -501,7 +509,7 @@ def process_trial_submission(con, record, runtime):
         # The admin explicitly chooses this Trial Reel experiment. Accept a
         # verified publisher's useful analysis/opinion as well as hard news;
         # the automatic daily selector remains hard-news-only.
-        kind, row = classify(engine, ranked, assessment_db, material, time.time(), allow_opinion=True)
+        kind, row = classify(engine, ranked, assessment_db, material, time.time(), trial_relaxed=True)
         record['kind'] = kind
         ranked.configure_engine(kind)
         _blocked, history = ranked.histories(time.time())
@@ -625,6 +633,8 @@ def run_once(config_path, runtime):
                     with con:
                         con.execute('UPDATE submissions SET reply_sent=1 WHERE update_id=?', (update_id,))
             deliver_unsent(con, token)
+            from instagram_reel_usage import deliver_notices
+            deliver_notices(token, admins, send_message)
             try:
                 from instagram_trial_reels import poll_pending
                 results = poll_pending(publisher_root=HOME / 'kiani-instagram-publisher')
@@ -676,6 +686,7 @@ def run_once(config_path, runtime):
                             'این خبر منتشر نشد. منبع، دسته‌بندی یا ظرفیت انتشار شرایط لازم را نداشت؛ لینک را بررسی کنید و در صورت نیاز بعداً دوباره بفرستید.',
                             code=type(exc).__name__)
                     print('Manual news processing stopped:', type(exc).__name__, flush=True)
+            deliver_notices(token, admins, send_message)
             return 0
 
 
@@ -703,3 +714,4 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+

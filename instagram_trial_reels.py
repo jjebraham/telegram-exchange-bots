@@ -36,12 +36,12 @@ DECISIVE = {'published', 'needs_review', 'container_processing', 'publishing', '
 SEGMENT_SECONDS = 5.0
 CROSSFADE_SECONDS = 0.25
 VIDEO_SIZE = (1080, 1920)
-INK = '#123D31'
-GREEN = '#16845F'
-MINT = '#DCEFE5'
-PAPER = '#F1F7F2'
-MUTED = '#6F827A'
-GOLD = '#F3BA47'
+INK = '#112A52'
+GREEN = '#00AFA8'
+MINT = '#D8F7F1'
+PAPER = '#07172C'
+MUTED = '#70829A'
+GOLD = '#FFB52E'
 
 
 class TrialReelError(RuntimeError):
@@ -146,7 +146,11 @@ def _frame(title, body, kind, page, pages, asset_root, story_type='hard_news'):
     bold = _font(asset_root, 38, True)
     draw.text((w - 188, 130), _rtl('صرافی کیانی'), font=bold, fill=INK, anchor='rm')
     draw.text((w - 188, 177), 'kiani.exchange', font=regular, fill=MUTED, anchor='rm')
-    if story_type == 'opinion':
+    if story_type == 'forecast':
+        label = 'پیش‌بینی کریپتو' if kind == 'crypto' else 'پیش‌بینی اقتصادی'
+    elif story_type == 'promotional':
+        label = 'محتوای معرفی'
+    elif story_type == 'opinion':
         label = 'تحلیل کریپتو' if kind == 'crypto' else 'تحلیل اقتصادی'
     else:
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
@@ -225,7 +229,7 @@ def _probe_video(path, ffprobe):
     return duration
 
 
-def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None, music_path=None):
+def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None, music_path=None, media=None):
     title = _safe_text(story.get('title_fa'), 500)
     summary = _safe_text(story.get('summary_fa'))
     source = _safe_text(story.get('source_name'), 180)
@@ -240,47 +244,9 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
     ffprobe = ffprobe or shutil.which('ffprobe')
     if not ffmpeg or not ffprobe:
         raise TrialReelError('FFmpeg and ffprobe are required to render and verify Trial Reels.')
-    with tempfile.TemporaryDirectory(prefix='kiani-trial-frames-', dir=STATE) as temp:
-        temp_root = Path(temp)
-        frames = []
-        for page in range(1, pages + 1):
-            body = chunks[page - 2] if 1 < page < pages else source
-            frame = _frame(title, body, kind, page, pages, asset_root, story_type)
-            path = temp_root / f'frame-{page:02d}.jpg'
-            frame.save(path, format='JPEG', quality=94, optimize=True)
-            frames.append(path)
-        filters = []
-        for index in range(len(frames)):
-            filters.append(f'[{index}:v]zoompan=z=\'min(zoom+0.00025,1.035)\':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p[v{index}]')
-        current = 'v0'
-        for index in range(1, len(frames)):
-            next_name = f'x{index}'
-            offset = (SEGMENT_SECONDS - CROSSFADE_SECONDS) * index
-            filters.append(f'[{current}][v{index}]xfade=transition=fade:duration={CROSSFADE_SECONDS}:offset={offset:.2f}[{next_name}]')
-            current = next_name
-        command = [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-threads', '2']
-        for frame in frames:
-            command.extend(['-loop', '1', '-framerate', '30', '-t', str(SEGMENT_SECONDS), '-i', str(frame)])
-        if music_path is None:
-            command.extend(['-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'])
-        else:
-            if Path(music_path).is_symlink() or not Path(music_path).is_file():
-                raise TrialReelError('The verified music file is unavailable.')
-            command.extend(['-stream_loop', '-1', '-i', str(music_path)])
-        filters.append(f'[{current}]scale=in_range=full:out_range=tv,format=yuv420p[vout]')
-        command.extend(['-filter_complex', ';'.join(filters), '-map', '[vout]',
-            '-map', f'{len(frames)}:a:0', '-shortest', '-c:v', 'libx264',
-            '-preset', 'veryfast', '-crf', '25', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-            '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
-            '-ac', '2'])
-        if music_path is not None:
-            duration = SEGMENT_SECONDS * len(frames) - CROSSFADE_SECONDS * (len(frames) - 1)
-            command.extend(['-af', f'volume=0.35,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0, duration-1):.2f}:d=1'])
-        command.append(str(destination))
-        try:
-            subprocess.run(command, capture_output=True, timeout=240, check=True)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-            raise TrialReelError('FFmpeg could not render the Trial Reel.') from None
+    import sys
+    from instagram_reel_motion import render
+    render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg)
     if destination.is_symlink() or not destination.is_file() or not 100_000 <= destination.stat().st_size <= 250_000_000:
         raise TrialReelError('The rendered Reel is missing or has an invalid file size.')
     os.chmod(destination, 0o644)
@@ -350,7 +316,11 @@ def _live_guard():
 
 
 def _caption(story, kind):
-    if story.get('story_type') == 'opinion':
+    if story.get('story_type') == 'forecast':
+        label = 'پیش‌بینی کریپتو' if kind == 'crypto' else 'پیش‌بینی اقتصادی'
+    elif story.get('story_type') == 'promotional':
+        label = 'محتوای معرفی'
+    elif story.get('story_type') == 'opinion':
         label = 'تحلیل کریپتو' if kind == 'crypto' else 'تحلیل اقتصادی'
     else:
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
@@ -385,10 +355,16 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
     for field, limit in (('source_url', 2048), ('source_name', 180), ('title_original', 800), ('title_fa', 500), ('summary_fa', 12000)):
         normalized[field] = _safe_text(normalized.get(field), limit)
     normalized['story_type'] = normalized.get('story_type', 'hard_news')
-    if normalized['story_type'] not in {'hard_news', 'opinion'}:
+    if normalized['story_type'] not in {'hard_news', 'opinion', 'forecast', 'roundup', 'promotional'}:
         raise TrialReelError('The selected story type is not eligible for Trial Reels.')
     source_key = _source_key(normalized['source_url'])
     caption = _caption(normalized, kind)
+    from instagram_reel_media import select as select_media, caption as media_caption
+    media = select_media(normalized)
+    if media:
+        caption += '\n\n' + media_caption(media)
+        if len(caption) > 2200:
+            raise TrialReelError('Trial Reel caption with image credits is too long.')
     trial_id = uuid.uuid4().hex
     posted_day = istanbul_day()
     public_root = Path(public_root)
@@ -443,7 +419,7 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
             _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
-        duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None)
+        duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None, media=media)
         if time.time() - article_time > 86400:
             raise TrialReelError('The article expired while its Reel was being rendered.')
         public_url = public_base.rstrip('/') + '/' + quote(video_path.name)
@@ -591,6 +567,9 @@ def daily_slot_used(day=None):
             (day,)).fetchone())
 
 
+from instagram_reel_usage import tracked as track_reel_usage
+
+@track_reel_usage('daily_top_story')
 def run_daily(runtime_root, asset_root):
     """Execute one 20:30 Istanbul selection attempt, with a durable daily latch."""
     import sys
@@ -630,7 +609,7 @@ def run_daily(runtime_root, asset_root):
                 source_db = ranked.SOURCES[kind]
                 with database(source_db) as con:
                     engine.init_trial(con)
-                    rows, audit = rank_events(con, kind, now)
+                    rows, audit = rank_events(con, kind, now, trial_relaxed=True)
                     if rows:
                         selected = select_main_stories(con, rows, kind, 1, now, audit, lambda: None)
                         candidates.extend((kind, item) for item in selected)
@@ -680,5 +659,6 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 

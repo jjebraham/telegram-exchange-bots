@@ -310,7 +310,7 @@ direct Iran/Turkey consequences earn25. Do not invent regional links.'''
     engine.GROUP_PROMPT = BASE_GROUP_PROMPT.replace('cryptocurrency reports', kind + ' news reports').replace('30-day', '14-day')
 
 
-def rank_events(con, kind, now, checkpoint=None):
+def rank_events(con, kind, now, checkpoint=None, *, trial_relaxed=False):
     configure_engine(kind)
     blocked, history = histories(now)
     groups, telegram, counts = discovery(con, kind, now)
@@ -370,9 +370,9 @@ def rank_events(con, kind, now, checkpoint=None):
         checkpoint(audit)
     if materials and not assessed:
         raise NewsError('All source assessments failed validation; inspect the private ranking audit.')
-    eligible = [r for r in assessed if r['assessment']['story_type'] == 'hard_news'
+    eligible = [r for r in assessed if trial_relaxed or (r['assessment']['story_type'] == 'hard_news'
                 and r['assessment']['certainty'] != 'unknown'
-                and r['assessment']['relevance']['points'] > 0]
+                and r['assessment']['relevance']['points'] > 0)]
     audit.update(status='grouping', grouping_diagnostics={})
     if checkpoint:
         checkpoint(audit)
@@ -797,3 +797,4 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, NewsError) else f'ERROR: Ranked news stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
