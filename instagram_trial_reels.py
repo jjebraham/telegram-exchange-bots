@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -340,8 +341,13 @@ def _update(con, trial_id, **values):
 def _mark_daily_result(con, trial_id, status):
     with con:
         con.execute('''UPDATE daily_runs SET status=?,updated_at=? WHERE posted_day=(
-            SELECT posted_day FROM trial_reels WHERE trial_id=?)''', (status, time.time(), trial_id))
+            SELECT posted_day FROM trial_reels WHERE trial_id=? AND origin='daily_top_story')''', (status, time.time(), trial_id))
 
+
+def _article_allowed(origin, article_time, now):
+    if isinstance(article_time, bool) or not isinstance(article_time, (int, float)) or not math.isfinite(article_time) or article_time < 0:
+        return False
+    return origin == 'admin_link' or now - 86400 <= article_time <= now + 60
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None,
                  public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE):
@@ -349,7 +355,7 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
     if kind not in {'crypto', 'economy'} or origin not in {'daily_top_story', 'admin_link'}:
         raise TrialReelError('Trial Reel category or origin is unsupported.')
     article_time = story.get('article_published_at')
-    if isinstance(article_time, bool) or not isinstance(article_time, (int, float)) or not time.time() - 86400 <= article_time <= time.time() + 60:
+    if not _article_allowed(origin, article_time, time.time()):
         raise TrialReelError('The original article is outside the fresh 24-hour window.')
     normalized = dict(story)
     for field, limit in (('source_url', 2048), ('source_name', 180), ('title_original', 800), ('title_fa', 500), ('summary_fa', 12000)):
@@ -381,9 +387,9 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
     video_path = public_root / ('kiani-trial-' + trial_id + '.mp4')
     with publisher_lock(), _connect() as con:
         con.execute('BEGIN IMMEDIATE')
-        used = con.execute('''SELECT COUNT(*) FROM trial_reels WHERE posted_day=? AND status IN
+        used = con.execute('''SELECT COUNT(*) FROM trial_reels WHERE posted_day=? AND origin='daily_top_story' AND status IN
             ('rendering','creating_container','container_processing','publishing','needs_review','published')''', (posted_day,)).fetchone()[0]
-        if used >= MAX_PER_DAY:
+        if origin == 'daily_top_story' and used >= MAX_PER_DAY:
             raise TrialReelError('A Trial Reel has already used today’s one-post limit.')
         duplicate = con.execute('''SELECT 1 FROM trial_reels WHERE source_key=? AND status IN
             ('rendering','creating_container','container_processing','publishing','needs_review','published') LIMIT 1''', (source_key,)).fetchone()
@@ -420,7 +426,7 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None,
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
         duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None, media=media)
-        if time.time() - article_time > 86400:
+        if origin == 'daily_top_story' and time.time() - article_time > 86400:
             raise TrialReelError('The article expired while its Reel was being rendered.')
         public_url = public_base.rstrip('/') + '/' + quote(video_path.name)
         request = Request(public_url, headers={'Range': 'bytes=0-31', 'User-Agent': 'KianiExchange-TrialReel/1.0'})
@@ -500,7 +506,7 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
         if not row:
             return results
         job = dict(row)
-        if time.time() - job['article_published_at'] > 86400:
+        if job['origin'] == 'daily_top_story' and time.time() - job['article_published_at'] > 86400:
             _update(con, job['trial_id'], status='failed', error_type='ArticleExpiredDuringProcessing', updated_at=time.time())
             _mark_daily_result(con, job['trial_id'], 'failed')
             results.append(dict(trial_id=job['trial_id'], submission_id=job['submission_id'], status='failed',
@@ -535,7 +541,7 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
         except Exception as exc:
             print('Trial Reel publishing deferred by quota/source reservation:', type(exc).__name__, flush=True)
             return results
-        if time.time() - job['article_published_at'] > 86400:
+        if job['origin'] == 'daily_top_story' and time.time() - job['article_published_at'] > 86400:
             _update(con, job['trial_id'], status='failed', error_type='ArticleExpiredBeforePublish', updated_at=time.time())
             _mark_daily_result(con, job['trial_id'], 'failed')
             results.append(dict(trial_id=job['trial_id'], submission_id=job['submission_id'], status='failed',
@@ -562,7 +568,7 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
 def daily_slot_used(day=None):
     day = day or istanbul_day()
     with _connect() as con:
-        return bool(con.execute('''SELECT 1 FROM trial_reels WHERE posted_day=? AND status IN
+        return bool(con.execute('''SELECT 1 FROM trial_reels WHERE posted_day=? AND origin='daily_top_story' AND status IN
             ('rendering','creating_container','container_processing','publishing','needs_review','published') LIMIT 1''',
             (day,)).fetchone())
 
@@ -590,7 +596,7 @@ def run_daily(runtime_root, asset_root):
         return None
     with publisher_lock(), _connect() as con:
         if daily_slot_used(day):
-            print('An admin or scheduled Trial Reel already reserved today’s slot.', flush=True)
+            print('A scheduled Trial Reel already reserved today’s slot.', flush=True)
             return None
         old = con.execute('SELECT status FROM daily_runs WHERE posted_day=?', (day,)).fetchone()
         if old:

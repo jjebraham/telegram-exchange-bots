@@ -181,7 +181,7 @@ class Dates(HTMLParser):
                     self.visit(child, depth + 1)
 
 
-def source_material(story, now):
+def source_material(story, now, *, admin_override=False):
     url = checked_url(story['source_url'], article=True)
     request = Request(url, headers={'User-Agent': 'KianiExchange-NewsSelectorTrial/1.0', 'Accept': 'text/html'})
     with build_opener(PublisherRedirects()).open(request, timeout=18) as response:
@@ -196,13 +196,13 @@ def source_material(story, now):
     stamps = [(kind, raw, parse_date(raw)) for kind, raw in dates.dates if isinstance(raw, str)]
     stamps = [(kind, raw, stamp) for kind, raw, stamp in stamps
               if stamp is not None and math.isfinite(stamp) and stamp > 0]
-    if not stamps:
+    if not stamps and not admin_override:
         raise NewsError('No timezone-aware original publication timestamp; Telegram time is insufficient.')
-    if max(s[2] for s in stamps) - min(s[2] for s in stamps) > 3600:
+    if stamps and max(s[2] for s in stamps) - min(s[2] for s in stamps) > 3600 and not admin_override:
         raise NewsError('Conflicting original publication timestamps; review the source.')
     # Earliest valid publication time prevents modified/repeated metadata refreshing a story.
-    kind, raw, published = min(stamps, key=lambda s: s[2])
-    if not now - WINDOW <= published <= now:
+    kind, raw, published = min(stamps, key=lambda s: s[2]) if stamps else ('unknown', '', 0.0)
+    if not admin_override and not now - WINDOW <= published <= now:
         raise NewsError('Original publication time is outside the last 24 hours.')
     parts = article.article_parts or article.parts
     passage = clean_text(' '.join(parts[:35]))
@@ -220,7 +220,7 @@ def source_material(story, now):
     return dict(story, source_url=url, source_name=publisher(url), title_original=title,
                 source_text=passage[:6500], image_url=image, article_published_at=published,
                 date_evidence={'field': kind, 'value': raw},
-                article_date=datetime.fromtimestamp(published, timezone.utc).date().isoformat())
+                article_date=datetime.fromtimestamp(published, timezone.utc).date().isoformat() if published else '')
 
 
 @contextmanager
@@ -769,3 +769,4 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, NewsError) else f'ERROR: Trial failed ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+

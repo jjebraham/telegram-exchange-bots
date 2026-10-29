@@ -216,9 +216,9 @@ def main():
 
     print('Existing Telegram bot:', '@' + str(json.loads(bot_config.read_text()).get('bot_username', 'configured')))
     print('Authorized private admins:', len(admins))
-    print('Admin command: /trial <one approved, fresh news URL>')
+    print('Admin command: /trial <one approved publisher article URL>; publication timestamp optional.')
     print('Daily automatic selection: highest-ranked eligible crypto/economy story at 20:30 Europe/Istanbul.')
-    print('Shared limit: at most one Trial Reel per Istanbul calendar day.')
+    print('Daily automatic: at most one/day. Admin submissions: no shared daily cap; Meta quota applies.')
     print('Graduation: SS_PERFORMANCE; Instagram decides whether to share with followers.')
     print('Trial Reels are excluded from ordinary Feed deletion and delayed-Story workers.')
     print('Bounded status polling runs through the existing private Telegram worker.')

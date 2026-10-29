@@ -6,12 +6,18 @@ import tempfile
 import unittest
 import sys
 import types
+import time
 from unittest.mock import patch
 
 import instagram_reel_media as media
 import instagram_reel_usage as usage
 sys.modules.setdefault('fcntl', types.ModuleType('fcntl'))
 import instagram_manual_news_intake as intake
+ROOT = Path(__file__).parent if (Path(__file__).parent/'selector_trial_runtime').is_dir() else Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT/'selector_trial_runtime'))
+sys.path.insert(0, str(ROOT.parent/'news-python-libs'))
+import crypto_news_trial as engine
+import instagram_trial_reels as reels
 
 class UsageTests(unittest.TestCase):
     def test_price_range_and_unknown(self):
@@ -71,12 +77,48 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(media.select({'title_original':'Bitcoin','title_fa':''},root),[])
 
 class TrialFilterTests(unittest.TestCase):
+    def test_admin_unknown_or_old_date_bypasses_only_trial_freshness(self):
+        now=time.time()
+        self.assertTrue(reels._article_allowed('admin_link',0,now))
+        self.assertTrue(reels._article_allowed('admin_link',now-300000,now))
+        self.assertFalse(reels._article_allowed('daily_top_story',0,now))
+        self.assertFalse(reels._article_allowed('admin_link',float('nan'),now))
+
+    def test_previous_feed_submission_does_not_block_trial(self):
+        con=sqlite3.connect(':memory:')
+        con.row_factory=sqlite3.Row
+        con.execute('CREATE TABLE submissions(source_key TEXT, update_id INTEGER, status TEXT, media_id TEXT, request_type TEXT, received_at REAL)')
+        con.execute("INSERT INTO submissions VALUES('key',1,'published','media','feed',1)")
+        self.assertIsNone(intake.recent_trial_duplicate(con,'key',2))
+        con.execute("INSERT INTO submissions VALUES('key',3,'trial_published','media','trial',2)")
+        self.assertIsNotNone(intake.recent_trial_duplicate(con,'key',2))
+        con.close()
     def test_forecast_can_pass_trial_without_weakening_feed(self):
         assessment={'story_type':'forecast','certainty':'unknown','relevance':{'points':0},'usefulness':{'points':0}}
         engine=types.SimpleNamespace(grade=lambda *args:[{'assessment':assessment}])
         ranked=types.SimpleNamespace(configure_engine=lambda kind:None)
         self.assertEqual(intake.classify(engine,ranked,None,{},0,trial_relaxed=True)[0],'crypto')
         with self.assertRaises(intake.IntakeError): intake.classify(engine,ranked,None,{},0)
+
+    def test_admin_undated_article_does_not_weaken_standard_source_check(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def geturl(self): return 'https://decrypt.co/story'
+            def read(self,n): return b'<html></html>'
+        class Dates:
+            def __init__(self,*args): self.dates=[]
+            def feed(self,*args): pass
+        class Parser:
+            def __init__(self): self.article_parts=['A source passage with sufficient detail. '*10]; self.parts=[]; self.meta={'og:title':'A news story'}
+            def feed(self,*args): pass
+        opener=types.SimpleNamespace(open=lambda *a,**k:Response())
+        item={'id':'1','source_url':'https://decrypt.co/story','title_original':'','source_name':''}
+        with patch.object(engine,'build_opener',return_value=opener),patch.object(engine,'Dates',Dates),patch.object(engine,'ArticleParser',Parser):
+            with self.assertRaises(engine.NewsError): engine.source_material(item,time.time())
+            result=engine.source_material(item,time.time(),admin_override=True)
+            self.assertEqual(result['article_published_at'],0)
+            self.assertEqual(result['article_date'],'')
 
 if __name__=='__main__': unittest.main()
 

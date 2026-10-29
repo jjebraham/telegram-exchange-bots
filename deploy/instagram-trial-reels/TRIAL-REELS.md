@@ -4,7 +4,7 @@
 
 The Trial Reel renderer reveals Persian text word by word and mixes synthesized typing sounds with the already reviewed music. Approved illustrative media can be configured separately under the private `approved-media` directory; no external images are installed by this update. Without a matching approved image, it renders the text cover. Visual assets require explicit review and appropriate licenses before use.
 
-The Trial-only selector can include opinions, forecasts, roundups and promotional material. Forecast and promotional labels are displayed; ordinary Feed selection still uses its original criteria. Source verification, freshness, duplicate checks, the shared one-per-day limit and Meta quota safeguards remain. The result may still be rejected if those checks fail.
+The Trial-only selector can include opinions, forecasts, roundups and promotional material. Forecast and promotional labels are displayed; ordinary Feed selection still uses its original criteria. Admin submissions do not require a publication timestamp or a 24-hour age check; unknown time is stored as zero, not as an invented publication time. Automatic selection remains fresh. Reviewed publisher, readable article text, duplicate Trial Reel and Meta quota checks still apply. Daily automatic Reels are limited to one/day; admin Reels do not consume that cap.
 
 The private bot sends configured admins an estimated DeepSeek cost range after an automatic or manual Trial Reel preparation attempt. It counts the model calls made during that attempt, including retries; a failed or missing usage response is reported as unknown. Previously cached material has no new API charge. Prices use the DeepSeek Flash peak/off-peak rates published on 2026-10-29 and expire 2026-11-29 UTC; after that estimates are unknown until updated. Amounts exclude server and other provider costs. The notice is not a final invoice, and a prepared Reel is not necessarily published. The private `report_reel_usage.py` script provides individual request counts.
 
@@ -15,7 +15,7 @@ This add-on creates one original Persian text-card Reel each Istanbul day. At 20
 - Send `/trial https://publisher.example/article` in a private chat with the configured Telegram bot.
 - Optional text beside the one link is accepted but ignored by the content renderer; the publisher article is the source of truth.
 - A bare URL remains an ordinary Instagram Feed-news request.
-- Only the already approved publisher list, a fresh original article passage, a verified Persian translation, and the existing publishing-quota guard qualify. For an explicit admin `/trial` request, useful opinion/analysis from an approved publisher may qualify; ordinary automatic selection remains hard-news-only. Tweets, Reddit posts, and other unreviewed publishers do not qualify.
+- Admin `/trial` links require a readable passage from the reviewed publisher list and a Persian translation. A missing or old publication timestamp does not block them; tweets, Reddit posts and unreviewed publishers remain excluded. Automatic selection applies freshness checks and can include multiple story types.
 
 ## Publishing and safeguards
 

@@ -16,6 +16,7 @@ import sys
 import time
 from datetime import datetime
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import Request, build_opener, urlopen
 
 HOME = Path.home()
@@ -223,6 +224,12 @@ def ingest(con, updates, admins):
 def recent_duplicate(con, source_key, except_update):
     row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
         AND status IN ('received','received_trial','processing','trial_processing','trial_pending','published','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
+        (source_key, except_update)).fetchone()
+    return dict(row) if row else None
+
+def recent_trial_duplicate(con, source_key, except_update):
+    row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
+        AND request_type='trial' AND status IN ('received','received_trial','processing','trial_processing','trial_pending','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
         (source_key, except_update)).fetchone()
     return dict(row) if row else None
 
@@ -479,24 +486,18 @@ def process_trial_submission(con, record, runtime):
     update_id = record['update_id']
     source_url, source_key = record['source_url'], record['source_key']
     with con:
-        duplicate = recent_duplicate(con, source_key, update_id)
+        duplicate = recent_trial_duplicate(con, source_key, update_id)
         if duplicate:
             raise IntakeError('این لینک قبلاً دریافت یا منتشر شده است؛ ریل تکراری ساخته نشد.')
         con.execute("UPDATE submissions SET status='trial_processing',response='' WHERE update_id=? AND status='received'", (update_id,))
     now = time.time()
     ranked.configure_engine('crypto')
-    blocked, _ = ranked.histories(now)
-    if canonical_url(source_url) in blocked:
-        raise IntakeError('این خبر قبلاً منتشر شده یا برایش تلاش انتشار ثبت شده است؛ ریل تکراری ساخته نشد.')
     material = engine.source_material(dict(id='trial-' + str(update_id), source_url=source_url,
-        title_original='', source_name=''), now)
+        title_original='', source_name=''), now, admin_override=True)
     final_url = canonical_url(material['source_url'])
     final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
-    blocked, _ = ranked.histories(time.time())
-    if final_url in blocked:
-        raise IntakeError('نشانی نهایی این خبر قبلاً منتشر شده یا در انتظار انتشار است.')
     with con:
-        duplicate = recent_duplicate(con, final_key, update_id)
+        duplicate = recent_trial_duplicate(con, final_key, update_id)
         if duplicate:
             raise IntakeError('این خبر از نشانی نهایی دیگری قبلاً دریافت یا منتشر شده است.')
         con.execute('UPDATE submissions SET source_url=?,source_key=? WHERE update_id=?', (final_url, final_key, update_id))
@@ -509,17 +510,14 @@ def process_trial_submission(con, record, runtime):
         # The admin explicitly chooses this Trial Reel experiment. Accept a
         # verified publisher's useful analysis/opinion as well as hard news;
         # the automatic daily selector remains hard-news-only.
-        kind, row = classify(engine, ranked, assessment_db, material, time.time(), trial_relaxed=True)
+        try:
+            kind, row = classify(engine, ranked, assessment_db, material, time.time(), trial_relaxed=True)
+        except Exception as exc:
+            print('Trial classification unavailable; using crypto category:', type(exc).__name__, flush=True)
+            kind, row = 'crypto', dict(material, assessment={'story_type': 'opinion'})
         record['kind'] = kind
         ranked.configure_engine(kind)
-        _blocked, history = ranked.histories(time.time())
-        groups = engine.event_groups(assessment_db, [row], history)
-        if not groups or groups[0].get('published_match'):
-            raise IntakeError('همین رویداد قبلاً منتشر شده است؛ ریل تکراری ساخته نشد.')
         with ranked.locks(kind):
-            blocked_now, _ = ranked.histories(time.time())
-            if final_url in blocked_now:
-                raise IntakeError('این خبر در فاصله بررسی تا انتشار ثبت شده است؛ ریل تکراری ساخته نشد.')
             try:
                 guard()
             except Exception as exc:
@@ -657,6 +655,12 @@ def run_once(config_path, runtime):
                             '\nارزیابی بازدید طبق سیاست خبر، دو ساعت پس از انتشار انجام می‌شود.')
                         finish(con, token, record, 'published', response, kind=kind, title=title, media_id=media_id)
                         print('Manual news published:', kind, media_id, flush=True)
+                except HTTPError as exc:
+                    if record.get('request_type') == 'trial' and exc.code == 429:
+                        finish(con, token, record, 'rejected', 'رسانه فعلاً درخواست‌های زیادی دریافت کرده است (HTTP 429). لطفاً بعداً دوباره لینک را بفرستید.', code='SourceRateLimited429')
+                    else:
+                        finish(con, token, record, 'rejected', f'دسترسی به منبع با خطای HTTP {exc.code} انجام نشد؛ لطفاً بعداً دوباره تلاش کنید.', code='SourceHTTPError')
+                    print('Manual news source HTTP status:', exc.code, flush=True)
                 except IntakeError as exc:
                     code = re.sub(r'[^A-Za-z0-9]', '', str(exc))[:64] or 'Rejected'
                     finish(con, token, record, 'rejected', str(exc), code=code)
