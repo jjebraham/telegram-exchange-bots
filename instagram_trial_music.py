@@ -13,11 +13,39 @@ API = 'https://commons.wikimedia.org/w/api.php'
 UA = 'KianiExchangeInstagramReels/1.0 (https://kiani.exchange)'
 TRACKS = (
     {'title': 'File:Rafael Krux - The Epic 2.ogg', 'name': 'The Epic 2',
-     'sha1': '2fe54b6a30343251ad8b79f98cc1a6d82164deb0', 'mood': 'uplifting'},
+     'sha1': '2fe54b6a30343251ad8b79f98cc1a6d82164deb0', 'moods': ('uplifting', 'energetic'),
+     'artist': 'Rafael Krux'},
     {'title': 'File:Epic Trailer by Rafael Krux.ogg', 'name': 'Epic Trailer',
-     'sha1': '09b2ea708abb01b4a292f50d47f178eb04ac5b79', 'mood': 'tense'},
+     'sha1': '09b2ea708abb01b4a292f50d47f178eb04ac5b79', 'moods': ('tense',),
+     'artist': 'Rafael Krux'},
+    {'title': 'File:Sascha ende - Epic Intro 2019 (cc by) (Filmmusic).oga',
+     'name': 'Epic Intro 2019', 'sha1': '868acd3c3340766f805d5595a1caacae63c352b0',
+     'moods': ('energetic', 'uplifting'), 'artist': 'Sascha Ende'},
 )
 LIMIT = 10 * 1024 * 1024
+LICENSE = 'CC BY 4.0'
+LICENSE_URL = 'https://creativecommons.org/licenses/by/4.0/'
+
+MOOD_TERMS = {
+    'tense': (
+        'hack', 'breach', 'exploit', 'fraud', 'scam', 'sanction', 'arrest',
+        'charge', 'lawsuit', 'court', 'crime', 'theft', 'stolen', 'attack',
+        'ransomware', 'investigation', 'collapse', 'security', 'risk', 'loss',
+        'vulnerability', 'هک', 'نفوذ', 'امنیت', 'ریسک', 'زیان', 'کلاهبرداری',
+        'تحریم', 'بازداشت', 'اتهام', 'دادگاه', 'سرقت', 'حمله', 'ورشکستگی',
+    ),
+    'energetic': (
+        'bitcoin', 'crypto', 'market', 'stock', 'trading', 'price', 'surge',
+        'rally', 'record', 'upgrade', 'launch', 'technology', 'artificial intelligence',
+        'investment', 'rates', 'inflation', 'بیت‌کوین', 'بیت کوین', 'بازار',
+        'قیمت', 'رشد', 'جهش', 'رکورد', 'ارتقا', 'فناوری', 'هوش مصنوعی',
+        'سرمایه‌گذاری', 'نرخ بهره', 'تورم',
+    ),
+    'uplifting': (
+        'adoption', 'partnership', 'approval', 'milestone', 'growth', 'breakthrough',
+        'پذیرش', 'همکاری', 'تأیید', 'توسعه', 'پیشرفت', 'رکورد پذیرش',
+    ),
+}
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -39,10 +67,20 @@ def _plain(value):
 
 
 def select_order(story, previous=None):
-    text = (str(story.get('title_original', '')) + ' ' + str(story.get('title_fa', ''))).casefold()
-    tense = any(term in text for term in ('hack', 'breach', 'fraud', 'risk', 'loss', 'scam', 'هک', 'ریسک', 'زیان', 'کلاهبرداری'))
-    mood = 'tense' if tense else 'uplifting'
-    return sorted(TRACKS, key=lambda item: (item['mood'] != mood, item['title'] == previous))
+    fields = ('title_original', 'title_fa', 'summary_original', 'summary_fa', 'summary')
+    text = ' '.join(str(story.get(key, '')) for key in fields).casefold()
+    # Specific risk/legal signals win over generic market terms. Ambiguous
+    # stories use rotation so repeated topics do not always get the same cue.
+    mood = None
+    for candidate in ('tense', 'energetic', 'uplifting'):
+        if any(term in text for term in MOOD_TERMS[candidate]):
+            mood = candidate
+            break
+    return sorted(TRACKS, key=lambda item: (
+        item['title'] == previous,
+        item['moods'].index(mood) if mood in item['moods'] else len(item['moods']),
+        item['name'],
+    ))
 
 
 def retrieve_track(track, output):
@@ -57,9 +95,9 @@ def retrieve_track(track, output):
     value = lambda key: str(meta.get(key, {}).get('value', '')).strip()
     if (info.get('sha1') != track['sha1'] or info.get('mime') != 'application/ogg'
             or not 1000 <= info.get('size', 0) <= LIMIT or info.get('duration', 0) < 60
-            or value('LicenseShortName') != 'CC BY 4.0'
-            or value('LicenseUrl').rstrip('/') != 'https://creativecommons.org/licenses/by/4.0'
-            or _plain(value('Artist')) != 'Rafael Krux' or value('Restrictions')):
+            or value('LicenseShortName') != LICENSE
+            or value('LicenseUrl').rstrip('/') != LICENSE_URL.rstrip('/')
+            or _plain(value('Artist')) != track['artist'] or value('Restrictions')):
         raise ValueError('Music license, attribution or file identity did not match')
     url = info['url']
     parsed = urlsplit(url)
@@ -79,13 +117,12 @@ def retrieve_track(track, output):
     with output.open('xb') as handle:
         handle.write(raw)
     output.chmod(0o600)
-    return {'title': track['title'], 'name': track['name'], 'artist': 'Rafael Krux',
-        'license': 'CC BY 4.0', 'license_url': 'https://creativecommons.org/licenses/by/4.0/',
-        'source_url': info['descriptionurl'], 'sha1': track['sha1'], 'mood': track['mood'],
+    return {'title': track['title'], 'name': track['name'], 'artist': track['artist'],
+        'license': LICENSE, 'license_url': LICENSE_URL,
+        'source_url': info['descriptionurl'], 'sha1': track['sha1'], 'moods': list(track['moods']),
         'changes': 'shortened and faded'}
 
 
 def caption_credit(info):
     return ('Music: ' + info['name'] + ' — ' + info['artist'] + ' (shortened and faded)\n' +
             info['source_url'] + '\nCC BY 4.0: ' + info['license_url'])
-
