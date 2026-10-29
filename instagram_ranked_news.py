@@ -148,6 +148,28 @@ def histories(now):
             blocked.add(canonical_url(row['source_url']))
             if row['status'] != 'published' or (row['finished_at'] or 0) >= now - 14 * 86400:
                 context.append(dict(row, id=kind + ':' + row['id']))
+    # Trial Reels use their own lifecycle database so the Feed retention and
+    # delayed-Story workers cannot mistake them for ordinary news posts. They
+    # still participate in article/event deduplication for future Feed slots.
+    trial_db = Path.home() / '.local/state/kiani-instagram-trial-reels/trial_reels.sqlite3'
+    if trial_db.exists():
+        if trial_db.is_symlink():
+            raise NewsError('Trial Reel history path is unsafe; duplicate checks cannot continue.')
+        try:
+            uri = trial_db.resolve().as_uri() + '?mode=ro'
+            with sqlite3.connect(uri, uri=True, timeout=10) as con:
+                con.row_factory = sqlite3.Row
+                rows = con.execute('''SELECT trial_id,source_url,kind,title_original,title_fa,
+                    summary_fa,status,published_at FROM trial_reels WHERE status!='failed' ''').fetchall()
+        except sqlite3.Error:
+            raise NewsError('Trial Reel history is unreadable; duplicate checks cannot continue.') from None
+        for row in rows:
+            blocked.add(canonical_url(row['source_url']))
+            if row['status'] != 'published' or (row['published_at'] or 0) >= now - 14 * 86400:
+                context.append(dict(id='trial:' + row['kind'] + ':' + row['trial_id'],
+                    title_original=row['title_original'], title_fa=row['title_fa'],
+                    summary_fa=row['summary_fa'], status=row['status'],
+                    finished_at=row['published_at']))
     if len(context) > 1200:
         raise NewsError('Recent/unresolved publication history exceeds the assessment limit; review it explicitly.')
     return blocked, context

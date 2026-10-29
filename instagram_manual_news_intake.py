@@ -67,11 +67,15 @@ def open_database():
             update_id INTEGER PRIMARY KEY, admin_id TEXT NOT NULL, chat_id TEXT NOT NULL,
             message_id INTEGER NOT NULL, source_url TEXT, source_key TEXT,
             received_at REAL NOT NULL, status TEXT NOT NULL, kind TEXT,
+            request_type TEXT NOT NULL DEFAULT 'feed',
             title_fa TEXT, media_id TEXT, response TEXT NOT NULL DEFAULT '',
             reply_sent INTEGER NOT NULL DEFAULT 0, error_code TEXT);
         CREATE INDEX IF NOT EXISTS manual_news_source ON submissions(source_key,received_at);
         CREATE INDEX IF NOT EXISTS manual_news_pending ON submissions(status,received_at);
     ''')
+    columns = {row['name'] for row in con.execute('PRAGMA table_info(submissions)')}
+    if 'request_type' not in columns:
+        con.execute("ALTER TABLE submissions ADD COLUMN request_type TEXT NOT NULL DEFAULT 'feed'")
     return con
 
 
@@ -166,19 +170,32 @@ def ingest(con, updates, admins):
             if admin_id not in admins or chat.get('type') != 'private' or admin_id != chat_id:
                 continue
             raw_text = message.get('text') or message.get('caption') or ''
-            if str(raw_text).strip().startswith(('/start', '/help')):
+            text = str(raw_text).strip()
+            if text.startswith(('/start', '/help')):
                 final_messages.append((update['update_id'], chat_id,
-                    'لطفاً یک لینک خبر از رسانه‌های بررسی‌شده بفرستید. متن همراه لینک فقط یادداشت است؛ بررسی و ترجمه بر اساس متن اصلی خبر انجام می‌شود.'))
+                    'برای خبر معمولی، لینک را بفرستید. برای درخواست Trial Reel، دستور /trial را پیش از لینک بنویسید؛ نمونه: /trial https://example.com/news. این ریل ابتدا برای غیردنبال‌کنندگان است و در صورت تشخیص عملکرد خوب ممکن است اینستاگرام آن را خودکار با دنبال‌کنندگان به‌اشتراک بگذارد.'))
                 continue
-            matches = list(URL_RE.finditer(str(raw_text)))
-            source_url = url_in(raw_text)
+            trial_match = re.match(r'^/trial(?:@[A-Za-z0-9_]+)?(?:\s|$)', text, re.IGNORECASE)
+            malformed_trial = text.lower().startswith('/trial') and not trial_match
+            request_type = 'trial' if trial_match else 'feed'
+            link_text = text[trial_match.end():] if trial_match else text
+            if malformed_trial:
+                response = 'برای ساخت Trial Reel لینک را بعد از دستور بفرستید؛ نمونه: /trial https://example.com/news'
+                con.execute('''INSERT OR IGNORE INTO submissions
+                    (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
+                    VALUES (?,?,?,?,?,'rejected','trial',?,0)''',
+                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)), time.time(), response))
+                final_messages.append((update['update_id'], chat_id, response))
+                continue
+            matches = list(URL_RE.finditer(link_text))
+            source_url = url_in(link_text)
             if source_url is None:
                 response = ('فقط یک لینک خبر در هر پیام بفرستید.' if len(matches) > 1 else
                             'یک لینک کامل خبر بفرستید؛ رسانه باید در فهرست منابع بررسی‌شده باشد.')
                 con.execute('''INSERT OR IGNORE INTO submissions
-                    (update_id,admin_id,chat_id,message_id,received_at,status,response,reply_sent)
-                    VALUES (?,?,?,?,?,'rejected',?,0)''',
-                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)), time.time(), response))
+                    (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
+                    VALUES (?,?,?,?,?,'rejected',?,?,0)''',
+                    (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)), time.time(), request_type, response))
                 final_messages.append((update['update_id'], chat_id, response))
                 continue
             try:
@@ -186,16 +203,16 @@ def ingest(con, updates, admins):
                 source_key = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
             except Exception:
                 con.execute('''INSERT OR IGNORE INTO submissions
-                    (update_id,admin_id,chat_id,message_id,received_at,status,response,reply_sent)
-                    VALUES (?,?,?,?,?,'rejected',?,0)''',
+                    (update_id,admin_id,chat_id,message_id,received_at,status,request_type,response,reply_sent)
+                    VALUES (?,?,?,?,?,'rejected',?,?,0)''',
                     (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)),
-                     time.time(), 'لینک قابل پردازش نیست. نشانی مقاله را بررسی کنید.'))
+                     time.time(), request_type, 'لینک قابل پردازش نیست. نشانی مقاله را بررسی کنید.'))
                 continue
             con.execute('''INSERT OR IGNORE INTO submissions
-                (update_id,admin_id,chat_id,message_id,source_url,source_key,received_at,status,response,reply_sent)
-                VALUES (?,?,?,?,?,?,?,'received','',0)''',
+                (update_id,admin_id,chat_id,message_id,source_url,source_key,received_at,status,request_type,response,reply_sent)
+                VALUES (?,?,?,?,?,?,?,'received',?,'',0)''',
                 (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)),
-                 source_url, source_key, time.time()))
+                 source_url, source_key, time.time(), request_type))
             saved = con.execute('SELECT status,response FROM submissions WHERE update_id=?', (update['update_id'],)).fetchone()
             if saved and saved['status'] == 'received':
                 acknowledgements.append((update['update_id'], chat_id,
@@ -205,7 +222,7 @@ def ingest(con, updates, admins):
 
 def recent_duplicate(con, source_key, except_update):
     row = con.execute('''SELECT status,media_id FROM submissions WHERE source_key=? AND update_id!=?
-        AND status IN ('received','processing','published','needs_review') ORDER BY received_at DESC LIMIT 1''',
+        AND status IN ('received','received_trial','processing','trial_processing','trial_pending','published','trial_published','needs_review') ORDER BY received_at DESC LIMIT 1''',
         (source_key, except_update)).fetchone()
     return dict(row) if row else None
 
@@ -235,7 +252,7 @@ def load_publish_env():
     os.environ['INSTAGRAM_PUBLISH_MODE'] = 'feed'
 
 
-def classify(engine, ranked, con, material, now):
+def classify(engine, ranked, con, material, now, *, allow_opinion=False):
     scored = {}
     for kind in ('crypto', 'economy'):
         ranked.configure_engine(kind)
@@ -244,12 +261,16 @@ def classify(engine, ranked, con, material, now):
             raise IntakeError('DeepSeek did not return one validated assessment.')
         row = rows[0]
         assessment = row['assessment']
-        eligible = (assessment['story_type'] == 'hard_news' and
+        eligible = (assessment['story_type'] == 'hard_news' or allow_opinion and
+                    assessment['story_type'] == 'opinion' and assessment['usefulness']['points'] > 0)
+        eligible = (eligible and
                     assessment['certainty'] != 'unknown' and
                     assessment['relevance']['points'] > 0)
         if eligible:
             scored[kind] = row
     if not scored:
+        if allow_opinion:
+            raise IntakeError('این پیوند برای Trial Reel واجد شرایط نشد؛ تازگی، ارتباط موضوعی، اعتبار منبع و محتوای مقاله بررسی نشد یا تأیید نشد.')
         raise IntakeError('This link did not qualify as a fresh, relevant hard-news post.')
     if len(scored) == 1:
         return next(iter(scored.items()))
@@ -439,6 +460,103 @@ def process_submission(con, record, runtime):
                 return kind, saved['title_fa'], media_id
 
 
+def process_trial_submission(con, record, runtime):
+    """Verify and queue a private-admin link as an isolated Trial Reel."""
+    import crypto_news_trial as engine
+    import instagram_ranked_news as ranked
+    from instagram_crypto_news import NewsError, database
+    from instagram_news_batch import guard
+    from instagram_trial_reels import TrialReelError, create_trial
+
+    update_id = record['update_id']
+    source_url, source_key = record['source_url'], record['source_key']
+    with con:
+        duplicate = recent_duplicate(con, source_key, update_id)
+        if duplicate:
+            raise IntakeError('این لینک قبلاً دریافت یا منتشر شده است؛ ریل تکراری ساخته نشد.')
+        con.execute("UPDATE submissions SET status='trial_processing',response='' WHERE update_id=? AND status='received'", (update_id,))
+    now = time.time()
+    ranked.configure_engine('crypto')
+    blocked, _ = ranked.histories(now)
+    if canonical_url(source_url) in blocked:
+        raise IntakeError('این خبر قبلاً منتشر شده یا برایش تلاش انتشار ثبت شده است؛ ریل تکراری ساخته نشد.')
+    material = engine.source_material(dict(id='trial-' + str(update_id), source_url=source_url,
+        title_original='', source_name=''), now)
+    final_url = canonical_url(material['source_url'])
+    final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
+    blocked, _ = ranked.histories(time.time())
+    if final_url in blocked:
+        raise IntakeError('نشانی نهایی این خبر قبلاً منتشر شده یا در انتظار انتشار است.')
+    with con:
+        duplicate = recent_duplicate(con, final_key, update_id)
+        if duplicate:
+            raise IntakeError('این خبر از نشانی نهایی دیگری قبلاً دریافت یا منتشر شده است.')
+        con.execute('UPDATE submissions SET source_url=?,source_key=? WHERE update_id=?', (final_url, final_key, update_id))
+
+    assessment_path = STATE / 'assessment.sqlite3'
+    with sqlite3.connect(assessment_path, timeout=15) as assessment_db:
+        assessment_db.row_factory = sqlite3.Row
+        os.chmod(assessment_path, 0o600)
+        engine.init_trial(assessment_db)
+        # The admin explicitly chooses this Trial Reel experiment. Accept a
+        # verified publisher's useful analysis/opinion as well as hard news;
+        # the automatic daily selector remains hard-news-only.
+        kind, row = classify(engine, ranked, assessment_db, material, time.time(), allow_opinion=True)
+        record['kind'] = kind
+        ranked.configure_engine(kind)
+        _blocked, history = ranked.histories(time.time())
+        groups = engine.event_groups(assessment_db, [row], history)
+        if not groups or groups[0].get('published_match'):
+            raise IntakeError('همین رویداد قبلاً منتشر شده است؛ ریل تکراری ساخته نشد.')
+        with ranked.locks(kind):
+            blocked_now, _ = ranked.histories(time.time())
+            if final_url in blocked_now:
+                raise IntakeError('این خبر در فاصله بررسی تا انتشار ثبت شده است؛ ریل تکراری ساخته نشد.')
+            try:
+                guard()
+            except Exception as exc:
+                raise IntakeError('ظرفیت امن انتشار یا رزرو استوری در حال حاضر کافی نیست؛ ریل ساخته نشد.') from exc
+            title, summary = ranked.translate(assessment_db, row)
+            story = dict(source_url=final_url, source_name=material['source_name'],
+                title_original=material['title_original'], title_fa=title, summary_fa=summary,
+                article_published_at=material['article_published_at'],
+                story_type=row['assessment']['story_type'])
+            asset_root = Path.home() / 'kiani-instagram-publisher'
+            if not asset_root.is_dir():
+                raise IntakeError('فایل‌های طراحی رسمی برای Trial Reel در دسترس نیستند.')
+            try:
+                trial_id = create_trial(story, kind, origin='admin_link', asset_root=asset_root,
+                    submission_id=update_id)
+            except TrialReelError as exc:
+                raise IntakeError(str(exc)) from None
+    return kind, title, trial_id
+
+
+def record_trial_results(con, token, results):
+    for result in results:
+        submission_id = result.get('submission_id')
+        if not submission_id:
+            continue
+        status = result['status']
+        if status == 'published':
+            final_status = 'trial_published'
+            response = ('Trial Reel منتشر شد؛ ابتدا به غیردنبال‌کنندگان نمایش داده می‌شود. اگر اینستاگرام عملکرد آن را خوب تشخیص دهد، ممکن است خودکار برای دنبال‌کنندگان نیز به‌اشتراک گذاشته شود.\n' +
+                        result.get('title_fa', '') + '\nشناسه ریل: ' + str(result.get('media_id', '')))
+        elif status == 'failed':
+            final_status = 'rejected'
+            response = 'Trial Reel آماده یا منتشر نشد؛ اینستاگرام وضعیت ساخت و محدودیت‌های انتشار را نپذیرفت. لینک را بررسی کنید و در صورت نیاز بعداً دوباره بفرستید.'
+        else:
+            final_status = 'needs_review'
+            response = 'نتیجه انتشار Trial Reel قطعی نیست؛ برای جلوگیری از انتشار تکراری، تلاش خودکار متوقف شد و سهم امروز محفوظ ماند. وضعیت را در اینستاگرام بررسی کنید.'
+        with con:
+            con.execute('''UPDATE submissions SET status=?,title_fa=COALESCE(?,title_fa),media_id=COALESCE(?,media_id),
+                response=?,reply_sent=0,error_code=? WHERE update_id=?''',
+                (final_status, result.get('title_fa'), result.get('media_id'), response,
+                 'TrialReel' + status.title(), submission_id))
+    if results:
+        deliver_unsent(con, token)
+
+
 def finish(con, token, record, status, response, *, kind=None, title=None, media_id=None, code=None):
     with con:
         con.execute('''UPDATE submissions SET status=?,kind=COALESCE(?,kind),title_fa=COALESCE(?,title_fa),
@@ -461,13 +579,13 @@ def deliver_unsent(con, token):
 
 
 def recover_interrupted(con):
-    rows = con.execute("SELECT update_id FROM submissions WHERE status='processing'").fetchall()
+    rows = con.execute("SELECT update_id,request_type FROM submissions WHERE status IN ('processing','trial_processing')").fetchall()
     if rows:
         with con:
             for row in rows:
                 con.execute('''UPDATE submissions SET status='needs_review',response=?,reply_sent=0,
                     error_code='InterruptedProcessing' WHERE update_id=?''',
-                    ('فرآیند هنگام اجرا متوقف شد. برای جلوگیری از انتشار تکراری، دوباره خودکار ارسال نمی‌شود؛ وضعیت پست را در اینستاگرام بررسی کنید.',
+                    ('فرآیند هنگام اجرا متوقف شد. برای جلوگیری از انتشار تکراری، دوباره خودکار ارسال نمی‌شود؛ وضعیت پست یا ریل را در اینستاگرام بررسی کنید.',
                      row['update_id']))
 
 
@@ -507,15 +625,28 @@ def run_once(config_path, runtime):
                     with con:
                         con.execute('UPDATE submissions SET reply_sent=1 WHERE update_id=?', (update_id,))
             deliver_unsent(con, token)
+            try:
+                from instagram_trial_reels import poll_pending
+                results = poll_pending(publisher_root=HOME / 'kiani-instagram-publisher')
+                record_trial_results(con, token, results)
+            except Exception as exc:
+                print('Trial Reel processing deferred:', type(exc).__name__, flush=True)
             record = con.execute("SELECT * FROM submissions WHERE status='received' ORDER BY received_at LIMIT 1").fetchone()
             if record is not None:
                 record = dict(record)
                 try:
-                    kind, title, media_id = process_submission(con, record, runtime)
-                    response = ('پست خبری منتشر شد.\n' + title + '\nشناسه پست: ' + media_id +
-                        '\nارزیابی بازدید طبق سیاست خبر، دو ساعت پس از انتشار انجام می‌شود.')
-                    finish(con, token, record, 'published', response, kind=kind, title=title, media_id=media_id)
-                    print('Manual news published:', kind, media_id, flush=True)
+                    if record.get('request_type') == 'trial':
+                        kind, title, trial_id = process_trial_submission(con, record, runtime)
+                        response = ('درخواست Trial Reel پذیرفته شد و ویدئو برای بررسی اینستاگرام آماده شده است. هنوز منتشر نشده؛ پس از آماده‌شدن، ابتدا برای غیردنبال‌کنندگان نمایش داده می‌شود و اینستاگرام دربارهٔ اشتراک‌گذاری خودکار با دنبال‌کنندگان تصمیم می‌گیرد.\n' +
+                                    title + '\nشناسه پیگیری: ' + trial_id)
+                        finish(con, token, record, 'trial_pending', response, kind=kind, title=title, media_id=trial_id)
+                        print('Admin Trial Reel queued:', kind, trial_id, flush=True)
+                    else:
+                        kind, title, media_id = process_submission(con, record, runtime)
+                        response = ('پست خبری منتشر شد.\n' + title + '\nشناسه پست: ' + media_id +
+                            '\nارزیابی بازدید طبق سیاست خبر، دو ساعت پس از انتشار انجام می‌شود.')
+                        finish(con, token, record, 'published', response, kind=kind, title=title, media_id=media_id)
+                        print('Manual news published:', kind, media_id, flush=True)
                 except IntakeError as exc:
                     code = re.sub(r'[^A-Za-z0-9]', '', str(exc))[:64] or 'Rejected'
                     finish(con, token, record, 'rejected', str(exc), code=code)
