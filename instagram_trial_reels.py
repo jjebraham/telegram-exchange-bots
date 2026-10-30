@@ -459,6 +459,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     music_path = STATE / ('music-' + trial_id + '.ogg')
     source_image_path = STATE / ('source-image-' + trial_id + '.jpg')
     extra_image_paths = []
+    commons_temp = None
     try:
         _live_guard()
         if normalized.get('image_url'):
@@ -467,22 +468,36 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 from instagram_reel_source_image import fetch as fetch_source_image
                 fetch_source_image(image_engine, normalized['source_url'], normalized['image_url'], source_image_path)
                 media.insert(0, {'path':source_image_path, 'kind':'publisher'})
-                # A few article figures enrich later cards; failed optional
-                # images never invalidate the verified lead image.
+                # Optional article figures are bounded by count and time;
+                # duplicate or unavailable images never invalidate the lead.
                 candidates = normalized.get('image_urls', [])
                 if isinstance(candidates, list):
-                    for candidate in candidates[:5]:
-                        if not isinstance(candidate, str) or candidate == normalized['image_url'] or len(extra_image_paths) >= 2:
+                    seen_hashes = {hashlib.sha256(source_image_path.read_bytes()).hexdigest()}
+                    image_deadline = time.monotonic() + 30
+                    for candidate in candidates[:16]:
+                        if len(extra_image_paths) >= 7 or time.monotonic() >= image_deadline:
+                            break
+                        if not isinstance(candidate, str) or candidate == normalized['image_url']:
                             continue
                         extra_path = STATE / ('source-image-' + trial_id + '-' + str(len(extra_image_paths) + 1) + '.jpg')
                         try:
-                            fetch_source_image(image_engine, normalized['source_url'], candidate, extra_path)
+                            timeout = max(1, min(6, image_deadline - time.monotonic()))
+                            fetch_source_image(image_engine, normalized['source_url'], candidate, extra_path, timeout=timeout)
+                            digest = hashlib.sha256(extra_path.read_bytes()).hexdigest()
+                            if digest in seen_hashes:
+                                extra_path.unlink()
+                                continue
+                            seen_hashes.add(digest)
                             extra_image_paths.append(extra_path)
                             media.insert(len(extra_image_paths), {'path':extra_path, 'kind':'publisher'})
                         except Exception as extra_exc:
                             print('Optional publisher image unavailable:', type(extra_exc).__name__, flush=True)
                             if extra_path.is_file() and not extra_path.is_symlink():
                                 extra_path.unlink()
+                            if getattr(extra_exc, 'code', None) == 429:
+                                break
+                media = media[:8]
+                print('Reel images selected:', len(media), flush=True)
                 caption += '\n\nتصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
                 if len(caption)>2200: raise TrialReelError('Caption with image credit is too long.')
                 _update(con, trial_id, caption=caption, updated_at=time.time())
@@ -491,6 +506,32 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             except Exception as exc:
                 print('Publisher image unavailable:', type(exc).__name__, flush=True)
                 raise TrialReelError('تصویر اصلی خبر در دسترس نیست؛ ریل بدون تصویر منتشر نشد.') from None
+        if len(media) < 8:
+            commons_added = False
+            try:
+                from instagram_reel_commons import collect as collect_illustrations
+                commons_temp = tempfile.TemporaryDirectory(prefix='commons-' + trial_id + '-', dir=STATE)
+                illustrations = collect_illustrations(normalized, Path(commons_temp.name), limit=8-len(media))
+                seen = {hashlib.sha256(Path(item['path']).read_bytes()).hexdigest() for item in media}
+                for item in illustrations:
+                    digest = hashlib.sha256(Path(item['path']).read_bytes()).hexdigest()
+                    if digest in seen:
+                        continue
+                    credit = ('\n\nIllustrative image: ' + item['title'] + ' — ' + item['author'] +
+                              '; ' + item['license'] + '; resized/cropped. ' + item['source_url'] +
+                              ' ' + item['license_url'])
+                    # Keep room for the soundtrack attribution added below.
+                    if len(caption) + len(credit) > 1650:
+                        continue
+                    seen.add(digest)
+                    caption += credit
+                    media.append(item)
+                    commons_added = True
+            except Exception as exc:
+                print('Licensed illustrations unavailable:', type(exc).__name__, flush=True)
+            if commons_added:
+                _update(con, trial_id, caption=caption, updated_at=time.time())
+        print('Total verified Reel images:', len(media), flush=True)
         from instagram_trial_music import select_order, retrieve_track, caption_credit
         previous = con.execute("SELECT music_json FROM trial_reels WHERE status='published' AND music_json IS NOT NULL ORDER BY published_at DESC LIMIT 1").fetchone()
         try:
@@ -564,6 +605,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
         for extra_path in extra_image_paths:
             if extra_path.is_file() and not extra_path.is_symlink():
                 extra_path.unlink()
+        if commons_temp is not None:
+            commons_temp.cleanup()
 
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,
@@ -799,6 +842,8 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
+
 
 
 

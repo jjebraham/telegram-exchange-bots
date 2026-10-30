@@ -20,7 +20,7 @@ def _checked(engine, article_url, image_url):
         raise ValueError('Image host is not verified for this publisher')
     return image
 
-def fetch(engine, article_url, image_url, destination):
+def fetch(engine, article_url, image_url, destination, *, timeout=20):
     if not image_url: raise ValueError('The article does not expose a main image')
     first=_checked(engine,article_url,image_url)
     class Redirects(HTTPRedirectHandler):
@@ -28,7 +28,7 @@ def fetch(engine, article_url, image_url, destination):
             _checked(engine,article_url,newurl)
             return super().redirect_request(req,fp,code,msg,headers,newurl)
     request=Request(first,headers={'User-Agent':'KianiExchange-NewsSelectorTrial/1.0','Accept':'image/jpeg,image/png,image/webp'})
-    with build_opener(Redirects()).open(request,timeout=20) as response:
+    with build_opener(Redirects()).open(request,timeout=timeout) as response:
         _checked(engine,article_url,response.geturl())
         content_type = response.headers.get_content_type()
         raw=response.read(LIMIT+1)
@@ -51,6 +51,8 @@ def fetch(engine, article_url, image_url, destination):
         rendered.save(target,format='JPEG',quality=93)
         target.chmod(0o600)
     return target
+
+
 
 
 

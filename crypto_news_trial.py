@@ -184,7 +184,7 @@ class Dates(HTMLParser):
 
 
 class ReelArticleFigures(HTMLParser):
-    """Gather a few image URLs only from figures inside article content."""
+    """Gather bounded image candidates from figures inside article content."""
     def __init__(self):
         super().__init__()
         self.article_depth = 0
@@ -197,8 +197,11 @@ class ReelArticleFigures(HTMLParser):
             self.article_depth += 1
         if self.article_depth and tag == 'figure':
             self.figure_depth += 1
-        if self.article_depth and self.figure_depth and tag == 'img' and len(self.urls) < 8:
-            value = attrs.get('data-src') or attrs.get('src') or ''
+        if self.article_depth and self.figure_depth and tag == 'img' and len(self.urls) < 16:
+            value = (attrs.get('data-src') or attrs.get('data-lazy-src')
+                     or attrs.get('data-original') or attrs.get('src') or '')
+            if (not value or value.startswith('data:')) and attrs.get('data-srcset'):
+                value = attrs['data-srcset'].split(',')[-1].strip().split(' ')[0]
             if isinstance(value, str) and value and not value.startswith('data:'):
                 self.urls.append(value)
 
@@ -339,7 +342,7 @@ def source_material(story, now, *, admin_override=False):
             continue
         if candidate not in image_urls:
             image_urls.append(candidate)
-        if len(image_urls) >= 5:
+        if len(image_urls) >= 16:
             break
     if not image and image_urls:
         image = image_urls[0]
@@ -895,6 +898,8 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, NewsError) else f'ERROR: Trial failed ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
+
 
 
 

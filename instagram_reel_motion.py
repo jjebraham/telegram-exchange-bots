@@ -11,8 +11,7 @@ from PIL import Image, ImageDraw, ImageOps
 def render(t, title, source, kind, story_type, chunks, destination, asset_root, media, music_path, ffmpeg):
     pages=len(chunks)+2
     words=sum(len(s.split()) for s in chunks)
-    extra_count=min(max(len(media)-1,0),len(chunks))
-    step=min(.14,(52-4.5-3-1.2*extra_count-2.0*len(chunks))/max(words,1))
+    step=min(.14,(52-4.6-3-2.0*len(chunks))/max(words,1))
     if step<.045: raise t.TrialReelError('Story is too long for a legible animated Reel.')
     with tempfile.TemporaryDirectory(prefix='kiani-motion-',dir=t.STATE) as tmp:
         root=Path(tmp); entries=[]; clicks=[]; elapsed=0.0
@@ -31,10 +30,18 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         previous_revealed = 0
 
         if media:
-            item = media[0]
-            with Image.open(item['path']) as original:
-                original.verify()
-            with Image.open(item['path']) as original:
+            opening = []
+            for item in media[:2]:
+                with Image.open(item['path']) as check:
+                    check.verify()
+                with Image.open(item['path']) as image:
+                    if image.width * image.height > 40_000_000:
+                        raise t.TrialReelError('Article image is too large.')
+                    original = image.convert('RGB')
+                    original.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                    opening.append((item, original))
+            if opening:
+                item, original = opening[0]
                 if original.width * original.height > 40_000_000:
                     raise t.TrialReelError('Article image is too large.')
                 original = original.convert('RGB')
@@ -48,17 +55,29 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
 
                 for index in range(hook_frames):
                     phase = index / max(hook_frames - 1, 1)
-                    zoom = 1.04 + 0.12 * phase
-                    scaled_w = round(888 * zoom)
-                    scaled_h = round(500 * zoom)
-                    enlarged = ImageOps.fit(
-                        original, (scaled_w, scaled_h),
-                        Image.Resampling.LANCZOS, centering=(0.5, 0.48 + 0.08 * phase))
-                    max_x = max(0, scaled_w - 888)
-                    max_y = max(0, scaled_h - 500)
-                    left = round(max_x * (0.12 + 0.76 * phase))
-                    top = round(max_y * (0.80 - 0.60 * phase))
-                    photo = enlarged.crop((left, top, left + 888, top + 500))
+                    photo_index = 1 if len(opening) > 1 and index >= 24 else 0
+                    item, original = opening[photo_index]
+                    photo_phase = ((index - 24) / max(hook_frames - 25, 1)
+                                   if photo_index else index / (23 if len(opening) > 1 else hook_frames - 1))
+                    aspect = original.width / original.height
+                    if aspect < 1.25 or aspect > 2.4:
+                        # Preserve tall charts and wide diagrams without
+                        # cropping their labels or changing their meaning.
+                        contained = ImageOps.contain(original, (888, 500), Image.Resampling.LANCZOS)
+                        photo = Image.new('RGB', (888, 500), t.INK)
+                        photo.paste(contained, ((888-contained.width)//2, (500-contained.height)//2))
+                    else:
+                        zoom = 1.04 + 0.12 * photo_phase
+                        scaled_w = round(888 * zoom)
+                        scaled_h = round(500 * zoom)
+                        enlarged = ImageOps.fit(
+                            original, (scaled_w, scaled_h),
+                            Image.Resampling.LANCZOS, centering=(0.5, 0.48 + 0.08 * photo_phase))
+                        max_x = max(0, scaled_w - 888)
+                        max_y = max(0, scaled_h - 500)
+                        left = round(max_x * (0.12 + 0.76 * photo_phase))
+                        top = round(max_y * (0.80 - 0.60 * photo_phase))
+                        photo = enlarged.crop((left, top, left + 888, top + 500))
 
                     img = cover.copy()
                     img.paste(photo, (96, 315))
@@ -69,8 +88,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                     d.text((225, 365), t._rtl(label),
                            font=t._font(asset_root, 23, True), fill='white', anchor='mm')
 
-                    reveal_progress = max(0.0, min(1.0, (phase - 0.04) / 0.72))
-                    revealed = min(len(title_words), int(reveal_progress * len(title_words)) + (1 if reveal_progress else 0))
+                    reveal_progress = max(0.0, min(1.0, phase / 0.72))
+                    revealed = min(len(title_words), 1 + int(reveal_progress * max(0, len(title_words) - 1)))
                     visible = ' '.join(title_words[:revealed])
                     if visible:
                         rows = t._wrap(d, visible, title_font, 740)
@@ -110,23 +129,65 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 previous_revealed = revealed
             add(img, 0.6)
 
+        body_photos = []
+        for item in (media[1:8] if len(media) > 1 else media[:1]):
+            with Image.open(item['path']) as photo:
+                if photo.width * photo.height > 40000000:
+                    raise t.TrialReelError('Illustrative image is too large.')
+                photo = photo.convert('RGB')
+                if photo.width / photo.height < 1.25 or photo.width / photo.height > 2.4:
+                    contained = ImageOps.contain(photo, (888, 500), Image.Resampling.LANCZOS)
+                    image = Image.new('RGB', (888, 500), t.INK)
+                    image.paste(contained, ((888-contained.width)//2, (500-contained.height)//2))
+                else:
+                    image = ImageOps.fit(photo, (888, 500), Image.Resampling.LANCZOS)
+            body_photos.append((item, image))
         for page,body in enumerate(chunks,2):
-            if page-2 < extra_count:
-                item=media[page-1]
-                with Image.open(item['path']) as photo:
-                    if photo.width*photo.height>40000000: raise t.TrialReelError('Illustrative image is too large.')
-                    image=ImageOps.fit(photo.convert('RGB'),(888,600),Image.Resampling.LANCZOS)
-                interlude=t._frame(title,'',kind,page,pages,asset_root,story_type)
-                interlude.paste(image,(96,420))
-                d=ImageDraw.Draw(interlude)
-                d.rounded_rectangle((110,440,340,500),radius=20,fill=t.INK)
-                d.text((225,470),t._rtl('تصویر خبر' if item.get('kind')=='publisher' else 'تصویر نمادین'),font=t._font(asset_root,23,True),fill='white',anchor='mm')
-                add(interlude,1.2)
             blank=t._frame(title,'',kind,page,pages,asset_root,story_type)
             draw=ImageDraw.Draw(blank); font=t._font(asset_root,56)
             rows=t._wrap(draw,body,font,780)
             if len(rows)>7: font=t._font(asset_root,48); rows=t._wrap(draw,body,font,780)
             if len(rows)>8: raise t.TrialReelError('A story segment does not fit.')
+            if body_photos:
+                # Spread all available pictures through the story while text
+                # stays on screen and is revealed word by word.
+                page_index = page - 2
+                photos = body_photos[page_index::len(chunks)]
+                if not photos:
+                    photos = [body_photos[page_index % len(body_photos)]]
+                total_words = sum(len(row.split()) for row in rows)
+                duration = max(total_words * step + 2.0, len(photos) * 1.1)
+                frames = max(total_words, math.ceil(duration / .16))
+                seconds = duration / frames
+                top = 880
+                line_height = int(font.size * 1.45)
+                if top + (len(rows) - 1) * line_height + int(font.size * 1.6) > 1470:
+                    raise t.TrialReelError('A story segment does not fit below the image.')
+                prior = 0
+                for index in range(frames):
+                    elapsed_on_card = index * seconds
+                    revealed = min(total_words, max(1, int(elapsed_on_card / step) + 1))
+                    photo_index = min(len(photos) - 1, int(index * len(photos) / frames))
+                    item, image = photos[photo_index]
+                    img = blank.copy()
+                    img.paste(image, (96, 315))
+                    d = ImageDraw.Draw(img)
+                    d.rectangle((120, 845, 960, 1470), fill='#FFFFFF')
+                    d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
+                    label = 'تصویر خبر' if item.get('kind') == 'publisher' else 'تصویر نمادین'
+                    d.text((225, 365), t._rtl(label), font=t._font(asset_root,23,True),
+                           fill='white', anchor='mm')
+                    remaining = revealed
+                    for row_index, row in enumerate(rows):
+                        parts = row.split()
+                        count = min(len(parts), remaining)
+                        if count:
+                            d.text((930, top + row_index * line_height),
+                                   t._rtl(' '.join(parts[:count])), font=font, fill=t.INK, anchor='rt')
+                        remaining -= count
+                    add(img, seconds, revealed > prior)
+                    prior = revealed
+                continue
             top=(1920-len(rows)*int(font.size*1.72))//2
             for revealed in range(1,sum(len(row.split()) for row in rows)+1):
                 img=blank.copy(); d=ImageDraw.Draw(img); remaining=revealed
@@ -162,4 +223,6 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
               '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p','-c:v','libx264','-preset','veryfast','-crf','25','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
         except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
+
+
 
