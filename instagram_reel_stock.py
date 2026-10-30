@@ -22,6 +22,8 @@ API_LIMIT = 1_500_000
 HISTORY_DAYS = 30
 UA = 'KianiExchangeInstagramReels/1.0 (https://kiani.exchange)'
 TOPICS = (
+    (r'\bchatgpt\b|\bclaude\b|\bcopilot\b|\bllms?\b|\bartificial intelligence\b|\bmachine learning\b|\bgenerative ai\b|\bai\b',
+     ('artificial intelligence', 'AI chatbot interface', 'machine learning')),
     (r'\bhack(?:er|ers|ing|ed)?\b|\bphish|cyber|security|\bfraud\b|\bscam', ('cyber security', 'computer network security')),
     (r'\bbitcoin\b|\bbtc\b', ('bitcoin cryptocurrency', 'cryptocurrency trading')),
     (r'\bethereum\b|\bether\b|\beth\b', ('ethereum cryptocurrency', 'blockchain technology')),
@@ -30,6 +32,22 @@ TOPICS = (
     (r'\boil\b|\bbrent\b', ('oil industry', 'energy market')),
     (r'\bcrypto|blockchain|defi\b', ('cryptocurrency trading', 'blockchain technology')),
     (r'\binflation\b|\beconomy\b|\beconomic\b|\brate\b|\bbank', ('financial market', 'economy finance')),
+)
+RELEVANCE = (
+    (r'\bchatgpt\b|\bclaude\b|\bcopilot\b|\bllms?\b|\bartificial intelligence\b|\bmachine learning\b|\bgenerative ai\b|\bai\b',
+     ('artificial intelligence', 'machine learning', 'chatgpt', 'claude',
+      'copilot', 'chatbot', 'language model', 'neural network', 'data center')),
+    (r'\bhack(?:er|ers|ing|ed)?\b|\bphish|cyber|security|\bfraud\b|\bscam',
+     ('cybersecurity', 'cyber security', 'hacker', 'phishing',
+      'computer security', 'data breach', 'network security')),
+    (r'\bbitcoin\b|\bbtc\b', ('bitcoin', 'btc', 'cryptocurrency')),
+    (r'\bethereum\b|\bether\b|\beth\b', ('ethereum', 'ether', 'cryptocurrency')),
+    (r'\busdt\b|\btether\b|\bstablecoin', ('tether', 'stablecoin', 'cryptocurrency')),
+    (r'\bgold\b|\bsilver\b', ('gold', 'silver', 'bullion', 'precious metal')),
+    (r'\boil\b|\bbrent\b', ('oil', 'crude', 'petroleum', 'energy market')),
+    (r'\bcrypto|blockchain|defi\b', ('cryptocurrency', 'crypto', 'blockchain', 'defi')),
+    (r'\binflation\b|\beconomy\b|\beconomic\b|\brate\b|\bbank',
+     ('financial market', 'economy', 'inflation', 'bank', 'interest rate')),
 )
 
 class NoRedirect(HTTPRedirectHandler):
@@ -76,13 +94,10 @@ def _database(state=STATE):
     return con
 
 def queries(story):
-    text = str(story.get('title_original','')).lower()
+    text = ' '.join(str(story.get(key, '')) for key in
+                    ('title_original', 'title_fa', 'summary_fa')).lower()
     matches = [terms for pattern, terms in TOPICS if re.search(pattern, text)]
     if not matches:
-        if story.get('stock_category') == 'economy':
-            return ['financial news', 'stock market']
-        if story.get('stock_category') == 'crypto':
-            return ['cryptocurrency', 'blockchain technology']
         return []
     # Mix the most specific event type with the asset or broader topic.
     selected = []
@@ -93,6 +108,14 @@ def queries(story):
             if len(selected) == 3:
                 return selected
     return selected
+
+def _matches_story_topic(story, item):
+    text = ' '.join(str(story.get(key, '')) for key in
+                    ('title_original', 'title_fa', 'summary_fa')).casefold()
+    profile = next((anchors for pattern, anchors in RELEVANCE
+                    if re.search(pattern, text)), None)
+    description = str(item.get('description', '')).casefold()
+    return bool(profile and description and any(anchor in description for anchor in profile))
 
 def _safe_url(url, host, prefix='/'):
     try:
@@ -140,10 +163,12 @@ def _candidates(provider, data):
             image = row.get('src',{}).get('large2x','') if isinstance(row.get('src'),dict) else ''
             page = row.get('url','')
             creator = row.get('photographer','')
+            description = row.get('alt','')
             if not _safe_url(image,'images.pexels.com') or not _safe_url(page,'www.pexels.com','/photo/'):
                 continue
         else:
             image, page, creator = row.get('largeImageURL',''),row.get('pageURL',''),row.get('user','')
+            description = row.get('tags','')
             if not (_safe_url(image,'pixabay.com','/get/') or _safe_url(image,'cdn.pixabay.com','/photo/')):
                 continue
             if not _safe_url(page,'pixabay.com','/'):
@@ -153,8 +178,11 @@ def _candidates(provider, data):
         creator = re.sub(r'\s+',' ',creator).strip()
         if not creator or len(creator)>100 or re.search(r'[<>\r\n]|https?://',creator):
             continue
+        if not isinstance(description, str):
+            description = ''
+        description = re.sub(r'\s+', ' ', description).strip()[:600]
         result.append({'provider':provider, 'id':str(row['id']), 'url':image,
-                       'source_url':page, 'author':creator})
+                       'source_url':page, 'author':creator, 'description':description})
     return result
 
 def collect(story, output_dir, *, origin, state=STATE, limit=7, provider_filter=None):
@@ -197,7 +225,11 @@ def collect(story, output_dir, *, origin, state=STATE, limit=7, provider_filter=
         # Deduplicate across query results; favor images unused for 30 days,
         # then least-recently-used ones, in a different random order per run.
         unique = {(x['provider'],x['id']):x for x in candidates}
-        candidates = list(unique.values())
+        candidates = [item for item in unique.values() if _matches_story_topic(story, item)]
+        if unique and not candidates:
+            print('Stock images skipped: provider descriptions/tags did not match the story topic.', flush=True)
+        elif candidates:
+            print('Related stock image results:', len(candidates), flush=True)
         secrets.SystemRandom().shuffle(candidates)
         candidates.sort(key=lambda x:seen.get((x['provider'],x['id']),0))
         for item in candidates:

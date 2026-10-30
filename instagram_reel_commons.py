@@ -16,6 +16,10 @@ API = 'https://commons.wikimedia.org/w/api.php'
 UA = 'KianiExchangeInstagramReels/1.0 (https://kiani.exchange)'
 LIMIT = 10_000_000
 TOPICS = (
+    (('chatgpt', 'claude', 'copilot', 'llm', 'ai', 'artificial intelligence',
+      'machine learning'), 'artificial intelligence',
+     ('artificial intelligence', 'chatgpt', 'claude', 'copilot',
+      'language model', 'machine learning')),
     (('bitcoin', 'btc'), 'bitcoin cryptocurrency', 'bitcoin'),
     (('ethereum', 'ether', 'eth'), 'ethereum cryptocurrency', 'ethereum'),
     (('tether', 'usdt'), 'tether cryptocurrency', 'tether'),
@@ -133,7 +137,8 @@ def collect(story, output_dir, limit=7, *, seconds=30):
             description = _plain(value('ImageDescription'))
             title = _plain(page['title'])
             relevant = (title+' '+description).casefold()
-            if topic[1] not in relevant:
+            relevance_terms = topic[1] if isinstance(topic[1], tuple) else (topic[1],)
+            if not any(term in relevant for term in relevance_terms):
                 continue
             if (not license_url or not _matching_license_url(license_name, value('LicenseUrl'))
                     or value('Restrictions') or not 1 <= len(author) <= 120
