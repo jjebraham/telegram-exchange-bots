@@ -5,7 +5,6 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
-import wave
 
 from PIL import Image, ImageDraw
 
@@ -35,20 +34,11 @@ with tempfile.TemporaryDirectory(prefix='kiani-cover-check-') as tmp:
     img = motion.grid_cover(trial, title, 'crypto', assets, media)
     if img.size != (1080, 1920):
         raise RuntimeError('Unexpected cover size.')
-    # Synthetic narration checks the actual render path with no Azure calls.
-    narration = []
-    for index in range(3):
-        p = root / ('voice%d.wav' % index)
-        with wave.open(str(p), 'wb') as w:
-            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
-            w.writeframes(b'\x00\x00' * 24000)
-        narration.append({'path': p, 'duration': 1.0})
     video = root / 'preview.mp4'
     motion.render(trial, title, 'منبع آزمایشی', 'crypto', 'hard_news',
                   ['این متن آزمایشی برای بررسی جای تصویر و نوشته است.',
                    'این هم بخش دوم برای بررسی فاصله متن از پایین صفحه است.'],
-                  video, assets, media, None, ffmpeg, narration=narration)
+                  video, assets, media, None, ffmpeg)
     duration = trial._probe_video(video, ffprobe)
-    print('Cover and synthetic narrated Reel verified:', round(duration, 2), 'seconds')
+    print('Cover and Reel without narration verified:', round(duration, 2), 'seconds')
     print('No Azure, DeepSeek or Instagram request was made.')
-

@@ -465,7 +465,6 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     commons_temp = None
     stock_temp = None
     stock_used = []
-    voice_temp = None
     try:
         _live_guard()
         if normalized.get('image_url'):
@@ -604,18 +603,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
-        from instagram_reel_voice import configured as voice_configured, synthesize as synthesize_voice
-        if not voice_configured():
-            raise TrialReelError('Persian narration is not configured; Reel not published.')
-        voice_temp = tempfile.TemporaryDirectory(prefix='voice-' + trial_id + '-', dir=STATE)
-        try:
-            spoken = synthesize_voice([normalized['title_fa']] + _chunks(normalized['summary_fa']), Path(voice_temp.name))
-        except Exception as exc:
-            print('Narration preparation failed:', type(exc).__name__, flush=True)
-            detail = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__
-            raise TrialReelError('Persian narration unavailable: ' + detail[:120]) from None
         duration = render_video(normalized, kind, video_path, asset_root,
-                                music_path=music_path if music else None, media=media, narration=spoken)
+                                music_path=music_path if music else None, media=media)
         if stock_used:
             try:
                 from instagram_reel_stock import mark_used
@@ -681,8 +670,6 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             commons_temp.cleanup()
         if stock_temp is not None:
             stock_temp.cleanup()
-        if voice_temp is not None:
-            voice_temp.cleanup()
 
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,

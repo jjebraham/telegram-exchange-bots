@@ -20,7 +20,6 @@ FILES = (
     'instagram_reel_media.py',
     'instagram_reel_commons.py',
     'instagram_reel_stock.py',
-    'instagram_reel_voice.py',
     'instagram_reel_source_image.py',
     'instagram_reel_motion.py',
     'instagram_ranked_news.py',
@@ -38,8 +37,6 @@ FILES = (
     'deploy/instagram-trial-reels/check_auto_images.py',
     'deploy/instagram-trial-reels/configure_stock.py',
     'deploy/instagram-trial-reels/check_reel_motion.py',
-    'deploy/instagram-trial-reels/configure_voice.py',
-    'deploy/instagram-trial-reels/check_long_narration.py',
     'deploy/instagram-trial-reels/check_reel_cover.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )

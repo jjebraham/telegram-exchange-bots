@@ -100,7 +100,7 @@ def main():
         raise RuntimeError('The reviewed runtime is outside the pinned private source directory.')
     if not all((runtime / name).is_file() and not (runtime / name).is_symlink() for name in (
             'instagram_trial_reels.py', 'instagram_trial_music.py', 'instagram_reel_motion.py', 'instagram_reel_media.py', 'instagram_reel_source_image.py',
-            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_reel_commons.py', 'instagram_reel_stock.py', 'instagram_reel_voice.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py',
+            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_reel_commons.py', 'instagram_reel_stock.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py',
             'instagram_direct_reel_retention.py')):
         raise RuntimeError('A required Trial Reel runtime file is missing or unsafe.')
 
@@ -132,10 +132,7 @@ def main():
     # The manual intake loads its translation credentials via this pinned
     # runtime; make the runtime importable before calling its helpers.
     sys.path[:0] = [str(runtime), str(runtime / 'selector_trial_runtime')]
-    from instagram_reel_voice import configured as voice_configured
-    if not voice_configured():
-        raise RuntimeError('Configure and test Persian narration before installation.')
-    print('Persian narration configured; private local usage cap is 400,000 counted characters per UTC month.', flush=True)
+    print('Reel narration disabled; music and typing sounds remain enabled.', flush=True)
     module_path = runtime / 'instagram_manual_news_intake.py'
     spec = importlib.util.spec_from_file_location('manual_news_intake', module_path)
     module = importlib.util.module_from_spec(spec)

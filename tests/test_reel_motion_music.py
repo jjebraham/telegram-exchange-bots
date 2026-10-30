@@ -1,5 +1,6 @@
 import sys
 import json
+import ast
 import unittest
 import tempfile
 import types
@@ -23,6 +24,38 @@ sys.modules[spec.name]=reel
 spec.loader.exec_module(reel)
 
 class MotionMusicChecks(unittest.TestCase):
+    def test_publisher_and_activation_do_not_require_azure_narration(self):
+        source = (ROOT/'instagram_trial_reels.py').read_text(encoding='utf-8')
+        tree = ast.parse(source)
+        publisher = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'create_reel')
+        self.assertFalse(any(isinstance(n, ast.ImportFrom) and n.module == 'instagram_reel_voice'
+                             for n in ast.walk(publisher)))
+        calls = [n for n in ast.walk(publisher) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Name) and n.func.id == 'render_video']
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(any(k.arg == 'narration' for k in calls[0].keywords))
+        activation = (ROOT/'deploy/instagram-trial-reels/activate_trial_reels.py').read_text(encoding='utf-8')
+        self.assertNotIn('instagram_reel_voice', activation)
+
+    def test_without_narration_mix_contains_music_and_typing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            reel.STATE=root
+            music_path=root/'music.ogg'
+            music_path.write_bytes(b'synthetic')
+            assets=Path(__import__('os').environ.get('KIANI_TEST_ASSETS',str(ROOT)))
+            checked=[]
+            def run(cmd,**kwargs):
+                self.assertIn(str(music_path),cmd)
+                self.assertIn('amix=inputs=2',cmd[cmd.index('-filter_complex')+1])
+                self.assertNotIn('narration.wav', ' '.join(cmd))
+                checked.append(True)
+            with patch.object(motion.subprocess,'run',side_effect=run):
+                motion.render(reel,'عنوان خبر آزمایشی','منبع','crypto','hard_news',
+                  ['متن اول این آزمایش برای خواندن خبر است.', 'متن دوم برای ادامه است.'],
+                  root/'out.mp4',assets,[],music_path,'ffmpeg')
+            self.assertEqual(checked,[True])
+
     def test_photo_moves_and_diagram_remains_visible(self):
         image=Image.new('RGB',(1000,600),'white')
         draw=ImageDraw.Draw(image)
