@@ -32,6 +32,7 @@ FILES = (
     'selector_trial_runtime/instagram_news_renderer.py',
     'selector_trial_runtime/PINNED.md',
     'deploy/instagram-trial-reels/activate_trial_reels.py',
+    'deploy/instagram-trial-reels/check_multi_images.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 
