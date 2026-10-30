@@ -25,6 +25,27 @@ spec.loader.exec_module(trial)
 import instagram_reel_motion as motion
 
 class MultiImageChecks(unittest.TestCase):
+    def test_cover_preserves_complete_headline_and_selects_first_frame(self):
+        title = 'طرح اهرم ۱۱ برابری Ethena Pay با وعده بازده بالا و خطر زیان پنهان'
+        seen = []
+        original = trial._rtl
+        def record(value):
+            seen.append(str(value))
+            return original(value)
+        with patch.object(trial, '_rtl', side_effect=record):
+            image = motion.grid_cover(trial, title, 'crypto', ASSETS, [])
+        self.assertEqual(image.size, (1080, 1920))
+        # The title is passed to the shaper as complete consecutive rows.
+        self.assertTrue(any(' '.join(seen[i:j]) == title
+                            for i in range(len(seen)) for j in range(i + 1, len(seen) + 1)))
+        tree = ast.parse((OUT/'instagram_trial_reels.py').read_text(encoding='utf-8'))
+        self.assertTrue(any(
+            isinstance(n, ast.Dict) and any(
+                isinstance(k, ast.Constant) and k.value == 'thumb_offset'
+                and isinstance(v, ast.Constant) and v.value == '0'
+                for k, v in zip(n.keys, n.values))
+            for n in ast.walk(tree)))
+
     def test_candidates_are_bounded_and_inside_article_figures(self):
         source = (OUT/'crypto_news_trial.py').read_text(encoding='utf-8')
         tree = ast.parse(source)
@@ -52,7 +73,7 @@ class MultiImageChecks(unittest.TestCase):
             original_save = Image.Image.save
             def capture_frame(image, path, *args, **kwargs):
                 if str(path).endswith('.jpg') and 'kiani-motion-' in str(path):
-                    captured.append((image.getpixel((500, 500)), image.getpixel((500, 1400))))
+                    captured.append((image.getpixel((500, 700)), image.getpixel((500, 1400))))
                     return
                 return original_save(image, path, *args, **kwargs)
             chunks = ['در این نمونه خبر آزمایشی برای نمایش تصویر آماده شده است.',
@@ -62,12 +83,13 @@ class MultiImageChecks(unittest.TestCase):
                               'crypto', 'hard_news', chunks, folder/'unused.mp4',
                               ASSETS, media, None, 'ffmpeg')
         self.assertEqual(captured[0][0], colors[0])
-        self.assertEqual(captured[24][0], colors[1])
+        self.assertEqual(captured[25][0], colors[1])
         for color in colors:
             self.assertIn(color, [pixels[0] for pixels in captured])
         self.assertEqual(captured[-1][1], colors[0])
 
 if __name__ == '__main__':
     unittest.main()
+
 
 

@@ -149,11 +149,11 @@ def _frame(title, body, kind, page, pages, asset_root, story_type='hard_news'):
     draw.ellipse((-310, 1360, 300, 1970), fill='#E4F0E8')
     draw.rounded_rectangle((52, 58, w - 52, h - 58), radius=48, fill='#FFFFFF', outline='#D7E8DC', width=3)
     logo = _brand_mark(asset_root).resize((88, 88), Image.Resampling.LANCZOS)
-    image.paste(logo, (w - 166, 96), logo)
+    image.paste(logo, (w - 166, 216), logo)
     regular = _font(asset_root, 30)
     bold = _font(asset_root, 38, True)
-    draw.text((w - 188, 130), _rtl('صرافی کیانی'), font=bold, fill=INK, anchor='rm')
-    draw.text((w - 188, 177), 'kiani.exchange', font=regular, fill=MUTED, anchor='rm')
+    draw.text((w - 188, 250), _rtl('صرافی کیانی'), font=bold, fill=INK, anchor='rm')
+    draw.text((w - 188, 297), 'kiani.exchange', font=regular, fill=MUTED, anchor='rm')
     if story_type == 'forecast':
         label = 'پیش‌بینی کریپتو' if kind == 'crypto' else 'پیش‌بینی اقتصادی'
     elif story_type == 'promotional':
@@ -162,15 +162,15 @@ def _frame(title, body, kind, page, pages, asset_root, story_type='hard_news'):
         label = 'تحلیل کریپتو' if kind == 'crypto' else 'تحلیل اقتصادی'
     else:
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
-    draw.rounded_rectangle((96, 105, 350, 172), radius=32, fill=MINT)
-    draw.text((223, 139), _rtl(label), font=_font(asset_root, 29, True), fill=INK, anchor='mm')
-    draw.rounded_rectangle((96, 230, w - 96, 237), radius=4, fill='#D9E7DD')
-    draw.rounded_rectangle((96, 230, max(96 + 8, int((w - 192) * page / pages) + 96), 237), radius=4, fill=GREEN)
+    draw.rounded_rectangle((96, 225, 350, 292), radius=32, fill=MINT)
+    draw.text((223, 259), _rtl(label), font=_font(asset_root, 29, True), fill=INK, anchor='mm')
+    draw.rounded_rectangle((96, 350, w - 96, 357), radius=4, fill='#D9E7DD')
+    draw.rounded_rectangle((96, 350, max(96 + 8, int((w - 192) * page / pages) + 96), 357), radius=4, fill=GREEN)
 
     if page == 1:
-        draw.rounded_rectangle((96, 320, w - 96, 1080), radius=42, fill=INK)
-        draw.ellipse((w - 260, 382, w - 174, 468), fill=GOLD)
-        draw.text((w - 217, 425), '!', font=_font(asset_root, 54, True), fill=INK, anchor='mm')
+        draw.rounded_rectangle((96, 390, w - 96, 1150), radius=42, fill=INK)
+        draw.ellipse((w - 260, 452, w - 174, 538), fill=GOLD)
+        draw.text((w - 217, 495), '!', font=_font(asset_root, 54, True), fill=INK, anchor='mm')
         title_font = _font(asset_root, 72, True)
         title_rows = _wrap(draw, title, title_font, w - 260)
         if len(title_rows) > 6:
@@ -178,17 +178,17 @@ def _frame(title, body, kind, page, pages, asset_root, story_type='hard_news'):
             title_rows = _wrap(draw, title, title_font, w - 260)
         if len(title_rows) > 7:
             raise TrialReelError('The headline is too long for the Reel cover.')
-        y = 540
+        y = 610
         for row in title_rows:
             draw.text((w - 150, y), _rtl(row), font=title_font, fill='#FFFFFF', anchor='rt')
             y += int(title_font.size * 1.45)
-        draw.text((w - 150, 1000), _rtl('خبر را در چند ثانیه بخوانید'), font=_font(asset_root, 32, True), fill='#BCEBD3', anchor='rt')
+        draw.text((w - 150, 1070), _rtl('خبر را در چند ثانیه بخوانید'), font=_font(asset_root, 32, True), fill='#BCEBD3', anchor='rt')
         footer = 'روایت کوتاه از یک خبرِ تأییدشده'
-        draw.text((w / 2, 1185), _rtl(footer), font=_font(asset_root, 31), fill=MUTED, anchor='mm')
+        draw.text((w / 2, 1255), _rtl(footer), font=_font(asset_root, 31), fill=MUTED, anchor='mm')
     elif page < pages:
-        draw.rounded_rectangle((96, 315, w - 96, h - 425), radius=42, fill='#FFFFFF', outline='#DDEBE1', width=3)
-        draw.rounded_rectangle((w - 202, 356, w - 144, 414), radius=22, fill=GOLD)
-        draw.text((w - 173, 385), str(page - 1).translate(str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')),
+        draw.rounded_rectangle((96, 390, w - 96, h - 425), radius=42, fill='#FFFFFF', outline='#DDEBE1', width=3)
+        draw.rounded_rectangle((w - 202, 416, w - 144, 474), radius=22, fill=GOLD)
+        draw.text((w - 173, 445), str(page - 1).translate(str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')),
                   font=_font(asset_root, 28, True), fill=INK, anchor='mm')
         body_font = _font(asset_root, 56)
         rows = _wrap(draw, body, body_font, w - 300)
@@ -213,8 +213,8 @@ def _frame(title, body, kind, page, pages, asset_root, story_type='hard_news'):
         draw.text((w - 150, 970), _rtl('پیوند کامل منبع در کپشن'), font=_font(asset_root, 32), fill='#D9E7DD', anchor='rt')
         draw.text((w / 2, 1165), 'kiani.exchange', font=_font(asset_root, 36, True), fill=GOLD, anchor='mm')
 
-    draw.text((96, h - 126), 'kiani.exchange', font=_font(asset_root, 26, True), fill=GREEN, anchor='lm')
-    draw.text((w - 96, h - 126), f'{page}/{pages}', font=_font(asset_root, 25), fill=MUTED, anchor='rm')
+    draw.text((126, h - 290), 'kiani.exchange', font=_font(asset_root, 26, True), fill=GREEN, anchor='lm')
+    draw.text((w - 140, h - 290), f'{page}/{pages}', font=_font(asset_root, 25), fill=MUTED, anchor='rm')
     return image
 
 
@@ -640,7 +640,10 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
         sys.path.insert(0, str(publisher_root))
         import instagram_daily_rates as ig
         os.environ['INSTAGRAM_PUBLIC_MEDIA_BASE_URL'] = public_base
-        fields = {'media_type': 'REELS', 'video_url': public_url, 'caption': caption}
+        # The renderer writes the finished cover as the first video frame.
+        # Ask Meta to use that frame instead of selecting a partly typed title.
+        fields = {'media_type': 'REELS', 'video_url': public_url, 'caption': caption,
+                  'thumb_offset': '0'}
         if reel_mode == 'trial':
             fields.update(share_to_feed='false',
                 trial_params=json.dumps({'graduation_strategy': 'SS_PERFORMANCE'}, separators=(',', ':')))
@@ -958,6 +961,7 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
 

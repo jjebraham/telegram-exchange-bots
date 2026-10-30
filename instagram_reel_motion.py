@@ -9,6 +9,52 @@ import tempfile
 import wave
 from PIL import Image, ImageDraw, ImageOps
 
+def grid_cover(t, title, kind, asset_root, media):
+    """Make a complete-title first frame, with key content in the center square."""
+    canvas = Image.new('RGB', (1080, 1920), '#05162F')
+    d = ImageDraw.Draw(canvas)
+    d.rectangle((0, 420, 1080, 1500), fill='#071D3F')
+    d.rounded_rectangle((66, 450, 1014, 1470), radius=40, fill='#102C52')
+    d.rounded_rectangle((96, 478, 984, 560), radius=22, fill='#FFFFFF')
+    logo = t._brand_mark(asset_root).resize((64, 64), Image.Resampling.LANCZOS)
+    canvas.paste(logo, (895, 486), logo)
+    d.text((870, 518), t._rtl('صرافی کیانی'), font=t._font(asset_root, 34, True), fill=t.INK, anchor='rm')
+    label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
+    d.rounded_rectangle((116, 492, 335, 546), radius=24, fill='#CFF5ED')
+    d.text((225, 519), t._rtl(label), font=t._font(asset_root, 25, True), fill=t.INK, anchor='mm')
+    if media:
+        with Image.open(media[0]['path']) as photo:
+            if photo.width * photo.height > 40_000_000:
+                raise t.TrialReelError('Article image is too large.')
+            photo = photo.convert('RGB')
+            photo.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+        photo = moving_image(photo, .5, 0, (888, 355), t.INK)
+        canvas.paste(photo, (96, 580))
+    else:
+        d.rectangle((96, 580, 984, 935), fill='#183F68')
+        d.text((540, 755), 'KIANI', font=t._font(asset_root, 96, True), fill='#D5FAED', anchor='mm')
+    d.rectangle((96, 935, 984, 945), fill='#00D9C8')
+    d.rounded_rectangle((96, 945, 984, 1440), radius=24, fill='#081831')
+    d.rounded_rectangle((130, 973, 310, 1027), radius=25, fill='#FFD469')
+    d.text((220, 1000), t._rtl('در یک نگاه'), font=t._font(asset_root, 25, True), fill=t.INK, anchor='mm')
+    # Preserve every word and only shrink within a bounded readable range.
+    rows = None
+    for size in (70, 64, 58, 52, 48):
+        font = t._font(asset_root, size, True)
+        try:
+            candidate = t._wrap(d, title, font, 740)
+        except t.TrialReelError:
+            continue
+        if len(candidate) <= 6 and len(candidate) * int(size * 1.38) <= 360:
+            rows = candidate
+            break
+    if not rows:
+        raise t.TrialReelError('The complete headline does not fit the Reel cover.')
+    for i, row in enumerate(rows):
+        d.text((925, 1050 + i * int(size * 1.38)), t._rtl(row), font=font, fill='white', anchor='rt')
+    d.text((150, 1410), 'kiani.exchange', font=t._font(asset_root, 25, True), fill='#80E4D6', anchor='lm')
+    return canvas
+
 def moving_image(original, phase, mode, size, background):
     """Move safely inside the image viewport; keep diagrams completely visible."""
     width, height = size
@@ -56,10 +102,13 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
             elapsed+=seconds
 
         cover=t._frame(title,source,kind,1,pages,asset_root,story_type)
+        # The first frame has the complete headline for profile thumbnails.
+        # After this brief frame, the existing animated title begins.
+        add(grid_cover(t, title, kind, asset_root, media), .24)
         title_words = title.split()
         hook_frames = 60
         hook_seconds = max(4.0, narration[0]['duration'] + .3) if narration else 4.0
-        voice_starts = [0.0]
+        voice_starts = [elapsed]
         previous_revealed = 0
 
         if media:
@@ -113,12 +162,12 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                         photo = enlarged.crop((left, top, left + 888, top + 500))
 
                     img = cover.copy()
-                    img.paste(photo, (96, 315))
+                    img.paste(photo, (96, 405))
                     d = ImageDraw.Draw(img)
-                    d.rounded_rectangle((96, 815, 984, 1300), radius=38, fill=t.INK)
+                    d.rounded_rectangle((96, 905, 984, 1390), radius=38, fill=t.INK)
                     if item.get('kind') == 'publisher':
-                        d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
-                        d.text((225, 365), t._rtl('تصویر خبر'),
+                        d.rounded_rectangle((110, 425, 340, 485), radius=20, fill=t.INK)
+                        d.text((225, 455), t._rtl('تصویر خبر'),
                                font=t._font(asset_root, 23, True), fill='white', anchor='mm')
 
                     reveal_progress = max(0.0, min(1.0, phase / 0.72))
@@ -127,7 +176,7 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                     if visible:
                         rows = t._wrap(d, visible, title_font, 740)
                         for row_index, row in enumerate(rows):
-                            d.text((930, 855 + row_index * int(title_font.size * 1.42)),
+                            d.text((900, 945 + row_index * int(title_font.size * 1.42)),
                                    t._rtl(row), font=title_font, fill='white', anchor='rt')
                     add(img, hook_seconds / hook_frames, revealed > previous_revealed)
                     previous_revealed = revealed
@@ -145,18 +194,18 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 phase = index / max(hook_frames - 1, 1)
                 img = cover.copy()
                 d = ImageDraw.Draw(img)
-                d.rounded_rectangle((96, 320, 984, 1080), radius=42, fill=t.INK)
-                d.ellipse((820, 382, 906, 468), fill=t.GOLD)
-                d.text((863, 425), '!', font=t._font(asset_root, 54, True), fill=t.INK, anchor='mm')
+                d.rounded_rectangle((96, 390, 984, 1150), radius=42, fill=t.INK)
+                d.ellipse((820, 452, 906, 538), fill=t.GOLD)
+                d.text((863, 495), '!', font=t._font(asset_root, 54, True), fill=t.INK, anchor='mm')
                 reveal_progress = max(0.0, min(1.0, (phase - 0.04) / 0.72))
                 revealed = min(len(title_words), int(reveal_progress * len(title_words)) + (1 if reveal_progress else 0))
                 visible = ' '.join(title_words[:revealed])
                 if visible:
                     rows = t._wrap(d, visible, title_font, 820)
                     for row_index, row in enumerate(rows):
-                        d.text((930, 540 + row_index * int(title_font.size * 1.45)),
+                        d.text((900, 610 + row_index * int(title_font.size * 1.45)),
                                t._rtl(row), font=title_font, fill='white', anchor='rt')
-                d.text((930, 1000), t._rtl('خبر را در چند ثانیه بخوانید'),
+                d.text((900, 1070), t._rtl('خبر را در چند ثانیه بخوانید'),
                        font=t._font(asset_root, 32, True), fill='#BCEBD3', anchor='rt')
                 add(img, hook_seconds / hook_frames, revealed > previous_revealed)
                 previous_revealed = revealed
@@ -176,7 +225,7 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
             blank=t._frame(title,'',kind,page,pages,asset_root,story_type)
             draw=ImageDraw.Draw(blank); font=t._font(asset_root,56)
             rows=t._wrap(draw,body,font,780)
-            if len(rows)>7: font=t._font(asset_root,48); rows=t._wrap(draw,body,font,780)
+            if len(rows)>6: font=t._font(asset_root,48); rows=t._wrap(draw,body,font,780)
             if len(rows)>8: raise t.TrialReelError('A story segment does not fit.')
             if body_photos:
                 # Spread all available pictures through the story while text
@@ -193,9 +242,9 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 word_step = speech_duration / max(total_words, 1) if narration else step
                 frames = max(total_words, math.ceil(duration / .10))
                 seconds = duration / frames
-                top = 880
+                top = 940
                 line_height = int(font.size * 1.45)
-                if top + (len(rows) - 1) * line_height + int(font.size * 1.6) > 1470:
+                if top + (len(rows) - 1) * line_height + int(font.size * 1.6) > 1550:
                     raise t.TrialReelError('A story segment does not fit below the image.')
                 prior = 0
                 for index in range(frames):
@@ -208,19 +257,19 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                     image_phase = max(0.0, min(1.0, (index - segment_start) / max(segment_length-1, 1)))
                     image = moving_image(image, image_phase, page_index+photo_index, (888,500), t.INK)
                     img = blank.copy()
-                    img.paste(image, (96, 315))
+                    img.paste(image, (96, 405))
                     d = ImageDraw.Draw(img)
-                    d.rectangle((120, 845, 960, 1470), fill='#FFFFFF')
+                    d.rectangle((120, 925, 960, 1550), fill='#FFFFFF')
                     if item.get('kind') == 'publisher':
-                        d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
-                        d.text((225, 365), t._rtl('تصویر خبر'), font=t._font(asset_root,23,True),
+                        d.rounded_rectangle((110, 425, 340, 485), radius=20, fill=t.INK)
+                        d.text((225, 455), t._rtl('تصویر خبر'), font=t._font(asset_root,23,True),
                                fill='white', anchor='mm')
                     remaining = revealed
                     for row_index, row in enumerate(rows):
                         parts = row.split()
                         count = min(len(parts), remaining)
                         if count:
-                            d.text((930, top + row_index * line_height),
+                            d.text((900, top + row_index * line_height),
                                    t._rtl(' '.join(parts[:count])), font=font, fill=t.INK, anchor='rt')
                         remaining -= count
                     add(img, seconds, revealed > prior)
@@ -304,5 +353,6 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
               '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p','-c:v','libx264','-preset','veryfast','-crf','25','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
         except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
+
 
 

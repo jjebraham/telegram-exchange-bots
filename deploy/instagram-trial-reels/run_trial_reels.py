@@ -40,6 +40,7 @@ FILES = (
     'deploy/instagram-trial-reels/check_reel_motion.py',
     'deploy/instagram-trial-reels/configure_voice.py',
     'deploy/instagram-trial-reels/check_long_narration.py',
+    'deploy/instagram-trial-reels/check_reel_cover.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 
@@ -101,6 +102,7 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 
 
 

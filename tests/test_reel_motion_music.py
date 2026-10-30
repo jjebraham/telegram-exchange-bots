@@ -65,6 +65,7 @@ class MotionMusicChecks(unittest.TestCase):
                 p=Path(cmd[cmd.index('-filter_complex')-1])
                 with wave.open(str(p),'rb') as sound:
                     self.assertGreater(sound.getnframes(),24000*10)
+                    sound.setpos(round(.24*sound.getframerate()))
                     self.assertNotEqual(sound.readframes(100),b'\x00'*200)
                 seen.append(True)
             with patch.object(motion.subprocess,'run',side_effect=run):
@@ -103,3 +104,4 @@ class MotionMusicChecks(unittest.TestCase):
                 reel._probe_video('test.mp4','ffprobe')
 
 if __name__=='__main__': unittest.main()
+
