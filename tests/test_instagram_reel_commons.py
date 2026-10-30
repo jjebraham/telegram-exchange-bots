@@ -55,6 +55,31 @@ class CommonsChecks(unittest.TestCase):
             self.assertEqual(items[0]['author'], 'Example Photographer')
             self.assertTrue(items[0]['path'].is_file())
 
+    def test_commons_cc_by_2_and_cc0_deed_links(self):
+        examples = [
+            ('CC BY 2.0', 'https://creativecommons.org/licenses/by/2.0',
+             'https://creativecommons.org/licenses/by/2.0/'),
+            ('CC0', 'http://creativecommons.org/publicdomain/zero/1.0/deed.en',
+             'https://creativecommons.org/publicdomain/zero/1.0/'),
+        ]
+        for name, actual, canonical in examples:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                self.meta['LicenseShortName']['value'] = name
+                self.meta['LicenseUrl']['value'] = actual
+                payload = {'query':{'pages':{'1':self.page}}}
+                with patch.object(commons, '_read', self.read(payload)):
+                    items = commons.collect({'title_original':'Bitcoin update'}, Path(tmp), limit=1)
+                self.assertEqual(len(items), 1)
+                self.assertEqual(items[0]['license_url'], canonical)
+
+    def test_wrong_or_modified_license_links_rejected(self):
+        for value in ('https://creativecommons.org/licenses/by-sa/2.0/',
+                      'https://creativecommons.org.evil.example/licenses/by/2.0/',
+                      'https://creativecommons.org/licenses/by/2.0/?x=1',
+                      'https://creativecommons.org/licenses/by/2.0/deed.en/extra'):
+            with self.subTest(value=value):
+                self.assertFalse(commons._matching_license_url('CC BY 2.0', value))
+
     def test_unlicensed_wrong_host_and_incomplete_categories_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.meta['LicenseShortName']['value'] = 'unknown'
@@ -76,6 +101,5 @@ class CommonsChecks(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
 
 

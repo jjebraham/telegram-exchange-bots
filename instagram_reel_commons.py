@@ -25,10 +25,33 @@ TOPICS = (
     (('crypto', 'cryptocurrency', 'blockchain'), 'cryptocurrency blockchain', 'cryptocurrency'),
 )
 LICENSES = {
+    'CC BY 2.0': 'https://creativecommons.org/licenses/by/2.0/',
+    'CC BY 3.0': 'https://creativecommons.org/licenses/by/3.0/',
     'CC BY 4.0': 'https://creativecommons.org/licenses/by/4.0/',
     'CC0': 'https://creativecommons.org/publicdomain/zero/1.0/',
     'CC0 1.0': 'https://creativecommons.org/publicdomain/zero/1.0/',
 }
+
+
+def _matching_license_url(name, value):
+    """Accept Commons' canonical and translated deed links for known licences."""
+    canonical = LICENSES.get(name)
+    if not canonical:
+        return False
+    try:
+        actual = urlsplit(value)
+        expected = urlsplit(canonical)
+        if (actual.scheme not in {'http', 'https'}
+                or actual.hostname != 'creativecommons.org'
+                or actual.username or actual.password or actual.port is not None
+                or actual.query or actual.fragment):
+            return False
+        base = expected.path.rstrip('/')
+        path = actual.path.rstrip('/')
+        return path == base or bool(re.fullmatch(
+            re.escape(base) + r'/deed(?:\.[a-zA-Z0-9-]+)?', path))
+    except ValueError:
+        return False
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -112,7 +135,7 @@ def collect(story, output_dir, limit=7, *, seconds=30):
             relevant = (title+' '+description).casefold()
             if topic[1] not in relevant:
                 continue
-            if (not license_url or value('LicenseUrl').rstrip('/') != license_url.rstrip('/')
+            if (not license_url or not _matching_license_url(license_name, value('LicenseUrl'))
                     or value('Restrictions') or not 1 <= len(author) <= 120
                     or not 1 <= len(title) <= 140
                     or re.search(r'https?://|[\r\n<>]', author)
@@ -156,4 +179,3 @@ def collect(story, output_dir, limit=7, *, seconds=30):
                 target.unlink()
             continue
     return selected
-
