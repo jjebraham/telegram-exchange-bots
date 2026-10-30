@@ -1,9 +1,10 @@
 """Render Persian word reveals and locally generated typing sounds without AI calls."""
 from pathlib import Path
+from array import array
 import math
 import random
-import struct
 import subprocess
+import sys
 import tempfile
 import wave
 from PIL import Image, ImageDraw, ImageOps
@@ -36,12 +37,13 @@ def moving_image(original, phase, mode, size, background):
 def render(t, title, source, kind, story_type, chunks, destination, asset_root, media, music_path, ffmpeg, *, narration=None):
     pages=len(chunks)+2
     words=sum(len(s.split()) for s in chunks)
-    step=min(.14,(52-4.6-3-2.0*len(chunks))/max(words,1))
+    max_seconds = t.MAX_REEL_SECONDS
+    step=min(.14,(max_seconds-4.6-3-2.0*len(chunks))/max(words,1))
     if step<.045: raise t.TrialReelError('Story is too long for a legible animated Reel.')
     if narration is not None:
         if len(narration)!=len(chunks)+1:
             raise t.TrialReelError('Narration does not match Reel sections.')
-        if sum(item['duration'] for item in narration)+3.6 > 60:
+        if sum(item['duration'] for item in narration)+3.6 > max_seconds:
             raise t.TrialReelError('Narration is too long for a Reel; nothing was published.')
     with tempfile.TemporaryDirectory(prefix='kiani-motion-',dir=t.STATE) as tmp:
         root=Path(tmp); entries=[]; clicks=[]; elapsed=0.0
@@ -252,7 +254,7 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 d.text((225, 1324), t._rtl('تصویر خبر'), font=t._font(asset_root,23,True),
                        fill='white', anchor='mm')
         add(closing,3)
-        if not 12<=elapsed<=60: raise t.TrialReelError('Animated duration is outside Reel limits.')
+        if not 12<=elapsed<=max_seconds: raise t.TrialReelError('Animated duration is outside Reel limits.')
         playlist=root/'frames.txt'
         with playlist.open('w',encoding='utf-8') as out:
             for path,seconds in entries:
@@ -267,7 +269,9 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         sound=root/'keys.wav'
         with wave.open(str(sound),'wb') as out:
             out.setnchannels(1); out.setsampwidth(2); out.setframerate(rate)
-            out.writeframes(b''.join(struct.pack('<h',int(max(-1,min(1,s))*32767)) for s in signal))
+            samples=array('h',(int(max(-1,min(1,s))*32767) for s in signal))
+            if sys.byteorder != 'little': samples.byteswap()
+            out.writeframes(samples.tobytes())
         voice_path=None
         if narration:
             sample_rate=24000

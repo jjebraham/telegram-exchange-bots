@@ -33,6 +33,7 @@ PUBLIC_ROOT = Path('/var/www/peerexo.com/public/instagram-rates/trial-reels')
 PUBLIC_BASE = 'https://peerexo.com/instagram-rates/trial-reels'
 ZONE = ZoneInfo('Europe/Istanbul')
 MAX_PER_DAY = 5
+MAX_REEL_SECONDS = 180
 MAX_ADMIN_PER_DAY = 5
 AUTO_SLOTS = ('11:00', '13:00', '15:00', '17:00', '20:30')
 DIRECT_ADMIN_PER_DAY = 10
@@ -231,7 +232,7 @@ def _probe_video(path, ffprobe):
         raise TrialReelError('The rendered Reel could not be verified.') from None
     if (stream is None or audio is None or stream.get('width') != 1080 or stream.get('height') != 1920 or
             stream.get('pix_fmt') != 'yuv420p' or audio.get('sample_rate') != '48000' or
-            audio.get('channels') != 2 or not 12 <= duration <= 60):
+            audio.get('channels') != 2 or not 12 <= duration <= MAX_REEL_SECONDS):
         raise TrialReelError('Rendered video does not meet the reviewed Reel format.')
     return duration
 

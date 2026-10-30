@@ -1,4 +1,5 @@
 import sys
+import json
 import unittest
 import tempfile
 import types
@@ -71,5 +72,34 @@ class MotionMusicChecks(unittest.TestCase):
                   ['متن اول این آزمایش برای خواندن خبر است.','متن دوم آزمایش برای ادامه است.'],
                   root/'out.mp4',assets,media,None,'ffmpeg',narration=segments)
             self.assertEqual(seen,[True])
+
+    def test_long_narration_and_video_probe_allow_over_one_minute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            reel.STATE=root
+            narration=[]
+            for i, seconds in enumerate((2,35,35)):
+                path=root/('long-voice'+str(i)+'.wav')
+                with wave.open(str(path),'wb') as w:
+                    w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+                    w.writeframes(b'\x00\x00'*(24000*seconds))
+                narration.append({'path':path,'duration':seconds})
+            assets=Path(__import__('os').environ.get('KIANI_TEST_ASSETS',str(ROOT)))
+            def check_run(cmd,**kwargs):
+                with wave.open(cmd[cmd.index('-filter_complex')-1],'rb') as w:
+                    self.assertGreater(w.getnframes()/w.getframerate(),60)
+            with patch.object(motion.subprocess,'run',side_effect=check_run):
+                motion.render(reel,'نمونه خبر','منبع','crypto','hard_news',
+                    ['این یک بخش خبری است.','این بخش دیگری از خبر است.'],
+                    root/'out.mp4',assets,[],None,'ffmpeg',narration=narration)
+        data={'streams':[{'codec_name':'h264','width':1080,'height':1920,'pix_fmt':'yuv420p'},
+                         {'codec_name':'aac','sample_rate':'48000','channels':2}],
+              'format':{'duration':'80'}}
+        with patch.object(reel.subprocess,'run',return_value=types.SimpleNamespace(stdout=json.dumps(data))):
+            self.assertEqual(reel._probe_video('test.mp4','ffprobe'),80)
+        data['format']['duration']='181'
+        with patch.object(reel.subprocess,'run',return_value=types.SimpleNamespace(stdout=json.dumps(data))):
+            with self.assertRaises(reel.TrialReelError):
+                reel._probe_video('test.mp4','ffprobe')
 
 if __name__=='__main__': unittest.main()

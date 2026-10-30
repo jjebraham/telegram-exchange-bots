@@ -39,6 +39,7 @@ FILES = (
     'deploy/instagram-trial-reels/configure_stock.py',
     'deploy/instagram-trial-reels/check_reel_motion.py',
     'deploy/instagram-trial-reels/configure_voice.py',
+    'deploy/instagram-trial-reels/check_long_narration.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 
