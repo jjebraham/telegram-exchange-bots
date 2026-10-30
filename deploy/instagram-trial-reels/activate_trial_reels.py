@@ -100,7 +100,7 @@ def main():
         raise RuntimeError('The reviewed runtime is outside the pinned private source directory.')
     if not all((runtime / name).is_file() and not (runtime / name).is_symlink() for name in (
             'instagram_trial_reels.py', 'instagram_trial_music.py', 'instagram_reel_motion.py', 'instagram_reel_media.py', 'instagram_reel_source_image.py',
-            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_reel_commons.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py',
+            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_reel_commons.py', 'instagram_reel_stock.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py',
             'instagram_direct_reel_retention.py')):
         raise RuntimeError('A required Trial Reel runtime file is missing or unsafe.')
 
@@ -287,7 +287,6 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel activation stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
-
 
 
 

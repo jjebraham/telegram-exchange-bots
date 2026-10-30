@@ -408,6 +408,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     if not _article_allowed(origin, article_time, time.time()):
         raise TrialReelError('The original article is outside the fresh 24-hour window.')
     normalized = dict(story)
+    normalized['stock_category'] = kind
     for field, limit in (('source_url', 2048), ('source_name', 180), ('title_original', 800), ('title_fa', 500), ('summary_fa', 12000)):
         normalized[field] = _safe_text(normalized.get(field), limit)
     if normalized.get('source_scope') == 'coindesk_rss_summary':
@@ -461,6 +462,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     source_image_path = STATE / ('source-image-' + trial_id + '.jpg')
     extra_image_paths = []
     commons_temp = None
+    stock_temp = None
+    stock_used = []
     try:
         _live_guard()
         if normalized.get('image_url'):
@@ -516,6 +519,35 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 print('Publisher image unavailable:', type(exc).__name__, flush=True)
                 raise TrialReelError('تصویر اصلی خبر در دسترس نیست؛ ریل بدون تصویر منتشر نشد.') from None
         if len(media) < 8:
+            try:
+                from instagram_reel_stock import collect as collect_stock
+                stock_temp = tempfile.TemporaryDirectory(prefix='stock-' + trial_id + '-', dir=STATE)
+                stock = collect_stock(normalized, Path(stock_temp.name), origin=origin, state=STATE, limit=8-len(media))
+                seen = {hashlib.sha256(Path(item['path']).read_bytes()).hexdigest() for item in media}
+                providers_credited = set()
+                for item in stock:
+                    digest = hashlib.sha256(Path(item['path']).read_bytes()).hexdigest()
+                    if digest in seen:
+                        continue
+                    provider = item['provider']
+                    label = 'Pexels' if provider == 'pexels' else 'Pixabay'
+                    header = ('\n\nPhotos provided by Pexels: https://www.pexels.com' if provider == 'pexels'
+                              else '\n\nIllustrations from Pixabay: https://pixabay.com')
+                    credit = ('\n' + label + ': ' + item['author'] + ' — ' + item['source_url'])
+                    addition = (header if provider not in providers_credited else '') + credit
+                    if len(caption) + len(addition) > 1650:
+                        continue
+                    caption += addition
+                    providers_credited.add(provider)
+                    seen.add(digest)
+                    media.append(item)
+                    stock_used.append(item)
+                if stock_used:
+                    _update(con, trial_id, caption=caption, updated_at=time.time())
+                print('Stock illustrations selected:', len(stock_used), flush=True)
+            except Exception as exc:
+                print('Stock illustrations unavailable:', type(exc).__name__, flush=True)
+        if len(media) < 8:
             commons_added = False
             try:
                 from instagram_reel_commons import collect as collect_illustrations
@@ -562,6 +594,12 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
         duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None, media=media)
+        if stock_used:
+            try:
+                from instagram_reel_stock import mark_used
+                mark_used(stock_used, state=STATE)
+            except Exception as exc:
+                print('Stock image history unavailable:', type(exc).__name__, flush=True)
         if origin in {'daily_top_story', 'daily_direct'} and time.time() - article_time > 86400:
             raise TrialReelError('The article expired while its Reel was being rendered.')
         public_url = public_base.rstrip('/') + '/' + quote(video_path.name)
@@ -616,6 +654,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 extra_path.unlink()
         if commons_temp is not None:
             commons_temp.cleanup()
+        if stock_temp is not None:
+            stock_temp.cleanup()
 
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,

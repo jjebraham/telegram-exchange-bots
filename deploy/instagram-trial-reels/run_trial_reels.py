@@ -19,6 +19,7 @@ FILES = (
     'report_reel_usage.py',
     'instagram_reel_media.py',
     'instagram_reel_commons.py',
+    'instagram_reel_stock.py',
     'instagram_reel_source_image.py',
     'instagram_reel_motion.py',
     'instagram_ranked_news.py',
@@ -34,6 +35,7 @@ FILES = (
     'deploy/instagram-trial-reels/activate_trial_reels.py',
     'deploy/instagram-trial-reels/check_multi_images.py',
     'deploy/instagram-trial-reels/check_auto_images.py',
+    'deploy/instagram-trial-reels/configure_stock.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 
