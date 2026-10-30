@@ -135,6 +135,7 @@ def main():
     from instagram_reel_voice import configured as voice_configured
     if not voice_configured():
         raise RuntimeError('Configure and test Persian narration before installation.')
+    print('Persian narration configured; private local usage cap is 400,000 counted characters per UTC month.', flush=True)
     module_path = runtime / 'instagram_manual_news_intake.py'
     spec = importlib.util.spec_from_file_location('manual_news_intake', module_path)
     module = importlib.util.module_from_spec(spec)
