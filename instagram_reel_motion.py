@@ -120,7 +120,7 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 interlude.paste(image,(96,420))
                 d=ImageDraw.Draw(interlude)
                 d.rounded_rectangle((110,440,340,500),radius=20,fill=t.INK)
-                d.text((225,470),t._rtl('تصویر نمادین'),font=t._font(asset_root,23,True),fill='white',anchor='mm')
+                d.text((225,470),t._rtl('تصویر خبر' if item.get('kind')=='publisher' else 'تصویر نمادین'),font=t._font(asset_root,23,True),fill='white',anchor='mm')
                 add(interlude,1.2)
             blank=t._frame(title,'',kind,page,pages,asset_root,story_type)
             draw=ImageDraw.Draw(blank); font=t._font(asset_root,56)

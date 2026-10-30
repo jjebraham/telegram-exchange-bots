@@ -66,7 +66,8 @@ def replace_trial_cron(original, commands):
             raise RuntimeError('The existing Trial Reel cron block is incomplete or repeated.')
         lines = lines[:starts[0]] + lines[ends[0] + 1:]
     if any(('run-kiani-instagram-trial-reels.sh' in line or
-            'run-kiani-instagram-direct-reels.sh' in line) and not line.lstrip().startswith('#') for line in lines):
+            'run-kiani-instagram-direct-reels.sh' in line or
+            'run-kiani-instagram-reel-schedule.sh' in line) and not line.lstrip().startswith('#') for line in lines):
         raise RuntimeError('A Trial Reel launcher is scheduled outside its managed cron block.')
     if lines and lines[-1].strip():
         lines.append('')
@@ -185,10 +186,11 @@ def main():
         direct_log = home / 'kiani-instagram-direct-reels-cron.log'
         original = cron_read()
         require_manual_cron(original, manual_launcher, manual_log)
-        slots = ((11, 0), (13, 0), (15, 0), (17, 0), (20, 30))
-        daily_commands = [f'{minute} {hour} * * * {shlex.quote(str(daily_launcher))} --slot {hour:02d}:{minute:02d} >> {shlex.quote(str(daily_log))} 2>&1' for hour, minute in slots]
-        direct_slots = ((12, 0), (18, 0))
-        daily_commands += [f'{minute} {hour} * * * {shlex.quote(str(direct_launcher))} --slot {hour:02d}:{minute:02d} >> {shlex.quote(str(direct_log))} 2>&1' for hour, minute in direct_slots]
+        # Debian cron uses the daemon timezone even when CRON_TZ is present.
+        # Tick each minute and check Istanbul wall time in the launcher.
+        tick_launcher = home / 'run-kiani-instagram-reel-schedule.sh'
+        tick_log = home / 'kiani-instagram-reel-scheduler.log'
+        daily_commands = [f'* * * * * {shlex.quote(str(tick_launcher))} >> {shlex.quote(str(tick_log))} 2>&1']
         replacement = replace_trial_cron(original, daily_commands)
         if subprocess.run(['systemctl', 'is-active', '--quiet', 'cron'], timeout=15).returncode:
             raise RuntimeError('Cron stopped during setup; nothing was scheduled.')
@@ -204,7 +206,16 @@ def main():
             shlex.quote(str(runtime / 'instagram_trial_reels.py')) + ' --direct-daily --runtime ' + \
             shlex.quote(str(runtime)) + ' --assets ' + shlex.quote(str(publisher)) + ' "$@"\n'
 
-        paths = (manual_launcher, daily_launcher, direct_launcher)
+        # One local-time tick dispatches at most one configured slot per minute.
+        tick_script = prefix + 'slot=$(date +%H:%M)\n' + \
+            'case "$slot" in\n' + \
+            '  11:00|13:00|15:00|17:00|20:30) exec ' + shlex.quote(str(daily_launcher)) + \
+            ' --slot "$slot" >> ' + shlex.quote(str(daily_log)) + ' 2>&1 ;;\n' + \
+            '  12:00|18:00) exec ' + shlex.quote(str(direct_launcher)) + \
+            ' --slot "$slot" >> ' + shlex.quote(str(direct_log)) + ' 2>&1 ;;\n' + \
+            'esac\n'
+
+        paths = (manual_launcher, daily_launcher, direct_launcher, tick_launcher)
         old_files = {}
         for path in paths:
             if path.exists():
@@ -226,6 +237,7 @@ def main():
             atomic(manual_launcher, manual_script.encode(), 0o700)
             atomic(daily_launcher, daily_script.encode(), 0o700)
             atomic(direct_launcher, direct_script.encode(), 0o700)
+            atomic(tick_launcher, tick_script.encode(), 0o700)
             if replacement != original:
                 subprocess.run(['crontab', '-'], input=replacement, check=True,
                                capture_output=True, timeout=15)

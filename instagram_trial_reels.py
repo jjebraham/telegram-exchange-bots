@@ -454,6 +454,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 raise TrialReelError('Automatic Trial Reel slot reservation changed.')
     music_path = STATE / ('music-' + trial_id + '.ogg')
     source_image_path = STATE / ('source-image-' + trial_id + '.jpg')
+    extra_image_paths = []
     try:
         _live_guard()
         if normalized.get('image_url'):
@@ -462,6 +463,22 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 from instagram_reel_source_image import fetch as fetch_source_image
                 fetch_source_image(image_engine, normalized['source_url'], normalized['image_url'], source_image_path)
                 media.insert(0, {'path':source_image_path, 'kind':'publisher'})
+                # A few article figures enrich later cards; failed optional
+                # images never invalidate the verified lead image.
+                candidates = normalized.get('image_urls', [])
+                if isinstance(candidates, list):
+                    for candidate in candidates[:5]:
+                        if not isinstance(candidate, str) or candidate == normalized['image_url'] or len(extra_image_paths) >= 2:
+                            continue
+                        extra_path = STATE / ('source-image-' + trial_id + '-' + str(len(extra_image_paths) + 1) + '.jpg')
+                        try:
+                            fetch_source_image(image_engine, normalized['source_url'], candidate, extra_path)
+                            extra_image_paths.append(extra_path)
+                            media.insert(len(extra_image_paths), {'path':extra_path, 'kind':'publisher'})
+                        except Exception as extra_exc:
+                            print('Optional publisher image unavailable:', type(extra_exc).__name__, flush=True)
+                            if extra_path.is_file() and not extra_path.is_symlink():
+                                extra_path.unlink()
                 caption += '\n\nتصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
                 if len(caption)>2200: raise TrialReelError('Caption with image credit is too long.')
                 _update(con, trial_id, caption=caption, updated_at=time.time())
@@ -540,6 +557,9 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             music_path.unlink()
         if source_image_path.is_file() and not source_image_path.is_symlink():
             source_image_path.unlink()
+        for extra_path in extra_image_paths:
+            if extra_path.is_file() and not extra_path.is_symlink():
+                extra_path.unlink()
 
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,
@@ -727,7 +747,7 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
             title, summary = ranked.translate(con, row)
         story = dict(source_url=row['source_url'], source_name=row['source_name'],
             title_original=row['title_original'], title_fa=title, summary_fa=summary,
-            image_url=row.get('image_url'),
+            image_url=row.get('image_url'), image_urls=row.get('image_urls', []),
             article_published_at=row['article_published_at'],
             story_type=row['assessment']['story_type'])
         trial_id = create_reel(story, kind, origin=origin, asset_root=asset_root,

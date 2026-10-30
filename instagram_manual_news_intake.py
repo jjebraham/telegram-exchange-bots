@@ -544,7 +544,7 @@ def process_trial_submission(con, record, runtime):
             title, summary = ranked.translate(assessment_db, row)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
-                image_url=material.get('image_url'),
+                image_url=material.get('image_url'), image_urls=material.get('image_urls', []),
                 article_published_at=material['article_published_at'],
                 story_type=row['assessment']['story_type'])
             asset_root = Path.home() / 'kiani-instagram-publisher'
@@ -615,7 +615,7 @@ def process_direct_reel_submission(con, record, runtime):
             title, summary = ranked.translate(assessment_db, row)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
-                image_url=material.get('image_url'), article_published_at=material['article_published_at'],
+                image_url=material.get('image_url'), image_urls=material.get('image_urls', []), article_published_at=material['article_published_at'],
                 story_type=row['assessment']['story_type'])
             asset_root = Path.home() / 'kiani-instagram-publisher'
             if not asset_root.is_dir():

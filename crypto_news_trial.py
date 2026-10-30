@@ -181,6 +181,32 @@ class Dates(HTMLParser):
                     self.visit(child, depth + 1)
 
 
+class ReelArticleFigures(HTMLParser):
+    """Gather a few image URLs only from figures inside article content."""
+    def __init__(self):
+        super().__init__()
+        self.article_depth = 0
+        self.figure_depth = 0
+        self.urls = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in {'article', 'main'}:
+            self.article_depth += 1
+        if self.article_depth and tag == 'figure':
+            self.figure_depth += 1
+        if self.article_depth and self.figure_depth and tag == 'img' and len(self.urls) < 8:
+            value = attrs.get('data-src') or attrs.get('src') or ''
+            if isinstance(value, str) and value and not value.startswith('data:'):
+                self.urls.append(value)
+
+    def handle_endtag(self, tag):
+        if tag == 'figure' and self.figure_depth:
+            self.figure_depth -= 1
+        if tag in {'article', 'main'} and self.article_depth:
+            self.article_depth -= 1
+
+
 def source_material(story, now, *, admin_override=False):
     url = checked_url(story['source_url'], article=True)
     request = Request(url, headers={'User-Agent': 'KianiExchange-NewsSelectorTrial/1.0', 'Accept': 'text/html'})
@@ -193,6 +219,8 @@ def source_material(story, now, *, admin_override=False):
     dates, article = Dates(url), ArticleParser()
     dates.feed(html)
     article.feed(html)
+    figures = ReelArticleFigures()
+    figures.feed(html)
     stamps = [(kind, raw, parse_date(raw)) for kind, raw in dates.dates if isinstance(raw, str)]
     stamps = [(kind, raw, stamp) for kind, raw, stamp in stamps
               if stamp is not None and math.isfinite(stamp) and stamp > 0]
@@ -217,8 +245,20 @@ def source_material(story, now, *, admin_override=False):
             image = checked_url(urljoin(url, image))
         except (NewsError, ValueError):
             image = None
+    image_urls = []
+    for candidate in ([image] if image else []) + figures.urls:
+        try:
+            candidate = checked_url(urljoin(url, candidate))
+        except (NewsError, ValueError):
+            continue
+        if candidate not in image_urls:
+            image_urls.append(candidate)
+        if len(image_urls) >= 5:
+            break
+    if not image and image_urls:
+        image = image_urls[0]
     return dict(story, source_url=url, source_name=publisher(url), title_original=title,
-                source_text=passage[:6500], image_url=image, article_published_at=published,
+                source_text=passage[:6500], image_url=image, image_urls=image_urls, article_published_at=published,
                 date_evidence={'field': kind, 'value': raw},
                 article_date=datetime.fromtimestamp(published, timezone.utc).date().isoformat() if published else '')
 

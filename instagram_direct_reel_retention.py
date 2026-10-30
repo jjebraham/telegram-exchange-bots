@@ -76,12 +76,14 @@ def _note(con, media_id, status, *, views=None, observed=None, error=None, evide
 
 
 def _identity(graph, row):
+    # Meta's publication timestamp precedes the local publish response; allow
+    # a bounded delay while still verifying media ID, owner and Reel type.
     media_id = identifier(row['media_id'])
     metadata = graph.get(media_id, params={'fields': 'id,owner,media_type,media_product_type,timestamp'})
     if (str(metadata.get('id')) != media_id or not isinstance(metadata.get('owner'), dict) or
         str(metadata['owner'].get('id')) != graph.account_id or
         metadata.get('media_type') != 'VIDEO' or metadata.get('media_product_type') != 'REELS' or
-        abs(moment(metadata.get('timestamp')) - row['published_at']) > 1):
+        not 0 <= row['published_at'] - moment(metadata.get('timestamp')) <= 120):
         raise InsightsError('Meta did not confirm the same owned direct Reel.')
     return metadata
 

@@ -9,9 +9,11 @@ LIMIT=10_000_000
 
 def _checked(engine, article_url, image_url):
     source=engine.publisher(engine.checked_url(article_url,article=True))
-    image=engine.checked_url(image_url,article=True)
+    image=engine.checked_url(image_url,article=False)
     parts=urlsplit(image)
-    if not source or engine.publisher(image)!=source or parts.scheme!='https' or parts.username or parts.password or parts.port not in (None,443):
+    approved_cdns = {'Cointelegraph': {'s3-images.ctmedia.io'}}
+    trusted_host = engine.publisher(image) == source or parts.hostname in approved_cdns.get(source, set())
+    if not source or not trusted_host or parts.scheme!='https' or parts.username or parts.password or parts.port not in (None,443):
         raise ValueError('Image host is not verified for this publisher')
     return image
 
@@ -25,10 +27,15 @@ def fetch(engine, article_url, image_url, destination):
     request=Request(first,headers={'User-Agent':'KianiExchange-NewsSelectorTrial/1.0','Accept':'image/jpeg,image/png,image/webp'})
     with build_opener(Redirects()).open(request,timeout=20) as response:
         _checked(engine,article_url,response.geturl())
-        if response.headers.get_content_type() not in {'image/jpeg','image/png','image/webp'}:
-            raise ValueError('Unsupported image content type')
+        content_type = response.headers.get_content_type()
         raw=response.read(LIMIT+1)
     if not raw or len(raw)>LIMIT: raise ValueError('Image is empty or too large')
+    # CryptoSlate serves WebP bytes as text/plain; require an exact WebP
+    # signature and verify the actual image with Pillow below.
+    webp = len(raw) >= 12 and raw[:4] == b'RIFF' and raw[8:12] == b'WEBP'
+    if content_type not in {'image/jpeg','image/png','image/webp'}:
+        if not (engine.publisher(article_url) == 'CryptoSlate' and content_type == 'text/plain' and webp):
+            raise ValueError('Unsupported image content type')
     with Image.open(BytesIO(raw)) as image:
         if image.width<256 or image.height<128 or image.width*image.height>40_000_000:
             raise ValueError('Image dimensions are not suitable')
