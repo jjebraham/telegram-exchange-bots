@@ -11,7 +11,12 @@ def _checked(engine, article_url, image_url):
     source=engine.publisher(engine.checked_url(article_url,article=True))
     image=engine.checked_url(image_url,article=False)
     parts=urlsplit(image)
-    approved_cdns = {'Cointelegraph': {'s3-images.ctmedia.io'}}
+    approved_cdns = {
+        'Cointelegraph': {'s3-images.ctmedia.io'},
+        'CNBC': {'image.cnbcfm.com'},
+        'Reuters via TradingView': {'s.tradingview.com'},
+        'ABC News US': {'i.abcnewsfe.com'},
+    }
     coindesk_cdn = (source == 'CoinDesk' and parts.hostname == 'cdn.sanity.io'
                     and parts.path.startswith('/images/s3y3vcno/production/'))
     trusted_host = (engine.publisher(image) == source or coindesk_cdn
@@ -51,7 +56,6 @@ def fetch(engine, article_url, image_url, destination, *, timeout=20):
         rendered.save(target,format='JPEG',quality=93)
         target.chmod(0o600)
     return target
-
 
 
 

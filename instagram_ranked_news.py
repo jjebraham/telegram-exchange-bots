@@ -239,7 +239,7 @@ This is only a source-reading shortlist; final scoring uses original passages.''
     return [g for g in groups if g.lead.id in selected]
 
 
-def material_for(group, telegram, kind, blocked, now):
+def material_for(group, telegram, kind, blocked, now, *, material_filter=None):
     candidates = [i for i in group.items if approved_item(i)
                   and (kind != 'crypto' or i.link in telegram)]
     attempts = []
@@ -274,6 +274,8 @@ def material_for(group, telegram, kind, blocked, now):
             result = engine.source_material(row, now)
             if canonical_url(result['source_url']) in blocked:
                 raise NewsError('Resolved URL was already published or is unresolved.')
+            if material_filter is not None:
+                material_filter(result)
             result['coverage_outlets'] = sorted(coverage(group))
             result['discovery_urls'] = sorted({i.link for i in group.items})
             result['related_titles'] = sorted({i.title for i in group.items})
@@ -310,7 +312,7 @@ direct Iran/Turkey consequences earn25. Do not invent regional links.'''
     engine.GROUP_PROMPT = BASE_GROUP_PROMPT.replace('cryptocurrency reports', kind + ' news reports').replace('30-day', '14-day')
 
 
-def rank_events(con, kind, now, checkpoint=None, *, trial_relaxed=False):
+def rank_events(con, kind, now, checkpoint=None, *, trial_relaxed=False, material_filter=None):
     configure_engine(kind)
     blocked, history = histories(now)
     groups, telegram, counts = discovery(con, kind, now)
@@ -337,7 +339,9 @@ def rank_events(con, kind, now, checkpoint=None, *, trial_relaxed=False):
         audit['shortlist_passes'].append([g.lead.id for g in selected])
         print(f'{kind}: approved-source groups {len(readable)}/{len(groups)}; source pass {len(audit["shortlist_passes"])}.', flush=True)
         with ThreadPoolExecutor(max_workers=4) as pool:
-            pending = {pool.submit(material_for, g, telegram, kind, blocked, now): g for g in selected}
+            pending = {pool.submit(material_for, g, telegram, kind, blocked, now,
+                                   **({'material_filter': material_filter} if material_filter else {})): g
+                       for g in selected}
             for index, task in enumerate(as_completed(pending), 1):
                 group = pending[task]
                 try:
@@ -797,4 +801,5 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, NewsError) else f'ERROR: Ranked news stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 

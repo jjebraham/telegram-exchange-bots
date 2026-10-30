@@ -33,6 +33,7 @@ FILES = (
     'selector_trial_runtime/PINNED.md',
     'deploy/instagram-trial-reels/activate_trial_reels.py',
     'deploy/instagram-trial-reels/check_multi_images.py',
+    'deploy/instagram-trial-reels/check_auto_images.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 
@@ -94,7 +95,6 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
-
 
 
 

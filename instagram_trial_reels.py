@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from urllib.parse import quote
@@ -394,7 +395,7 @@ def check_admin_daily_limit(reel_mode='trial'):
                              istanbul_day(), reel_mode)
 
 def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submission_id=None, scheduled_slot=None,
-                public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE):
+                public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE, _validated_image=None):
     """Render a direct or Trial Reel and persist its Meta container before polling."""
     allowed_origins = ({'daily_top_story', 'admin_link'} if reel_mode == 'trial'
                        else {'daily_direct', 'admin_direct'})
@@ -466,7 +467,15 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             try:
                 import crypto_news_trial as image_engine
                 from instagram_reel_source_image import fetch as fetch_source_image
-                fetch_source_image(image_engine, normalized['source_url'], normalized['image_url'], source_image_path)
+                if _validated_image is not None:
+                    checked = Path(_validated_image)
+                    if checked.is_symlink() or not checked.is_file() or checked.stat().st_size > 10_000_000:
+                        raise ValueError('The prechecked publisher image is unavailable.')
+                    with checked.open('rb') as src, source_image_path.open('xb') as dst:
+                        shutil.copyfileobj(src, dst)
+                    source_image_path.chmod(0o600)
+                else:
+                    fetch_source_image(image_engine, normalized['source_url'], normalized['image_url'], source_image_path)
                 media.insert(0, {'path':source_image_path, 'kind':'publisher'})
                 # Optional article figures are bounded by count and time;
                 # duplicate or unavailable images never invalidate the lead.
@@ -762,7 +771,45 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
         if not reserved:
             print(f'This automatic {slot_label} slot was already recorded.', flush=True)
             return None
+    image_temp = None
     try:
+        # Avoid running paid selection when Meta capacity is already unavailable.
+        _live_guard()
+        image_temp = tempfile.TemporaryDirectory(prefix='auto-image-check-', dir=STATE)
+        image_dir = Path(image_temp.name)
+        image_deadline = [None]
+        deadline_lock = threading.Lock()
+        def check_material_image(material):
+            from instagram_reel_source_image import fetch
+            from instagram_crypto_news import NewsError
+            if _source_key(material['source_url']) in used_sources:
+                raise NewsError('Reel source already used or in progress.')
+            with deadline_lock:
+                if image_deadline[0] is None:
+                    image_deadline[0] = time.monotonic() + 90
+                deadline = image_deadline[0]
+            urls = [material.get('image_url')]
+            extra = material.get('image_urls')
+            if isinstance(extra, list):
+                urls.extend(extra)
+            seen = set()
+            for url in urls:
+                if not isinstance(url, str) or not url or url in seen:
+                    continue
+                seen.add(url)
+                if len(seen) > 3 or time.monotonic() >= deadline:
+                    break
+                path = image_dir / (uuid.uuid4().hex + '.jpg')
+                try:
+                    fetch(engine, material['source_url'], url, path,
+                          timeout=max(1, min(5, deadline - time.monotonic())))
+                    material['image_url'] = url
+                    material['_reel_checked_image'] = str(path)
+                    return
+                except Exception:
+                    if path.is_file() and not path.is_symlink():
+                        path.unlink()
+            raise NewsError('No verified usable publisher image for automatic Reel.')
         import crypto_news_trial as engine
         import instagram_ranked_news as ranked
         candidates = []
@@ -773,11 +820,13 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
         # history cannot change while the daily cross-category ranking runs.
         with locks('crypto'):
             for kind in ('crypto', 'economy'):
+                image_deadline[0] = None
                 configure_engine(kind)
                 source_db = ranked.SOURCES[kind]
                 with database(source_db) as con:
                     engine.init_trial(con)
-                    rows, audit = rank_events(con, kind, now, trial_relaxed=True)
+                    rows, audit = rank_events(con, kind, now, trial_relaxed=True,
+                                              material_filter=check_material_image)
                     rows = [item for item in rows if _source_key(item['source_url']) not in used_sources]
                     if rows:
                         selected = select_main_stories(con, rows, kind, 1, now, audit, lambda: None)
@@ -798,7 +847,7 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
             article_published_at=row['article_published_at'],
             story_type=row['assessment']['story_type'])
         trial_id = create_reel(story, kind, origin=origin, asset_root=asset_root,
-            reel_mode=reel_mode, scheduled_slot=slot)
+            reel_mode=reel_mode, scheduled_slot=slot, _validated_image=row['_reel_checked_image'])
         with _connect() as con:
             con.execute("UPDATE scheduled_runs SET status='container_processing',updated_at=? WHERE posted_day=? AND slot=? AND status='selecting'", (time.time(), day, slot))
         return trial_id
@@ -807,6 +856,9 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
             con.execute("UPDATE scheduled_runs SET status='failed',error_type=?,updated_at=? WHERE posted_day=? AND slot=? AND trial_id IS NULL",
                         (type(exc).__name__, time.time(), day, slot))
         raise
+    finally:
+        if image_temp is not None:
+            image_temp.cleanup()
 
 @track_reel_usage('daily_top_story')
 def run_daily(runtime_root, asset_root, slot):
@@ -842,7 +894,6 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
 
 
 
