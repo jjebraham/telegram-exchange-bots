@@ -355,4 +355,3 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
 
 
-

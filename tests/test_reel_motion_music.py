@@ -104,4 +104,3 @@ class MotionMusicChecks(unittest.TestCase):
                 reel._probe_video('test.mp4','ffprobe')
 
 if __name__=='__main__': unittest.main()
-
