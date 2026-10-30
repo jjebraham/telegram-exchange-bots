@@ -12,7 +12,10 @@ def _checked(engine, article_url, image_url):
     image=engine.checked_url(image_url,article=False)
     parts=urlsplit(image)
     approved_cdns = {'Cointelegraph': {'s3-images.ctmedia.io'}}
-    trusted_host = engine.publisher(image) == source or parts.hostname in approved_cdns.get(source, set())
+    coindesk_cdn = (source == 'CoinDesk' and parts.hostname == 'cdn.sanity.io'
+                    and parts.path.startswith('/images/s3y3vcno/production/'))
+    trusted_host = (engine.publisher(image) == source or coindesk_cdn
+                    or parts.hostname in approved_cdns.get(source, set()))
     if not source or not trusted_host or parts.scheme!='https' or parts.username or parts.password or parts.port not in (None,443):
         raise ValueError('Image host is not verified for this publisher')
     return image
@@ -48,4 +51,6 @@ def fetch(engine, article_url, image_url, destination):
         rendered.save(target,format='JPEG',quality=93)
         target.chmod(0o600)
     return target
+
+
 

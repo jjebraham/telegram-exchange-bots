@@ -345,6 +345,8 @@ def _caption(story, kind, reel_mode='trial'):
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
     text = ('صرافی کیانی | ' + label + '\n\n' + story['title_fa'] + '\n\nمنبع: ' +
         story['source_name'] + '\n' + story['source_url'])
+    if story.get('source_scope') == 'coindesk_rss_summary':
+        text += '\n\nاین ویدئو بر اساس عنوان و خلاصه فید رسمی کوین‌دسک تهیه شده است.'
     if reel_mode == 'trial':
         text += '\n\nاین ویدئو به‌صورت Trial Reel منتشر شده است.'
     if len(text) > 2200:
@@ -407,6 +409,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     normalized = dict(story)
     for field, limit in (('source_url', 2048), ('source_name', 180), ('title_original', 800), ('title_fa', 500), ('summary_fa', 12000)):
         normalized[field] = _safe_text(normalized.get(field), limit)
+    if normalized.get('source_scope') == 'coindesk_rss_summary':
+        normalized['summary_fa'] = 'خلاصه فید رسمی کوین‌دسک: ' + normalized['summary_fa']
     normalized['story_type'] = normalized.get('story_type', 'hard_news')
     if normalized['story_type'] not in {'hard_news', 'opinion', 'forecast', 'roundup', 'promotional'}:
         raise TrialReelError('The selected story type is not eligible for Trial Reels.')
@@ -795,6 +799,8 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
+
 
 
 

@@ -19,13 +19,15 @@ import sys
 import time
 from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.error import HTTPError
+from xml.etree import ElementTree
 import uuid
 from zoneinfo import ZoneInfo
 
 # Preview helpers are bundled from the reviewed economy/news revision, since
 # independently deployed feature branches do not all contain those modules.
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'selector_trial_runtime'))
-from economy_news_picker import parse_date
+from economy_news_picker import clean_html, parse_date
 from economy_news_translation import ArticleParser, load_translation_env, request_completion, translate
 from instagram_crypto_news import NewsError, canonical_url, clean_text, database, sync_telegram
 
@@ -207,12 +209,90 @@ class ReelArticleFigures(HTMLParser):
             self.article_depth -= 1
 
 
+class CoinDeskFeedMissing(NewsError):
+    pass
+
+
+def coindesk_rss_material(story, article_url, now):
+    """Use a matching official feed summary only for an admin-selected Reel."""
+    feed_url = 'https://www.coindesk.com/arc/outboundfeeds/rss/'
+
+    class FeedRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            parts = urlsplit(newurl)
+            if (parts.scheme != 'https' or parts.hostname not in {'www.coindesk.com', 'coindesk.com'}
+                    or parts.username or parts.password or parts.port not in (None, 443)
+                    or parts.path.rstrip('/') != '/arc/outboundfeeds/rss'):
+                raise NewsError('CoinDesk official feed redirect is not approved.')
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    request = Request(feed_url, headers={'User-Agent': 'KianiExchange-NewsSelectorTrial/1.0',
+                                        'Accept': 'application/rss+xml, application/xml, text/xml'})
+    with build_opener(FeedRedirects()).open(request, timeout=18) as response:
+        endpoint = urlsplit(response.geturl())
+        if (endpoint.scheme != 'https' or endpoint.hostname not in {'www.coindesk.com', 'coindesk.com'}
+                or endpoint.path.rstrip('/') != '/arc/outboundfeeds/rss'):
+            raise NewsError('CoinDesk official feed endpoint changed.')
+        raw = response.read(2_000_001)
+    if not raw or len(raw) > 2_000_000 or b'<!DOCTYPE' in raw.upper():
+        raise NewsError('CoinDesk official feed response is invalid.')
+    try:
+        root = ElementTree.fromstring(raw)
+    except (ElementTree.ParseError, ValueError):
+        raise NewsError('CoinDesk official feed is not valid XML.') from None
+    requested = urlsplit(checked_url(article_url, article=True))
+    if requested.scheme != 'https' or requested.hostname not in {'www.coindesk.com', 'coindesk.com'}:
+        raise NewsError('CoinDesk article URL is invalid.')
+    matches = []
+    for item in root.findall('./channel/item')[:100]:
+        try:
+            link = checked_url(item.findtext('link') or '', article=True)
+            parts = urlsplit(link)
+            if (parts.scheme == 'https' and parts.hostname in {'www.coindesk.com', 'coindesk.com'}
+                    and parts.path.rstrip('/') == requested.path.rstrip('/')):
+                matches.append((item, link))
+        except (NewsError, ValueError):
+            continue
+    if len(matches) != 1:
+        raise CoinDeskFeedMissing('CoinDesk article is not uniquely available in its current official feed.')
+    item, link = matches[0]
+    title = clean_html(item.findtext('title') or '')
+    summary = clean_html(item.findtext('description') or '')
+    if not 5 <= len(title) <= 500 or not 30 <= len(summary) <= 1000:
+        raise NewsError('CoinDesk feed entry lacks a usable headline or summary.')
+    raw_date = item.findtext('pubDate') or ''
+    published = parse_date(raw_date)
+    if published is None or not math.isfinite(published) or published <= 0 or published > now + 300:
+        raise NewsError('CoinDesk feed entry lacks a valid publication time.')
+    image = None
+    for node in item:
+        if node.tag in {'{http://search.yahoo.com/mrss/}content',
+                        '{http://search.yahoo.com/mrss/}thumbnail', 'enclosure'}:
+            candidate = node.attrib.get('url', '')
+            parts = urlsplit(candidate)
+            if (parts.scheme == 'https' and parts.hostname == 'cdn.sanity.io'
+                    and not parts.username and not parts.password and parts.port in (None, 443)
+                    and parts.path.startswith('/images/s3y3vcno/production/')):
+                image = checked_url(candidate)
+                break
+    return dict(story, source_url=link, source_name='CoinDesk', title_original=title,
+                source_text=summary, image_url=image, image_urls=[image] if image else [],
+                article_published_at=published, source_scope='coindesk_rss_summary',
+                date_evidence={'field': 'rss_pubDate', 'value': raw_date},
+                article_date=datetime.fromtimestamp(published, timezone.utc).date().isoformat())
+
+
 def source_material(story, now, *, admin_override=False):
     url = checked_url(story['source_url'], article=True)
     request = Request(url, headers={'User-Agent': 'KianiExchange-NewsSelectorTrial/1.0', 'Accept': 'text/html'})
-    with build_opener(PublisherRedirects()).open(request, timeout=18) as response:
-        url = checked_url(response.geturl(), article=True)
-        content = response.read(2_000_001)
+    try:
+        with build_opener(PublisherRedirects()).open(request, timeout=18) as response:
+            url = checked_url(response.geturl(), article=True)
+            content = response.read(2_000_001)
+    except HTTPError as exc:
+        if admin_override and exc.code == 429 and publisher(url) == 'CoinDesk':
+            return coindesk_rss_material(story, url, now)
+        raise
     if len(content) > 2_000_000:
         raise NewsError('Publisher HTML exceeded the trial limit.')
     html = content.decode('utf-8', errors='replace')
@@ -809,4 +889,6 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, NewsError) else f'ERROR: Trial failed ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
+
 

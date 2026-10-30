@@ -162,11 +162,11 @@ def numbers(text):
             for value in re.findall(r'\d+(?:[,\.]\d+)*', text)}
 
 
-def validate_translation(result, source):
+def validate_translation(result, source, *, min_summary=80):
     if not isinstance(result, dict):
         raise NewsError('Translation response must be a JSON object.')
     title, summary = clean_text(result.get('headline_fa')), clean_text(result.get('summary_fa'))
-    if not 5 <= len(title) <= 140 or not 80 <= len(summary) <= 1000:
+    if not 5 <= len(title) <= 140 or not min_summary <= len(summary) <= 1000:
         raise NewsError('Persian translation length is outside the card limits.')
     if any(not re.search(r'[\u0600-\u06ff]', value) for value in (title, summary)):
         raise NewsError('The selected news needs a Persian headline and summary.')
@@ -235,8 +235,10 @@ def completion_status(reply):
 def translate(con, material, request_fn=None):
     model = os.getenv('DEEPSEEK_MODEL', 'deepseek-flash')
     source = material['title_original'] + '\n' + material['source_text'] + '\n' + material['article_date']
+    rss_summary = material.get('source_scope') == 'coindesk_rss_summary'
     # Include model and prompt version: changing either invalidates the cached result.
-    key = hashlib.sha256(('economy-v2-json\n' + model + '\n' + source).encode()).hexdigest()
+    key = hashlib.sha256((('coindesk-rss-v1-json\n' if rss_summary else 'economy-v2-json\n') +
+                          model + '\n' + source).encode()).hexdigest()
     cached = con.execute('SELECT title_fa,summary_fa FROM economy_translation_cache WHERE input_hash=?', (key,)).fetchone()
     if cached:
         return cached[0], cached[1]
@@ -255,6 +257,12 @@ def translate(con, material, request_fn=None):
         'predictions. No investment advice, links, handles or hashtags. Example JSON: '
         '{"headline_fa":"عنوان کوتاه فارسی", "summary_fa":"خلاصه فارسی خبر."}'
     )
+    if rss_summary:
+        system = system.replace('a neutral 3-5 sentence summary (80-1000 characters)',
+                                'a neutral one- or two-sentence translation (20-1000 characters)')
+        system += (' The only available evidence is the headline and the official RSS summary; '
+                   'do not imply that the complete article was read. Translate only those '
+                   'supplied facts and omit any unsupported detail.')
     payload = dict(model=model, temperature=0, thinking={'type': 'disabled'},
                    response_format={'type': 'json_object'},
                    messages=[{'role': 'system', 'content': system},
@@ -288,7 +296,7 @@ def translate(con, material, request_fn=None):
             else:
                 # Valid JSON still must pass Persian, length and source-number checks.
                 # A failed factual check aborts; it is never cached or published.
-                title, summary = validate_translation(result, source)
+                title, summary = validate_translation(result, source, min_summary=20 if rss_summary else 80)
                 with con:
                     con.execute('INSERT OR REPLACE INTO economy_translation_cache VALUES (?,?,?,?,?)',
                                 (key, model, title, summary, time.time()))
@@ -297,4 +305,6 @@ def translate(con, material, request_fn=None):
             raise NewsError(f'DeepSeek returned no complete translation after {attempt} attempts ({failure}; {status}).')
         print(f'DeepSeek response incomplete ({failure}; {status}); retrying.')
         time.sleep(attempt)
+
+
 

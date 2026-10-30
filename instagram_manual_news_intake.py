@@ -511,8 +511,11 @@ def process_trial_submission(con, record, runtime):
         con.execute("UPDATE submissions SET status='trial_processing',response='' WHERE update_id=? AND status='received'", (update_id,))
     now = time.time()
     ranked.configure_engine('crypto')
-    material = engine.source_material(dict(id='trial-' + str(update_id), source_url=source_url,
-        title_original='', source_name=''), now, admin_override=True)
+    try:
+        material = engine.source_material(dict(id='trial-' + str(update_id), source_url=source_url,
+            title_original='', source_name=''), now, admin_override=True)
+    except engine.CoinDeskFeedMissing:
+        raise IntakeError('صفحه کوین‌دسک فعلاً محدود شده و این خبر در فید فعلی آن پیدا نشد؛ لینک منبع معتبر دیگری برای همین خبر بفرستید.') from None
     final_url = canonical_url(material['source_url'])
     final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
     with con:
@@ -545,6 +548,7 @@ def process_trial_submission(con, record, runtime):
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
                 image_url=material.get('image_url'), image_urls=material.get('image_urls', []),
+                source_scope=material.get('source_scope'),
                 article_published_at=material['article_published_at'],
                 story_type=row['assessment']['story_type'])
             asset_root = Path.home() / 'kiani-instagram-publisher'
@@ -583,8 +587,11 @@ def process_direct_reel_submission(con, record, runtime):
 
     now = time.time()
     ranked.configure_engine('crypto')
-    material = engine.source_material(dict(id='direct-reel-' + str(update_id),
-        source_url=source_url, title_original='', source_name=''), now, admin_override=True)
+    try:
+        material = engine.source_material(dict(id='direct-reel-' + str(update_id),
+            source_url=source_url, title_original='', source_name=''), now, admin_override=True)
+    except engine.CoinDeskFeedMissing:
+        raise IntakeError('صفحه کوین‌دسک فعلاً محدود شده و این خبر در فید فعلی آن پیدا نشد؛ لینک منبع معتبر دیگری برای همین خبر بفرستید.') from None
     final_url = canonical_url(material['source_url'])
     final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
     with con:
@@ -615,7 +622,8 @@ def process_direct_reel_submission(con, record, runtime):
             title, summary = ranked.translate(assessment_db, row)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
-                image_url=material.get('image_url'), image_urls=material.get('image_urls', []), article_published_at=material['article_published_at'],
+                image_url=material.get('image_url'), image_urls=material.get('image_urls', []),
+                source_scope=material.get('source_scope'), article_published_at=material['article_published_at'],
                 story_type=row['assessment']['story_type'])
             asset_root = Path.home() / 'kiani-instagram-publisher'
             if not asset_root.is_dir():
@@ -855,6 +863,8 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
+
 
 
 
