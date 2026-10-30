@@ -33,11 +33,16 @@ def moving_image(original, phase, mode, size, background):
     left, top = round((scaled_w-width)*x), round((scaled_h-height)*y)
     return fitted.crop((left, top, left+width, top+height))
 
-def render(t, title, source, kind, story_type, chunks, destination, asset_root, media, music_path, ffmpeg):
+def render(t, title, source, kind, story_type, chunks, destination, asset_root, media, music_path, ffmpeg, *, narration=None):
     pages=len(chunks)+2
     words=sum(len(s.split()) for s in chunks)
     step=min(.14,(52-4.6-3-2.0*len(chunks))/max(words,1))
     if step<.045: raise t.TrialReelError('Story is too long for a legible animated Reel.')
+    if narration is not None:
+        if len(narration)!=len(chunks)+1:
+            raise t.TrialReelError('Narration does not match Reel sections.')
+        if sum(item['duration'] for item in narration)+3.6 > 60:
+            raise t.TrialReelError('Narration is too long for a Reel; nothing was published.')
     with tempfile.TemporaryDirectory(prefix='kiani-motion-',dir=t.STATE) as tmp:
         root=Path(tmp); entries=[]; clicks=[]; elapsed=0.0
         def add(image,seconds,click=False):
@@ -51,7 +56,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         cover=t._frame(title,source,kind,1,pages,asset_root,story_type)
         title_words = title.split()
         hook_frames = 60
-        hook_seconds = 4.0
+        hook_seconds = max(4.0, narration[0]['duration'] + .3) if narration else 4.0
+        voice_starts = [0.0]
         previous_revealed = 0
 
         if media:
@@ -163,6 +169,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 photo.thumbnail((1600,1600), Image.Resampling.LANCZOS)
             body_photos.append((item, photo))
         for page,body in enumerate(chunks,2):
+            if narration:
+                voice_starts.append(elapsed)
             blank=t._frame(title,'',kind,page,pages,asset_root,story_type)
             draw=ImageDraw.Draw(blank); font=t._font(asset_root,56)
             rows=t._wrap(draw,body,font,780)
@@ -178,7 +186,9 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 if len(photos) == 1 and len(body_photos) > 1:
                     photos.append(next(candidate for candidate in body_photos if candidate is not photos[0]))
                 total_words = sum(len(row.split()) for row in rows)
-                duration = max(total_words * step + 2.0, len(photos) * 1.1)
+                speech_duration = narration[page-1]['duration'] if narration else 0
+                duration = max(total_words * step + 2.0, len(photos) * 1.1, speech_duration + .3)
+                word_step = speech_duration / max(total_words, 1) if narration else step
                 frames = max(total_words, math.ceil(duration / .10))
                 seconds = duration / frames
                 top = 880
@@ -188,7 +198,7 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 prior = 0
                 for index in range(frames):
                     elapsed_on_card = index * seconds
-                    revealed = min(total_words, max(1, int(elapsed_on_card / step) + 1))
+                    revealed = min(total_words, max(1, int(elapsed_on_card / word_step) + 1))
                     photo_index = min(len(photos) - 1, int(index * len(photos) / frames))
                     item, image = photos[photo_index]
                     segment_start = photo_index * frames / len(photos)
@@ -215,13 +225,15 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                     prior = revealed
                 continue
             top=(1920-len(rows)*int(font.size*1.72))//2
-            for revealed in range(1,sum(len(row.split()) for row in rows)+1):
+            word_count=sum(len(row.split()) for row in rows)
+            card_step = max(step, narration[page-1]['duration']/max(word_count,1)) if narration else step
+            for revealed in range(1,word_count+1):
                 img=blank.copy(); d=ImageDraw.Draw(img); remaining=revealed
                 for index,row in enumerate(rows):
                     part=row.split(); count=min(len(part),remaining)
                     if count: d.text((930,top+index*int(font.size*1.72)),t._rtl(' '.join(part[:count])),font=font,fill=t.INK,anchor='rt')
                     remaining-=count
-                add(img,step,True)
+                add(img,card_step,True)
             add(img,2.0)
         closing = t._frame(title,source,kind,pages,pages,asset_root,story_type)
         if media:
@@ -256,12 +268,35 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         with wave.open(str(sound),'wb') as out:
             out.setnchannels(1); out.setsampwidth(2); out.setframerate(rate)
             out.writeframes(b''.join(struct.pack('<h',int(max(-1,min(1,s))*32767)) for s in signal))
+        voice_path=None
+        if narration:
+            sample_rate=24000
+            combined=bytearray(int((elapsed+.1)*sample_rate)*2)
+            for segment,start in zip(narration,voice_starts):
+                with wave.open(str(segment['path']),'rb') as voice:
+                    if voice.getframerate()!=sample_rate or voice.getnchannels()!=1 or voice.getsampwidth()!=2:
+                        raise t.TrialReelError('Narration audio format is invalid.')
+                    data=voice.readframes(voice.getnframes())
+                offset=round(start*sample_rate)*2
+                if offset+len(data)>len(combined):
+                    raise t.TrialReelError('Narration does not fit the Reel timeline.')
+                combined[offset:offset+len(data)]=data
+            voice_path=root/'narration.wav'
+            with wave.open(str(voice_path),'wb') as voice:
+                voice.setnchannels(1); voice.setsampwidth(2); voice.setframerate(sample_rate)
+                voice.writeframes(combined)
         cmd=[ffmpeg,'-y','-hide_banner','-loglevel','error','-threads','2','-f','concat','-safe','0','-i',str(playlist)]
         if music_path:
             if Path(music_path).is_symlink() or not Path(music_path).is_file(): raise t.TrialReelError('Verified music unavailable.')
             cmd+=['-stream_loop','-1','-i',str(music_path)]
         else: cmd+=['-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000']
-        cmd+=['-i',str(sound),'-filter_complex',f'[1:a]volume=0.22,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0,elapsed-1):.2f}:d=1[m];[2:a]volume=.7[k];[m][k]amix=inputs=2:duration=first:normalize=0[a]',
+        cmd+=['-i',str(sound)]
+        if voice_path:
+            cmd+=['-i',str(voice_path)]
+            filters=f'[1:a]volume=0.10,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0,elapsed-1):.2f}:d=1[m];[2:a]volume=.25[k];[3:a]volume=1.0[v];[m][k][v]amix=inputs=3:duration=first:normalize=0[a]'
+        else:
+            filters=f'[1:a]volume=0.22,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0,elapsed-1):.2f}:d=1[m];[2:a]volume=.7[k];[m][k]amix=inputs=2:duration=first:normalize=0[a]'
+        cmd+=['-filter_complex',filters,
               '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p','-c:v','libx264','-preset','veryfast','-crf','25','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
         except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None

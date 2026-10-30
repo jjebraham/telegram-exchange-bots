@@ -236,7 +236,7 @@ def _probe_video(path, ffprobe):
     return duration
 
 
-def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None, music_path=None, media=None):
+def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=None, music_path=None, media=None, narration=None):
     title = _safe_text(story.get('title_fa'), 500)
     summary = _safe_text(story.get('summary_fa'))
     source = _safe_text(story.get('source_name'), 180)
@@ -253,7 +253,7 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
         raise TrialReelError('FFmpeg and ffprobe are required to render and verify Trial Reels.')
     import sys
     from instagram_reel_motion import render
-    render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg)
+    render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg, narration=narration)
     if destination.is_symlink() or not destination.is_file() or not 100_000 <= destination.stat().st_size <= 250_000_000:
         raise TrialReelError('The rendered Reel is missing or has an invalid file size.')
     os.chmod(destination, 0o644)
@@ -464,6 +464,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     commons_temp = None
     stock_temp = None
     stock_used = []
+    voice_temp = None
     try:
         _live_guard()
         if normalized.get('image_url'):
@@ -602,7 +603,18 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
-        duration = render_video(normalized, kind, video_path, asset_root, music_path=music_path if music else None, media=media)
+        from instagram_reel_voice import configured as voice_configured, synthesize as synthesize_voice
+        if not voice_configured():
+            raise TrialReelError('Persian narration is not configured; Reel not published.')
+        voice_temp = tempfile.TemporaryDirectory(prefix='voice-' + trial_id + '-', dir=STATE)
+        try:
+            spoken = synthesize_voice([normalized['title_fa']] + _chunks(normalized['summary_fa']), Path(voice_temp.name))
+        except Exception as exc:
+            print('Narration preparation failed:', type(exc).__name__, flush=True)
+            detail = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__
+            raise TrialReelError('Persian narration unavailable: ' + detail[:120]) from None
+        duration = render_video(normalized, kind, video_path, asset_root,
+                                music_path=music_path if music else None, media=media, narration=spoken)
         if stock_used:
             try:
                 from instagram_reel_stock import mark_used
@@ -665,6 +677,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             commons_temp.cleanup()
         if stock_temp is not None:
             stock_temp.cleanup()
+        if voice_temp is not None:
+            voice_temp.cleanup()
 
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,
