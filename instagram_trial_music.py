@@ -133,9 +133,12 @@ def select_order(story, previous=None):
         if any(term in text for term in MOOD_TERMS[candidate]):
             mood = candidate
             break
+    recent = [previous] if isinstance(previous, str) else list(previous or ())
+    recent = [title for title in recent if isinstance(title, str)][:10]
     return sorted(TRACKS, key=lambda item: (
-        item['title'] == previous,
+        item['title'] in recent,
         item['moods'].index(mood) if mood in item['moods'] else len(item['moods']),
+        -recent.index(item['title']) if item['title'] in recent else 0,
         item['name'],
     ))
 
@@ -189,5 +192,6 @@ def retrieve_track(track, output):
 def caption_credit(info):
     return ('Music: ' + info['name'] + ' — ' + info['artist'] + ' (shortened and faded)\n' +
             info['source_url'] + '\nCC BY 4.0: ' + info['license_url'])
+
 
 

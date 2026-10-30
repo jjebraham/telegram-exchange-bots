@@ -36,6 +36,7 @@ FILES = (
     'deploy/instagram-trial-reels/check_multi_images.py',
     'deploy/instagram-trial-reels/check_auto_images.py',
     'deploy/instagram-trial-reels/configure_stock.py',
+    'deploy/instagram-trial-reels/check_reel_motion.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 

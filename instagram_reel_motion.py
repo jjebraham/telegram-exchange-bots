@@ -8,6 +8,31 @@ import tempfile
 import wave
 from PIL import Image, ImageDraw, ImageOps
 
+def moving_image(original, phase, mode, size, background):
+    """Move safely inside the image viewport; keep diagrams completely visible."""
+    width, height = size
+    aspect = original.width / original.height
+    if aspect < 1.25 or aspect > 2.4:
+        contained = ImageOps.contain(original, (round(width*.94), round(height*.94)), Image.Resampling.LANCZOS)
+        result = Image.new('RGB', size, background)
+        dx = round((width-contained.width) * (.35 + .3*phase))
+        dy = round((height-contained.height) * (.65 - .3*phase))
+        result.paste(contained, (dx, dy))
+        return result
+    # Alternate zoom, left/right pan and vertical drift across photos.
+    if mode % 4 == 0:
+        zoom, x, y = 1.03 + .10*phase, .5, .5
+    elif mode % 4 == 1:
+        zoom, x, y = 1.13, .12 + .76*phase, .5
+    elif mode % 4 == 2:
+        zoom, x, y = 1.13, .88 - .76*phase, .5
+    else:
+        zoom, x, y = 1.13, .5, .85 - .70*phase
+    scaled_w, scaled_h = round(width*zoom), round(height*zoom)
+    fitted = ImageOps.fit(original, (scaled_w, scaled_h), Image.Resampling.LANCZOS)
+    left, top = round((scaled_w-width)*x), round((scaled_h-height)*y)
+    return fitted.crop((left, top, left+width, top+height))
+
 def render(t, title, source, kind, story_type, chunks, destination, asset_root, media, music_path, ffmpeg):
     pages=len(chunks)+2
     words=sum(len(s.split()) for s in chunks)
@@ -83,10 +108,10 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                     img.paste(photo, (96, 315))
                     d = ImageDraw.Draw(img)
                     d.rounded_rectangle((96, 815, 984, 1300), radius=38, fill=t.INK)
-                    d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
-                    label = 'تصویر خبر' if item.get('kind') == 'publisher' else 'تصویر نمادین'
-                    d.text((225, 365), t._rtl(label),
-                           font=t._font(asset_root, 23, True), fill='white', anchor='mm')
+                    if item.get('kind') == 'publisher':
+                        d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
+                        d.text((225, 365), t._rtl('تصویر خبر'),
+                               font=t._font(asset_root, 23, True), fill='white', anchor='mm')
 
                     reveal_progress = max(0.0, min(1.0, phase / 0.72))
                     revealed = min(len(title_words), 1 + int(reveal_progress * max(0, len(title_words) - 1)))
@@ -130,18 +155,13 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
             add(img, 0.6)
 
         body_photos = []
-        for item in (media[1:8] if len(media) > 1 else media[:1]):
+        for item in media[:8]:
             with Image.open(item['path']) as photo:
                 if photo.width * photo.height > 40000000:
                     raise t.TrialReelError('Illustrative image is too large.')
                 photo = photo.convert('RGB')
-                if photo.width / photo.height < 1.25 or photo.width / photo.height > 2.4:
-                    contained = ImageOps.contain(photo, (888, 500), Image.Resampling.LANCZOS)
-                    image = Image.new('RGB', (888, 500), t.INK)
-                    image.paste(contained, ((888-contained.width)//2, (500-contained.height)//2))
-                else:
-                    image = ImageOps.fit(photo, (888, 500), Image.Resampling.LANCZOS)
-            body_photos.append((item, image))
+                photo.thumbnail((1600,1600), Image.Resampling.LANCZOS)
+            body_photos.append((item, photo))
         for page,body in enumerate(chunks,2):
             blank=t._frame(title,'',kind,page,pages,asset_root,story_type)
             draw=ImageDraw.Draw(blank); font=t._font(asset_root,56)
@@ -155,9 +175,11 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 photos = body_photos[page_index::len(chunks)]
                 if not photos:
                     photos = [body_photos[page_index % len(body_photos)]]
+                if len(photos) == 1 and len(body_photos) > 1:
+                    photos.append(next(candidate for candidate in body_photos if candidate is not photos[0]))
                 total_words = sum(len(row.split()) for row in rows)
                 duration = max(total_words * step + 2.0, len(photos) * 1.1)
-                frames = max(total_words, math.ceil(duration / .16))
+                frames = max(total_words, math.ceil(duration / .10))
                 seconds = duration / frames
                 top = 880
                 line_height = int(font.size * 1.45)
@@ -169,14 +191,18 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                     revealed = min(total_words, max(1, int(elapsed_on_card / step) + 1))
                     photo_index = min(len(photos) - 1, int(index * len(photos) / frames))
                     item, image = photos[photo_index]
+                    segment_start = photo_index * frames / len(photos)
+                    segment_length = frames / len(photos)
+                    image_phase = max(0.0, min(1.0, (index - segment_start) / max(segment_length-1, 1)))
+                    image = moving_image(image, image_phase, page_index+photo_index, (888,500), t.INK)
                     img = blank.copy()
                     img.paste(image, (96, 315))
                     d = ImageDraw.Draw(img)
                     d.rectangle((120, 845, 960, 1470), fill='#FFFFFF')
-                    d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
-                    label = 'تصویر خبر' if item.get('kind') == 'publisher' else 'تصویر نمادین'
-                    d.text((225, 365), t._rtl(label), font=t._font(asset_root,23,True),
-                           fill='white', anchor='mm')
+                    if item.get('kind') == 'publisher':
+                        d.rounded_rectangle((110, 335, 340, 395), radius=20, fill=t.INK)
+                        d.text((225, 365), t._rtl('تصویر خبر'), font=t._font(asset_root,23,True),
+                               fill='white', anchor='mm')
                     remaining = revealed
                     for row_index, row in enumerate(rows):
                         parts = row.split()
@@ -209,10 +235,10 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 panel.paste(image, ((888-image.width)//2, (300-image.height)//2))
             closing.paste(panel, (96, 1280))
             d = ImageDraw.Draw(closing)
-            d.rounded_rectangle((110, 1294, 340, 1354), radius=20, fill=t.INK)
-            label = 'تصویر خبر' if item.get('kind') == 'publisher' else 'تصویر نمادین'
-            d.text((225, 1324), t._rtl(label), font=t._font(asset_root,23,True),
-                   fill='white', anchor='mm')
+            if item.get('kind') == 'publisher':
+                d.rounded_rectangle((110, 1294, 340, 1354), radius=20, fill=t.INK)
+                d.text((225, 1324), t._rtl('تصویر خبر'), font=t._font(asset_root,23,True),
+                       fill='white', anchor='mm')
         add(closing,3)
         if not 12<=elapsed<=60: raise t.TrialReelError('Animated duration is outside Reel limits.')
         playlist=root/'frames.txt'

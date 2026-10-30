@@ -573,14 +573,23 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             if commons_added:
                 _update(con, trial_id, caption=caption, updated_at=time.time())
         print('Total verified Reel images:', len(media), flush=True)
+        if any(item.get('kind') == 'illustrative' for item in media):
+            caption = 'برخی تصاویر این ویدئو نمادین هستند.\n\n' + caption
+            if len(caption) > 2200:
+                raise TrialReelError('Reel caption with image disclosure is too long.')
+            _update(con, trial_id, caption=caption, updated_at=time.time())
         from instagram_trial_music import select_order, retrieve_track, caption_credit
-        previous = con.execute("SELECT music_json FROM trial_reels WHERE status='published' AND music_json IS NOT NULL ORDER BY published_at DESC LIMIT 1").fetchone()
-        try:
-            last_title = json.loads(previous['music_json']).get('title') if previous else None
-        except (ValueError, TypeError, AttributeError):
-            last_title = None
+        previous = con.execute("SELECT music_json FROM trial_reels WHERE status IN ('published','container_processing','publishing','needs_review') AND music_json IS NOT NULL ORDER BY COALESCE(published_at,created_at) DESC LIMIT 10").fetchall()
+        recent_titles = []
+        for previous_row in previous:
+            try:
+                title = json.loads(previous_row['music_json']).get('title')
+                if isinstance(title, str):
+                    recent_titles.append(title)
+            except (ValueError, TypeError, AttributeError):
+                continue
         music = None
-        for candidate in select_order(normalized, last_title):
+        for candidate in select_order(normalized, recent_titles):
             try:
                 music = retrieve_track(candidate, music_path)
                 break
