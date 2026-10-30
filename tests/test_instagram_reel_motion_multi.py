@@ -52,7 +52,7 @@ class MultiImageChecks(unittest.TestCase):
             original_save = Image.Image.save
             def capture_frame(image, path, *args, **kwargs):
                 if str(path).endswith('.jpg') and 'kiani-motion-' in str(path):
-                    captured.append(image.getpixel((500, 500)))
+                    captured.append((image.getpixel((500, 500)), image.getpixel((500, 1400))))
                     return
                 return original_save(image, path, *args, **kwargs)
             chunks = ['در این نمونه خبر آزمایشی برای نمایش تصویر آماده شده است.',
@@ -61,13 +61,13 @@ class MultiImageChecks(unittest.TestCase):
                 motion.render(trial, 'یک خبر آزمایشی درباره بازار', 'منبع آزمایشی',
                               'crypto', 'hard_news', chunks, folder/'unused.mp4',
                               ASSETS, media, None, 'ffmpeg')
-        self.assertEqual(captured[0], colors[0])
-        self.assertEqual(captured[24], colors[1])
+        self.assertEqual(captured[0][0], colors[0])
+        self.assertEqual(captured[24][0], colors[1])
         for color in colors:
-            self.assertIn(color, captured)
+            self.assertIn(color, [pixels[0] for pixels in captured])
+        self.assertEqual(captured[-1][1], colors[0])
 
 if __name__ == '__main__':
     unittest.main()
-
 
 

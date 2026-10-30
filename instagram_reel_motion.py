@@ -197,7 +197,23 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                     remaining-=count
                 add(img,step,True)
             add(img,2.0)
-        add(t._frame(title,source,kind,pages,pages,asset_root,story_type),3)
+        closing = t._frame(title,source,kind,pages,pages,asset_root,story_type)
+        if media:
+            item = media[0]
+            with Image.open(item['path']) as photo:
+                if photo.width * photo.height > 40000000:
+                    raise t.TrialReelError('Illustrative image is too large.')
+                photo = photo.convert('RGB')
+                image = ImageOps.contain(photo, (888, 300), Image.Resampling.LANCZOS)
+                panel = Image.new('RGB', (888, 300), t.INK)
+                panel.paste(image, ((888-image.width)//2, (300-image.height)//2))
+            closing.paste(panel, (96, 1280))
+            d = ImageDraw.Draw(closing)
+            d.rounded_rectangle((110, 1294, 340, 1354), radius=20, fill=t.INK)
+            label = 'تصویر خبر' if item.get('kind') == 'publisher' else 'تصویر نمادین'
+            d.text((225, 1324), t._rtl(label), font=t._font(asset_root,23,True),
+                   fill='white', anchor='mm')
+        add(closing,3)
         if not 12<=elapsed<=60: raise t.TrialReelError('Animated duration is outside Reel limits.')
         playlist=root/'frames.txt'
         with playlist.open('w',encoding='utf-8') as out:
@@ -223,6 +239,5 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
               '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p','-c:v','libx264','-preset','veryfast','-crf','25','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
         except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
-
 
 
