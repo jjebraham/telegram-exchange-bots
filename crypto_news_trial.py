@@ -213,6 +213,10 @@ class CoinDeskFeedMissing(NewsError):
     pass
 
 
+class CoinDeskFeedImageMissing(NewsError):
+    pass
+
+
 def coindesk_rss_material(story, article_url, now):
     """Use a matching official feed summary only for an admin-selected Reel."""
     feed_url = 'https://www.coindesk.com/arc/outboundfeeds/rss/'
@@ -275,6 +279,8 @@ def coindesk_rss_material(story, article_url, now):
                     and parts.path.startswith('/images/s3y3vcno/production/')):
                 image = checked_url(candidate)
                 break
+    if image is None:
+        raise CoinDeskFeedImageMissing('CoinDesk feed entry has no approved lead image.')
     return dict(story, source_url=link, source_name='CoinDesk', title_original=title,
                 source_text=summary, image_url=image, image_urls=[image] if image else [],
                 article_published_at=published, source_scope='coindesk_rss_summary',

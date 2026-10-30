@@ -516,6 +516,8 @@ def process_trial_submission(con, record, runtime):
             title_original='', source_name=''), now, admin_override=True)
     except engine.CoinDeskFeedMissing:
         raise IntakeError('صفحه کوین‌دسک فعلاً محدود شده و این خبر در فید فعلی آن پیدا نشد؛ لینک منبع معتبر دیگری برای همین خبر بفرستید.') from None
+    except engine.CoinDeskFeedImageMissing:
+        raise IntakeError('تصویر اصلی این خبر در فید رسمی کوین‌دسک در دسترس نیست؛ ریل منتشر نشد.') from None
     final_url = canonical_url(material['source_url'])
     final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
     with con:
@@ -592,6 +594,8 @@ def process_direct_reel_submission(con, record, runtime):
             source_url=source_url, title_original='', source_name=''), now, admin_override=True)
     except engine.CoinDeskFeedMissing:
         raise IntakeError('صفحه کوین‌دسک فعلاً محدود شده و این خبر در فید فعلی آن پیدا نشد؛ لینک منبع معتبر دیگری برای همین خبر بفرستید.') from None
+    except engine.CoinDeskFeedImageMissing:
+        raise IntakeError('تصویر اصلی این خبر در فید رسمی کوین‌دسک در دسترس نیست؛ ریل منتشر نشد.') from None
     final_url = canonical_url(material['source_url'])
     final_key = hashlib.sha256(final_url.encode('utf-8')).hexdigest()
     with con:
