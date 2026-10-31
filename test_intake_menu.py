@@ -114,6 +114,7 @@ class IntakeMenuTest(unittest.TestCase):
         self.assertEqual(saved['article_date'], '')
         self.assertEqual(len(paths), 2)
         self.assertEqual(calls[0][1]['news_label'], 'تحلیل و پیش‌بینی')
+        self.assertTrue(calls[0][1]['adaptive_body'])
         self.assertNotIn('news_v2_ranking', manifest)
 
     def test_manual_feed_formats_publish_admin_forecast_without_automatic_gates(self):
