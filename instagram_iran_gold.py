@@ -45,6 +45,15 @@ def next_run(now):
     return start if start > local else start + timedelta(days=1)
 
 
+def defer_for_global_retry(scheduled, iran_status, metals_status, started, current):
+    """Use existing retries before the final Iran-only fallback."""
+    if not scheduled or iran_status != 'verified' or metals_status == 'verified':
+        return False
+    if current.astimezone(TEHRAN).date() != started.astimezone(TEHRAN).date():
+        return False
+    return wall_time(10) <= current.astimezone(TEHRAN).time() < wall_time(10, 10)
+
+
 @contextmanager
 def locked(path):
     import fcntl
@@ -341,6 +350,11 @@ def main():
                 print('Gold consensus:', json.dumps({row['id']: dict(sources=row['sources'],
                     selected=row['selected_source'], price=row['price'], agreement_pct=row['agreement_pct'],
                     excluded=row['rejected_sources']) for row in snapshot['rows']}, ensure_ascii=False), flush=True)
+            if defer_for_global_retry(args.publish, snapshot.get('status'),
+                                      metal.get('status'), now, datetime.now(TEHRAN)):
+                print('DEFERRED gold post: global metals did not verify; retry at the next scheduled slot.', flush=True)
+                print('Private audit:', folder/'audit.json', flush=True)
+                return 0
             if not publishing:
                 with con:
                     con.execute('INSERT INTO gold_previews VALUES (?,?,?,?,?,?)',
@@ -365,4 +379,5 @@ if __name__ == '__main__':
     except Exception as exc:
         print('ERROR:', str(exc) if isinstance(exc, GoldError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
+
 

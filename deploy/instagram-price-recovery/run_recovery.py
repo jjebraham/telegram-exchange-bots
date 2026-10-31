@@ -19,7 +19,8 @@ GOLD_FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'iran_gold_servix.py',
     'assets/instagram/gold-bars.png', 'iran_gold_tgju.py')
 FILES = GOLD_FILES + ('instagram_daily_rates.py', 'instagram_carousel.py',
     'deploy/instagram-price-recovery/run_recovery.py',
-    'deploy/instagram-price-recovery/activate_recovery.py', 'deploy/instagram-price-recovery/README.md')
+    'deploy/instagram-price-recovery/activate_recovery.py', 'deploy/instagram-price-recovery/README.md',
+    'deploy/instagram-price-recovery/check_gold_retry.py')
 
 
 def main():
@@ -70,3 +71,4 @@ if __name__ == '__main__':
     except Exception as exc:
         print('Repair launcher stopped:', str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
+

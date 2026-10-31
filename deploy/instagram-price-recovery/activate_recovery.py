@@ -21,7 +21,7 @@ import uuid
 
 from run_recovery import GOLD_FILES
 
-BASE_GOLD = '529457456a330417bdd47e20cf8ba1590d220d5c'
+BASE_GOLD = '9b9f77fcf42d22d229e5aac295734396f99c464e'
 RATES_HASHES = {
     'instagram_daily_rates.py': '592a28df4e47a2007da72166a7d882e0c17a75eb7926722e026a3ae3b2161d89',
     'instagram_carousel.py': '13e7d47dfaba6cee6594dba9dd4d9c67fb4dff3c621eff9a14bc07f7d2cb0d91',
@@ -164,7 +164,7 @@ def activate(runtime, repo, revision, role):
             if active not in {BASE_GOLD, revision} or old_launcher != wrapper(home, active):
                 raise RuntimeError('The installed gold launcher/revision differs from the confirmed release.')
             installed = home/'kiani-instagram-iran-gold-releases'/active
-            old_files = [n for n in GOLD_FILES if n != 'iran_gold_tgju.py'] if active == BASE_GOLD else GOLD_FILES
+            old_files = GOLD_FILES
             for name in old_files:
                 expected = subprocess.check_output(['git', '-C', str(repo), 'show', BASE_GOLD+':'+name], timeout=20) if active == BASE_GOLD else owned(runtime/name)
                 if owned(installed/name) != expected:
@@ -286,3 +286,4 @@ if __name__ == '__main__':
     except Exception as exc:
         print('Recovery stopped:', str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
+
