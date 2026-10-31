@@ -40,6 +40,7 @@ FILES = (
     'deploy/instagram-trial-reels/check_reel_motion.py',
     'deploy/instagram-trial-reels/check_reel_cover.py',
     'deploy/instagram-trial-reels/check_news_menu.py',
+    'deploy/instagram-trial-reels/check_blockchain_news.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 

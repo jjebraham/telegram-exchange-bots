@@ -51,6 +51,35 @@ def url_in(text):
     return value
 
 
+def configure_admin_source(engine, url):
+    """Add this explicitly selected source only within the admin worker."""
+    host = (urlsplit(url).hostname or '').lower()
+    if host in {'blockchain.news', 'www.blockchain.news'}:
+        engine.PUBLISHERS['blockchain.news'] = 'Blockchain.News'
+
+
+def read_manual_source(engine, story, now, *, relaxed=False):
+    try:
+        return engine.source_material(story, now, admin_override=relaxed)
+    except engine.NewsError as exc:
+        detail = str(exc)
+        explanations = {
+            'Publisher is outside the reviewed trial allowlist.':
+                'این منبع هنوز برای ربات فعال نشده است؛ لطفاً لینک یک رسانه پشتیبانی‌شده را بفرستید.',
+            'No timezone-aware original publication timestamp; Telegram time is insufficient.':
+                'زمان انتشار خبر از منبع قابل تأیید نیست؛ برای پست خبری لینک دیگری بفرستید.',
+            'Original publication time is outside the last 24 hours.':
+                'این خبر خارج از بازه تازگی پست خبری است.',
+            'No usable original source passage; saved translations alone are insufficient.':
+                'متن کافی از صفحه خبر دریافت نشد؛ لطفاً لینک دیگری از همین خبر بفرستید.',
+            'Publisher HTML exceeded the trial limit.':
+                'صفحه خبر بیش از حد بزرگ است و قابل پردازش نیست.',
+        }
+        if detail in explanations:
+            raise IntakeError(explanations[detail]) from None
+        raise
+
+
 def open_database():
     if STATE.is_symlink():
         raise IntakeError('The private intake directory is unsafe.')
@@ -453,10 +482,11 @@ def process_submission(con, record, runtime):
         con.execute("UPDATE submissions SET status='processing',response='' WHERE update_id=? AND status='received'", (update_id,))
     now = time.time()
     ranked.configure_engine('crypto')
+    configure_admin_source(engine, source_url)
     blocked, _history = ranked.histories(now)
     if canonical_url(source_url) in blocked:
         raise IntakeError('این خبر قبلاً منتشر شده یا تلاش انتشار آن نیازمند بررسی است.')
-    material = engine.source_material(dict(id='manual-' + str(update_id), source_url=source_url,
+    material = read_manual_source(engine, dict(id='manual-' + str(update_id), source_url=source_url,
         title_original='', source_name=''), now)
     final_url = canonical_url(material['source_url'])
     if final_url in blocked:
@@ -624,9 +654,10 @@ def process_trial_submission(con, record, runtime):
         con.execute("UPDATE submissions SET status='trial_processing',response='' WHERE update_id=? AND status='received'", (update_id,))
     now = time.time()
     ranked.configure_engine('crypto')
+    configure_admin_source(engine, source_url)
     try:
-        material = engine.source_material(dict(id='trial-' + str(update_id), source_url=source_url,
-            title_original='', source_name=''), now, admin_override=True)
+        material = read_manual_source(engine, dict(id='trial-' + str(update_id), source_url=source_url,
+            title_original='', source_name=''), now, relaxed=True)
     except engine.CoinDeskFeedMissing:
         raise IntakeError('صفحه کوین‌دسک فعلاً محدود شده و این خبر در فید فعلی آن پیدا نشد؛ لینک منبع معتبر دیگری برای همین خبر بفرستید.') from None
     except engine.CoinDeskFeedImageMissing:
@@ -704,9 +735,10 @@ def process_direct_reel_submission(con, record, runtime):
 
     now = time.time()
     ranked.configure_engine('crypto')
+    configure_admin_source(engine, source_url)
     try:
-        material = engine.source_material(dict(id='direct-reel-' + str(update_id),
-            source_url=source_url, title_original='', source_name=''), now, admin_override=True)
+        material = read_manual_source(engine, dict(id='direct-reel-' + str(update_id),
+            source_url=source_url, title_original='', source_name=''), now, relaxed=True)
     except engine.CoinDeskFeedMissing:
         raise IntakeError('صفحه کوین‌دسک فعلاً محدود شده و این خبر در فید فعلی آن پیدا نشد؛ لینک منبع معتبر دیگری برای همین خبر بفرستید.') from None
     except engine.CoinDeskFeedImageMissing:
