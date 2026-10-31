@@ -486,7 +486,8 @@ def prepare_admin_news(con, row, kind, output, asset_root, ranked):
                 [saved], output, asset_root,
                 news_label=news_label,
                 caption_title='صرافی کیانی | ' + news_label,
-                caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi' if kind == 'crypto' else 'خبر اقتصادی روز | kiani.exchange')
+                caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi' if kind == 'crypto' else 'خبر اقتصادی روز | kiani.exchange',
+                adaptive_body=True)
         finally:
             os.umask(old_mask)
     finally:
