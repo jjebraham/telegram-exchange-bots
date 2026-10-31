@@ -1,8 +1,10 @@
+import os
 import sys
 import unittest
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +22,15 @@ from kiani_posts import (  # noqa: E402
 
 class KianiPostTests(unittest.TestCase):
     def setUp(self):
+        self.contact_environment = patch.dict(
+            os.environ,
+            {
+                "KIANI_CONTACT_TELEGRAM": "https://example.test/kiani-telegram",
+                "KIANI_CONTACT_WHATSAPP": "https://example.test/kiani-whatsapp",
+            },
+        )
+        self.contact_environment.start()
+        self.addCleanup(self.contact_environment.stop)
         self.rates = {
             "buy_lira": Decimal("4770"),
             "sell_lira": Decimal("4600"),
@@ -44,9 +55,16 @@ class KianiPostTests(unittest.TestCase):
         self.assertIn("🇹🇷 <b>نرخ لیر ترکیه</b> به تومان 🇮🇷", post)
         self.assertIn("🟩 BUY   TL 4,770 = خرید لیر از ما", post)
         self.assertIn("🟥 SELL  TL 4,600 = فروش لیر به ما", post)
-        self.assertIn("https://t.me/TL905411603664", post)
-        self.assertIn("https://wa.me/905392905686", post)
+        self.assertIn("https://example.test/kiani-telegram", post)
+        self.assertIn("https://example.test/kiani-whatsapp", post)
         self.assertNotIn("واحد: تومان", post)
+
+    def test_try_post_omits_contacts_when_private_settings_are_unset(self):
+        with patch.dict(os.environ, {}, clear=True):
+            post = build_kiani_try_post(self.rates)
+        self.assertNotIn("href=", post)
+        self.assertNotIn("تلگرام:", post)
+        self.assertNotIn("واتس‌اپ:", post)
 
     def test_compact_rate_post_uses_customer_language(self):
         now = datetime(
@@ -91,10 +109,20 @@ class KianiPostTests(unittest.TestCase):
         self.assertIn("🇸🇪 کرون سوئد　<code>۲۲٬۹۰۰</code>", post)
         self.assertIn("🇹🇷 لیر ترکیه　<code>۴٬۶۱۰</code>", post)
         self.assertIn("@Kianiexchangebot", post)
-        self.assertIn("https://t.me/TL905411603664", post)
-        self.assertIn("https://wa.me/905392905686", post)
+        self.assertIn("https://example.test/kiani-telegram", post)
+        self.assertIn("https://example.test/kiani-whatsapp", post)
         self.assertNotIn("@alanchande_com", post)
         self.assertNotIn("📆 چهارشنبه ۱ مهر ۱۴۰۵", post)
+
+    def test_remittance_post_omits_contacts_when_private_settings_are_unset(self):
+        rates = {
+            code: Decimal("1000")
+            for code in ("USD", "EUR", "GBP", "CAD", "AUD", "SEK", "TRY")
+        }
+        with patch.dict(os.environ, {}, clear=True):
+            post = build_kiani_remittance_post(rates)
+        self.assertNotIn("href=", post)
+        self.assertNotIn("واتس‌اپ", post)
 
     def test_remittance_post_converts_istanbul_input_to_tehran(self):
         rates = {
@@ -170,3 +198,4 @@ class KianiPostTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

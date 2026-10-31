@@ -91,7 +91,7 @@ jobs:
       - name: Syntax and formatting tests
         run: |
           python -m py_compile kiani_try_api.py x_daily_rates.py channel_split/publish_channels.py main_user_runtime.py
-          python -m unittest tests.test_kiani_try_api tests.test_x_daily_rates tests.test_x_channel_posts tests.test_x_export tests.test_hawala_x_bridge -v
+          python -m unittest tests.test_kiani_try_api tests.test_x_daily_rates tests.test_x_channel_posts tests.test_x_export tests.test_hawala_x_bridge tests.test_channel_split_kiani_posts -v
 
       - name: Restore last published rate state
         if: ${{ github.event_name != 'pull_request' }}

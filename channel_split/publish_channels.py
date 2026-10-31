@@ -23,6 +23,16 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from kiani_try_api import (  # noqa: E402
+    DEFAULT_CANONICAL_TRY_RATES_URL,
+    fetch_canonical_try_rates,
+    merge_canonical_try_rates,
+)
+
 from aggregator_bank_verifier import fetch_canlidoviz_garanti_quote
 from altinkaynak_verifier import (
     fetch_altinkaynak_currency_quotes,
@@ -44,11 +54,6 @@ from iran_fx_adonis import fetch_adonis_try_sell_toman
 from iran_fx_dolarchand import fetch_dolarchand_iran_fx
 from iran_fx_pashizi import fetch_pashizi_iran_fx
 from iran_usdt import build_usdt_exchange_post, fetch_usdt_exchange_quotes
-from kiani_shared_pricing import (
-    calculate_kiani_rates,
-    fetch_btcturk_usdt_try,
-    load_shared_adjustments,
-)
 from kiani_posts import (
     build_kiani_rate_post,
     build_kiani_toman_receive_post,
@@ -186,11 +191,19 @@ def fetch_kiani_rates(
         if not isinstance(raw, dict):
             raise ValueError("Kiani rates API response has no rates object")
 
-        keys = ("buy_lira", "sell_lira", "buy_usdt", "sell_usdt", "lira_to_usdt", "usdt_to_lira")
+        keys = ("buy_usdt", "sell_usdt", "lira_to_usdt", "usdt_to_lira")
         missing = [key for key in keys if key not in raw]
         if missing:
             raise ValueError("Missing Kiani rates: " + ", ".join(missing))
-        return {key: _positive_decimal(raw[key], key) for key in keys}
+        rates = {key: _positive_decimal(raw[key], key) for key in keys}
+        canonical_url = (
+            os.getenv("KIANI_TRY_RATES_URL", DEFAULT_CANONICAL_TRY_RATES_URL).strip()
+            or DEFAULT_CANONICAL_TRY_RATES_URL
+        )
+        return merge_canonical_try_rates(
+            rates,
+            fetch_canonical_try_rates(canonical_url, timeout=timeout),
+        )
 
     raise RuntimeError(f"Could not load Kiani rates: {last_error}")
 
@@ -440,48 +453,16 @@ def main() -> int:
     def get_rates() -> dict[str, Decimal]:
         nonlocal rates_cache
         if rates_cache is None:
-            quotes = get_hybrid_usdt()
-            buy_values = sorted(
-                Decimal(str(quote.buy_toman))
-                for quote in quotes
-            )
-            if not buy_values:
-                raise RuntimeError("No verified USDT/Toman market values for Kiani pricing")
-            middle = len(buy_values) // 2
-            if len(buy_values) % 2:
-                market_usdt_toman = buy_values[middle]
-            else:
-                market_usdt_toman = (
-                    buy_values[middle - 1] + buy_values[middle]
-                ) / Decimal("2")
-
             try:
-                market_usdt_try = fetch_btcturk_usdt_try()
-                note_source_health("kiani:btcturk-usdttry", True)
+                rates_cache = fetch_kiani_rates()
+                note_source_health("kiani:canonical-rates-api", True)
             except Exception as exc:
                 note_source_health(
-                    "kiani:btcturk-usdttry",
+                    "kiani:canonical-rates-api",
                     False,
                     f"{type(exc).__name__}: {exc}",
                 )
                 raise
-
-            try:
-                adjustments = load_shared_adjustments()
-                note_source_health("kiani:shared-pricing-db", True)
-            except Exception as exc:
-                note_source_health(
-                    "kiani:shared-pricing-db",
-                    False,
-                    f"{type(exc).__name__}: {exc}",
-                )
-                raise
-
-            rates_cache = calculate_kiani_rates(
-                market_usdt_toman,
-                market_usdt_try,
-                adjustments,
-            )
         return rates_cache
 
     def get_usd_quotes() -> list[Any]:
@@ -1492,21 +1473,7 @@ def main() -> int:
         add_kiani(build_kiani_rate_post(get_rates()))
 
     if args.post in {"kiani-try", "demo-formats"}:
-        add_kiani(
-            build_kiani_try_post(
-                get_rates(),
-                telegram_url=os.environ.get(
-                    "KIANI_CONTACT_TELEGRAM",
-                    "https://t.me/TL905411603664",
-                ).strip()
-                or "https://t.me/TL905411603664",
-                whatsapp_url=os.environ.get(
-                    "KIANI_CONTACT_WHATSAPP",
-                    "https://wa.me/905392905686",
-                ).strip()
-                or "https://wa.me/905392905686",
-            )
-        )
+        add_kiani(build_kiani_try_post(get_rates()))
 
     if args.post in {"kiani-examples", "demo-formats"}:
         add_kiani(build_kiani_try_receive_post(get_rates()))
@@ -1756,3 +1723,4 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1)
+

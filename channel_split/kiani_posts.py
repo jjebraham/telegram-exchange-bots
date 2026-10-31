@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import html
+import os
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+
+
+def _contact_url(value: str | None, env_key: str) -> str:
+    configured = value if value is not None else os.getenv(env_key, "")
+    return configured.strip()
 
 PERSIAN_WEEKDAYS = (
     "دوشنبه",
@@ -102,32 +108,35 @@ def build_kiani_try_post(
     rates: dict[str, Decimal],
     *,
     now: datetime | None = None,
-    telegram_url: str = "https://t.me/TL905411603664",
-    whatsapp_url: str = "https://wa.me/905392905686",
+    telegram_url: str | None = None,
+    whatsapp_url: str | None = None,
 ) -> str:
     """Build the customer-facing TRY/Toman transaction-rate post."""
     buy_from_us = rates["buy_lira"]
     sell_to_us = rates["sell_lira"]
 
-    telegram_link = html.escape(telegram_url, quote=True)
-    whatsapp_link = html.escape(whatsapp_url, quote=True)
-
-    return "\n".join(
-        [
-            f"📆 <b>{html.escape(_jalali_timestamp(now))}</b>",
-            "",
-            "🇹🇷 <b>نرخ لیر ترکیه</b> به تومان 🇮🇷",
-            "",
-            "<pre>",
-            f"🟩 BUY   TL {_fmt_int(buy_from_us)} = خرید لیر از ما",
-            f"🟥 SELL  TL {_fmt_int(sell_to_us)} = فروش لیر به ما",
-            "</pre>",
-            "",
-            "⚠️ <b>لطفاً قبل از واریز هماهنگ کنید:</b>",
-            f'🔹 تلگرام: <a href="{telegram_link}">{telegram_link}</a>',
-            f'🔹 واتس‌اپ: <a href="{whatsapp_link}">{whatsapp_link}</a>',
-        ]
-    )
+    telegram = _contact_url(telegram_url, "KIANI_CONTACT_TELEGRAM")
+    whatsapp = _contact_url(whatsapp_url, "KIANI_CONTACT_WHATSAPP")
+    lines = [
+        f"📆 <b>{html.escape(_jalali_timestamp(now))}</b>",
+        "",
+        "🇹🇷 <b>نرخ لیر ترکیه</b> به تومان 🇮🇷",
+        "",
+        "<pre>",
+        f"🟩 BUY   TL {_fmt_int(buy_from_us)} = خرید لیر از ما",
+        f"🟥 SELL  TL {_fmt_int(sell_to_us)} = فروش لیر به ما",
+        "</pre>",
+    ]
+    contacts = []
+    if telegram:
+        link = html.escape(telegram, quote=True)
+        contacts.append(f'🔹 تلگرام: <a href="{link}">{link}</a>')
+    if whatsapp:
+        link = html.escape(whatsapp, quote=True)
+        contacts.append(f'🔹 واتس‌اپ: <a href="{link}">{link}</a>')
+    if contacts:
+        lines.extend(["", "⚠️ <b>لطفاً قبل از واریز هماهنگ کنید:</b>", *contacts])
+    return "\n".join(lines)
 
 
 def build_kiani_rate_post(
@@ -188,14 +197,15 @@ def build_kiani_remittance_post(
     *,
     now: datetime | None = None,
     order_handle: str = "@Kianiexchangebot",
-    telegram_url: str = "https://t.me/TL905411603664",
-    whatsapp_url: str = "https://wa.me/905392905686",
+    telegram_url: str | None = None,
+    whatsapp_url: str | None = None,
 ) -> str:
     """Format the separate seven-currency Kiani remittance-rate board.
 
     Rates must come from the existing remittance-rate source of truth.
     Do not substitute open-market or Kiani retail buy/sell quotes.
-    This pure formatter does not fetch rates or select a channel.
+    The formatter does not fetch rates or select a channel. Optional contact
+    links come from explicit arguments or the private publisher environment.
     Timestamps use Tehran time, matching the existing Hawala scheduler.
     """
     missing = [code for code, _, _ in REMITTANCE_CURRENCIES if code not in rates]
@@ -220,18 +230,21 @@ def build_kiani_remittance_post(
     for code, flag, label in REMITTANCE_CURRENCIES:
         amount = _fmt_persian_toman(rates[code])
         lines.append(f"{flag} {label}　<code>{amount}</code>")
-    telegram_link = html.escape(telegram_url, quote=True)
-    whatsapp_link = html.escape(whatsapp_url, quote=True)
+    telegram = _contact_url(telegram_url, "KIANI_CONTACT_TELEGRAM")
+    whatsapp = _contact_url(whatsapp_url, "KIANI_CONTACT_WHATSAPP")
     lines.extend([
         "",
         "💰 نرخ‌ها به تومان است",
         "━━━━━━━━━━━━━━",
         f"📲 نرخ لحظه‌ای و سایر ارزها: {html.escape(order_handle)}",
-        (
-            f'✈️ <a href="{telegram_link}">تلگرام</a>'
-            f'  |  💬 <a href="{whatsapp_link}">واتس‌اپ</a>'
-        ),
     ])
+    contacts = []
+    if telegram:
+        contacts.append(f'✈️ <a href="{html.escape(telegram, quote=True)}">تلگرام</a>')
+    if whatsapp:
+        contacts.append(f'💬 <a href="{html.escape(whatsapp, quote=True)}">واتس‌اپ</a>')
+    if contacts:
+        lines.append("  |  ".join(contacts))
     return "\n".join(lines)
 
 
@@ -301,3 +314,4 @@ def build_kiani_toman_receive_post(
             f"🤖 ثبت سفارش: {html.escape(order_handle)}",
         ]
     )
+

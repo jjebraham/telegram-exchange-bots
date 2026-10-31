@@ -19,6 +19,12 @@ admin percentages for USDT and TRY/USDT conversions:
 The bot no longer calculates Toman↔TRY buy/sell prices locally, so those values
 cannot drift from the Mini App or Kiani rate posts.
 
+Optional Telegram and WhatsApp contact links are read from
+`KIANI_CONTACT_TELEGRAM` and `KIANI_CONTACT_WHATSAPP`. When a value is unset,
+generated Kiani TRY and remittance posts omit that contact link. Configure the
+desired URLs in the private publisher environment; do not put contact values
+in source control.
+
 ## Compatibility check before activation
 
 Place `main_user_runtime.py`, `kiani_try_api.py`, and the existing
