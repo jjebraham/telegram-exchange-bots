@@ -2,7 +2,7 @@
 """Render and publish one daily Instagram Trial Reel using Meta graduation."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta
 import fcntl
 import hashlib
@@ -803,6 +803,28 @@ def _reserve_auto_slot(con, day, slot, now, reel_mode='trial'):
     con.execute("INSERT INTO scheduled_runs VALUES (?,?,'selecting',?,?,NULL,NULL)", (day, slot, now, now))
     return True
 
+
+@contextmanager
+def wait_for_scheduled_news_lock(factory, max_wait, *, sleeper=time.sleep, clock=time.monotonic):
+    """Wait only for the known busy-lock condition before starting selection."""
+    from instagram_crypto_news import NewsError
+    deadline = clock() + max(0, max_wait)
+    while True:
+        stack = ExitStack()
+        try:
+            stack.enter_context(factory('crypto'))
+        except NewsError as exc:
+            stack.close()
+            remaining = deadline - clock()
+            if str(exc) != 'A news selection/publisher is already running; retry after it finishes.' or remaining <= 0:
+                raise
+            print('News publisher is busy; scheduled Reel selection will retry.', flush=True)
+            sleeper(min(15, remaining))
+            continue
+        with stack:
+            yield
+        return
+
 def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
     """Choose and prepare the highest-ranked eligible story for one durable slot."""
     origin = 'daily_top_story' if reel_mode == 'trial' else 'daily_direct'
@@ -879,7 +901,10 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
                 WHERE status IN ('rendering','creating_container','container_processing','publishing','needs_review','published')''')}
         # This lock is shared with both ordinary news publishers, so event
         # history cannot change while the daily cross-category ranking runs.
-        with locks('crypto'):
+        hour, minute = (int(value) for value in slot.split(':'))
+        due = local.replace(hour=hour, minute=minute, second=0, microsecond=0).timestamp()
+        wait = max(0, min(300, due + 540 - time.time()))
+        with wait_for_scheduled_news_lock(locks, wait):
             for kind in ('crypto', 'economy'):
                 image_deadline[0] = None
                 configure_engine(kind)
@@ -948,8 +973,11 @@ def main():
             print(('Daily direct Reel' if args.direct_daily else 'Daily Trial Reel') + ' container queued: ' + result, flush=True)
         return 0
     except Exception as exc:
+        busy = (type(exc).__name__ == 'NewsError' and
+                str(exc) == 'A news selection/publisher is already running; retry after it finishes.')
         print(('Daily direct Reel' if args.direct_daily else 'Daily Trial Reel') + ' stopped: ' +
-              (str(exc) if isinstance(exc, TrialReelError) else type(exc).__name__), flush=True)
+              ('news selection lock remained busy' if busy else
+               str(exc) if isinstance(exc, TrialReelError) else type(exc).__name__), flush=True)
         return 1
 
 
