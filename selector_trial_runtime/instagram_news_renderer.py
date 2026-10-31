@@ -93,7 +93,7 @@ def hero_image(story, cache):
 def render_news(stories, output, asset_root, *, news_label='خبر کریپتو',
                 caption_title='صرافی کیانی | خبر کریپتو',
                 caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi',
-                require_image=False):
+                require_image=False, adaptive_body=False):
     """Render one cover and lossless large-type summary pages; never publish."""
     if len(stories) != 1:
         raise ValueError('Each readable news carousel must contain exactly one story.')
@@ -122,7 +122,21 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
 
     scratch = ImageDraw.Draw(Image.new('RGB', (1080, 1350)))
 
-    def wrap_spans(text, size, width, bold=False):
+    def body_x(text):
+        bounds = scratch.textbbox((0, 0), rtl(text), font=font(BODY_FONT_PX), anchor='rt')
+        return min(952, 968 - bounds[2])
+
+    def fits_line(text, size, width, bold, adaptive):
+        shaped = rtl(text)
+        if scratch.textlength(shaped, font=font(size, bold)) > width:
+            return False
+        if adaptive:
+            x = body_x(text)
+            left, _, right, _ = scratch.textbbox((x, 0), shaped, font=font(size, bold), anchor='rt')
+            return left >= 112 and right <= 968
+        return True
+
+    def wrap_spans(text, size, width, bold=False, adaptive=False):
         """Keep original character spans, including when a long token must wrap."""
         rows, cursor = [], 0
         while cursor < len(text):
@@ -131,7 +145,7 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
             if cursor == len(text):
                 break
             end = cursor
-            while end < len(text) and scratch.textlength(rtl(text[cursor:end+1]), font=font(size, bold)) <= width:
+            while end < len(text) and fits_line(text[cursor:end+1], size, width, bold, adaptive):
                 end += 1
             if end == cursor:
                 raise ValueError('A glyph exceeds the fixed readable text width.')
@@ -149,9 +163,19 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
     lines, start = [], 0
     stops = [(match.end(1), match.end()) for match in re.finditer(r'([.!?؟][»”"]?)(\s+)', summary)]
     for end, following in stops + [(len(summary), len(summary))]:
-        for row in wrap_spans(summary[start:end], BODY_FONT_PX, 824):
+        for row in wrap_spans(summary[start:end], BODY_FONT_PX, 824, adaptive=adaptive_body):
             lines.append(dict(start=row['start']+start, end=row['end']+start, text=row['text']))
         start = following
+    def adaptive_top(rows):
+        boxes = [scratch.textbbox((body_x(row['text']), i * BODY_LEADING), rtl(row['text']),
+                                  font=font(BODY_FONT_PX), anchor='rt')
+                 for i, row in enumerate(rows)]
+        top = min(box[1] for box in boxes)
+        bottom = max(box[3] for box in boxes)
+        if bottom - top > 675:
+            return None
+        return 440 + (675 - (bottom - top)) // 2 - top
+
     pages = []
     while lines:
         count = min(BODY_LINES_PER_PAGE, len(lines))
@@ -160,6 +184,11 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
                 if re.search(r'[.!?؟][»”"]?$', lines[candidate-1]['text']):
                     count = candidate
                     break
+        if adaptive_body:
+            while count and adaptive_top(lines[:count]) is None:
+                count -= 1
+            if not count:
+                raise ValueError('A text line exceeds the fixed readable card height.')
         pages.append(lines[:count])
         lines = lines[count:]
     if not pages or len(pages) > 9:
@@ -257,14 +286,15 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
         draw.rounded_rectangle((856, 389, 1016, 397), radius=4, fill=GREEN)
         draw.rounded_rectangle((64, 425, 1016, 1145), radius=32, fill='#FFFFFF')
         block_height = (len(rows)-1)*BODY_LEADING + BODY_FONT_PX
-        top = 425 + max(36, (720-block_height)//2)
+        top = adaptive_top(rows) if adaptive_body else 425 + max(36, (720-block_height)//2)
         for row_index, row in enumerate(rows):
             y = top + row_index*BODY_LEADING
             shaped = rtl(row['text'])
-            bounds = draw.textbbox((952, y), shaped, font=font(BODY_FONT_PX), anchor='rt')
+            x = body_x(row['text']) if adaptive_body else 952
+            bounds = draw.textbbox((x, y), shaped, font=font(BODY_FONT_PX), anchor='rt')
             if bounds[0] < 112 or bounds[2] > 968 or bounds[1] < 440 or bounds[3] > 1115:
                 raise ValueError('Large-type text exceeds its safe card; nothing was truncated.')
-            fa(draw, row['text'], (952, y), BODY_FONT_PX)
+            fa(draw, row['text'], (x, y), BODY_FONT_PX)
         if index < total:
             fa(draw, 'به چپ بکشید', (1016, 1184), 35, bold=True, fill=GREEN)
             arrow(draw, 1200)
@@ -303,3 +333,4 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
     (output / (prefix + '.json')).write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(f'News carousel: {len(paths)} slides; body {BODY_FONT_PX}px; full verified summary preserved.', flush=True)
     return paths, caption, manifest
+
