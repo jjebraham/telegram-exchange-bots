@@ -1,91 +1,47 @@
-# Shared pricing admin integration for `main_user_bot`
+# Canonical TRY and shared pricing integration for the main user bot
 
-The unified panel at `https://peerexo.com/alanchande/` stores all percentages in:
+The unified admin panel owns the retail adjustment settings. The main user bot
+source is maintained outside this repository, so `main_user_runtime.py` applies
+the reviewed handler changes in memory and never overwrites that source file.
 
-```text
-/home/kianirad2020/send_changes/pricing_settings.db
-```
+## Rate behavior
 
-The production bot is currently outside this repository at:
+The lira buy/sell display handlers read their adjusted Toman↔TRY pair from the
+canonical `/api/rates/try` endpoint. If the endpoint is invalid, stale, or
+unavailable, the bot displays no TRY quote. The wrapper continues to read the
+admin percentages for USDT and TRY/USDT conversions:
 
-```text
-/home/kianirad2020/telegram_bot/main_user_bot.py
-```
+- `user_usdt_buy_adjustment_pct`
+- `user_usdt_sell_adjustment_pct`
+- `user_try_to_usdt_adjustment_pct`
+- `user_usdt_to_try_adjustment_pct`
 
-For that reason this integration does **not** overwrite the production file. `main_user_runtime.py` reads the file, strictly replaces the reviewed hard-coded price multipliers in memory, compiles the transformed program, and starts its existing async `main()` function.
+The bot no longer calculates Toman↔TRY buy/sell prices locally, so those values
+cannot drift from the Mini App or Kiani rate posts.
 
-## Controlled settings
+Optional Telegram and WhatsApp contact links are read from
+`KIANI_CONTACT_TELEGRAM` and `KIANI_CONTACT_WHATSAPP`. When a value is unset,
+generated Kiani TRY and remittance posts omit that contact link. Configure the
+desired URLs in the private publisher environment; do not put contact values
+in source control.
 
-The wrapper reads these settings immediately whenever a user requests a rate:
+## Compatibility check before activation
 
-- `user_tl_buy_adjustment_pct` — default `+0.67%`
-- `user_tl_sell_adjustment_pct` — default `-3.00%`
-- `user_usdt_buy_adjustment_pct` — default `+1.00%`
-- `user_usdt_sell_adjustment_pct` — default `-1.00%`
-- `user_try_to_usdt_adjustment_pct` — default `+2.00%`
-- `user_usdt_to_try_adjustment_pct` — default `-2.00%`
+Place `main_user_runtime.py`, `kiani_try_api.py`, and the existing
+`main_user_pricing_client.py` beside the bot runtime. Set
+`MAIN_USER_BOT_SOURCE`, `KIANI_TRY_RATES_URL`, and `PRICING_DB_PATH` in the
+existing secure service environment, then run `main_user_runtime.py --check`
+using the same Python environment as that service.
 
-These defaults preserve the current calculations in the tracked `main_user_bot_clone.py`.
+The check must compile all expected pricing handlers. If it fails, make no
+service configuration changes; review the bot source drift first.
 
-## Mandatory production compatibility check
+## Activation and rollback
 
-Copy these two reviewed files to the production directory:
+This repository intentionally contains no service-manager configuration.
+Activate only after review and explicit approval, following the private
+deployment runbook for the existing service. Preserve its current options and
+environment values. For rollback, restore the previously recorded service
+command and restart only after approval. The original bot source is never
+modified by this integration.
 
-```bash
-cp main_user_pricing_client.py /home/kianirad2020/telegram_bot/
-cp main_user_runtime.py /home/kianirad2020/telegram_bot/
-```
-
-Then run the strict check using the same Python environment as Supervisor:
-
-```bash
-cd /home/kianirad2020/telegram_bot
-MAIN_USER_BOT_SOURCE=/home/kianirad2020/telegram_bot/main_user_bot.py \
-PRICING_DB_PATH=/home/kianirad2020/send_changes/pricing_settings.db \
-/usr/bin/python3 main_user_runtime.py --check
-```
-
-Expected result:
-
-```text
-OK: patched and compiled 12 pricing handlers from /home/kianirad2020/telegram_bot/main_user_bot.py
-```
-
-If the command fails, do **not** change Supervisor. The failure means the running file differs from the reviewed clone and needs a targeted review first.
-
-## Supervisor change after a successful check
-
-Find the existing `[program:main_user_bot]` configuration and change only its command to:
-
-```ini
-command=/usr/bin/python3 /home/kianirad2020/telegram_bot/main_user_runtime.py
-```
-
-Add these environment values to the same program:
-
-```ini
-environment=MAIN_USER_BOT_SOURCE="/home/kianirad2020/telegram_bot/main_user_bot.py",PRICING_DB_PATH="/home/kianirad2020/send_changes/pricing_settings.db"
-```
-
-Preserve all existing Supervisor options and existing environment variables. Then apply:
-
-```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl restart main_user_bot
-sudo supervisorctl status main_user_bot
-```
-
-## Rollback
-
-Restore the original Supervisor command:
-
-```ini
-command=/usr/bin/python3 /home/kianirad2020/telegram_bot/main_user_bot.py
-```
-
-Then reread, update, and restart the program. The original bot file is never modified by this integration.
-
-## Security warning
-
-Historical commits may still contain previously exposed credentials. Keep the current source environment-based, rotate every exposed credential, and purge the old values from Git history.

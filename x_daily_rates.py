@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Publish Kiani Exchange customer rates to X.
 
-The production mini-app remains the source of truth. This script reads the same
-public `/api/rates/current` payload that powers the mini-app and supports:
+The publisher reads non-TRY assets from `/api/rates/current` and replaces the
+TRY/Toman pair with the validated admin-adjusted `/api/rates/try` result. It supports:
 
 - link-free regular rate posts,
 - time-of-day variants so scheduled posts are not identical,
@@ -28,20 +28,24 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
+from kiani_try_api import (
+    DEFAULT_CANONICAL_TRY_RATES_URL,
+    fetch_canonical_try_rates,
+    merge_canonical_try_rates,
+)
 from x_post_policy import finish, validate_text
 
 DEFAULT_RATES_URL = "https://miniapp.kiani.exchange/api/rates/current"
 X_CREATE_POST_URL = "https://api.x.com/2/tweets"
 ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 
-REQUIRED_RATE_KEYS = (
-    "buy_lira",
-    "sell_lira",
+CURRENT_RATE_KEYS = (
     "buy_usdt",
     "sell_usdt",
     "lira_to_usdt",
     "usdt_to_lira",
 )
+REQUIRED_RATE_KEYS = ("buy_lira", "sell_lira", *CURRENT_RATE_KEYS)
 ALERT_RATE_KEYS = (
     "buy_lira",
     "sell_lira",
@@ -101,11 +105,11 @@ def fetch_current_rates(
             if not isinstance(raw_rates, dict):
                 raise ValueError("Rates API response does not contain a 'rates' object")
 
-            missing = [key for key in REQUIRED_RATE_KEYS if key not in raw_rates]
+            missing = [key for key in CURRENT_RATE_KEYS if key not in raw_rates]
             if missing:
                 raise ValueError(f"Rates API response is missing: {', '.join(missing)}")
 
-            return {key: _positive_decimal(raw_rates[key], key) for key in REQUIRED_RATE_KEYS}
+            return {key: _positive_decimal(raw_rates[key], key) for key in CURRENT_RATE_KEYS}
 
         except HTTPError as exc:
             detail = exc.read(1000).decode("utf-8", errors="replace")
@@ -383,6 +387,16 @@ def main() -> int:
 
     rates_url = os.getenv("KIANI_RATES_URL", DEFAULT_RATES_URL).strip() or DEFAULT_RATES_URL
     rates = fetch_current_rates(rates_url)
+    canonical_try_url = (
+        os.getenv("KIANI_TRY_RATES_URL", DEFAULT_CANONICAL_TRY_RATES_URL).strip()
+        or DEFAULT_CANONICAL_TRY_RATES_URL
+    )
+    # The X rate board includes other assets from /current, but the customer
+    # TRY pair must always match the admin-adjusted canonical endpoint.
+    rates = merge_canonical_try_rates(
+        rates,
+        fetch_canonical_try_rates(canonical_try_url),
+    )
 
     if args.mode == "alert":
         previous = load_rate_state(args.state_file)
@@ -432,3 +446,4 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1)
+

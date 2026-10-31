@@ -1,8 +1,8 @@
-"""Run the existing interactive bot with live pricing percentages.
+"""Run the interactive bot with canonical TRY rates and live admin pricing.
 
 The production bot file is intentionally left unchanged. This entry point reads it,
-strictly replaces the reviewed hard-coded pricing expressions in memory, compiles
-the transformed source, and then runs its async ``main`` function.
+strictly replaces the reviewed TRY rate handlers and remaining pricing expressions
+in memory, compiles the transformed source, and then runs its async ``main`` function.
 """
 
 from __future__ import annotations
@@ -15,9 +15,6 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-DEFAULT_SOURCE_PATH = "/home/kianirad2020/telegram_bot/main_user_bot.py"
-
-
 class RuntimePatchError(RuntimeError):
     """Raised when the production source no longer matches the reviewed code."""
 
@@ -25,26 +22,78 @@ class RuntimePatchError(RuntimeError):
 PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
     "buy_lira_user": (
         (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"0.67\"))",
+            """    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    await wait1.delete()
+    if not usdt_irr or not usdt_try:
+        await message.answer(\"⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+    eff_toman = usdt_irr / 10
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)
+""",
+            """    rate = await _canonical_try_rate(\"buy_lira\")
+    await wait1.delete()
+    if rate is None:
+        await message.answer(\"⚠️ نرخ خرید لیر در حال حاضر در دسترس نیست. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+""",
         ),
     ),
     "main_menu_buy_lira_rate": (
         (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_buy_adjustment_pct\", \"0.67\"))",
+            """    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    await wait1.delete()
+    if not usdt_irr or not usdt_try:
+        await message.answer(\"⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+    eff_toman = usdt_irr / 10
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 1.0167)
+""",
+            """    rate = await _canonical_try_rate(\"buy_lira\")
+    await wait1.delete()
+    if rate is None:
+        await message.answer(\"⚠️ نرخ خرید لیر در حال حاضر در دسترس نیست. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+""",
         ),
     ),
     "sell_lira_user": (
         (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_sell_adjustment_pct\", \"-3.00\"))",
+            """    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    await wait1.delete()
+    if not usdt_irr or not usdt_try:
+        await message.answer(\"⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+    eff_toman = usdt_irr / 10
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+""",
+            """    rate = await _canonical_try_rate(\"sell_lira\")
+    await wait1.delete()
+    if rate is None:
+        await message.answer(\"⚠️ نرخ فروش لیر در حال حاضر در دسترس نیست. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+""",
         ),
     ),
     "main_menu_sell_lira_rate": (
         (
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)",
-            "rate = round_to_nearest_10((eff_toman / usdt_try) * _pricing_factor(\"user_tl_sell_adjustment_pct\", \"-3.00\"))",
+            """    usdt_irr = await price_cache.get_usdt_irr()
+    usdt_try = await price_cache.get_usdt_try()
+    await wait1.delete()
+    if not usdt_irr or not usdt_try:
+        await message.answer(\"⚠️ متاسفانه در حال حاضر امکان دریافت نرخ وجود ندارد. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+    eff_toman = usdt_irr / 10
+    rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
+""",
+            """    rate = await _canonical_try_rate(\"sell_lira\")
+    await wait1.delete()
+    if rate is None:
+        await message.answer(\"⚠️ نرخ فروش لیر در حال حاضر در دسترس نیست. لطفاً دقایقی دیگر دوباره تلاش کنید.\")
+        return
+""",
         ),
     ),
     "buy_tether_user": (
@@ -97,7 +146,7 @@ PATCH_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-HELPER_SOURCE = '''\nfrom main_user_pricing_client import get_adjustment_factor as _get_adjustment_factor\n\ndef _pricing_factor(key, default_percentage):\n    return float(_get_adjustment_factor(key, default_percentage))\n\n'''
+HELPER_SOURCE = '''\nimport asyncio as _canonical_asyncio\nimport logging as _canonical_logging\nfrom kiani_try_api import fetch_canonical_try_rates as _fetch_canonical_try_rates\nfrom main_user_pricing_client import get_adjustment_factor as _get_adjustment_factor\n\ndef _pricing_factor(key, default_percentage):\n    return float(_get_adjustment_factor(key, default_percentage))\n\nasync def _canonical_try_rate(key):\n    try:\n        rates = await _canonical_asyncio.to_thread(\n            _fetch_canonical_try_rates, timeout=5, attempts=2, retry_delay=1\n        )\n        return int(rates[key])\n    except Exception:\n        _canonical_logging.exception("Could not load the canonical TRY rate for %s", key)\n        return None\n\n'''
 
 
 def _function_nodes(source: str) -> dict[str, ast.AsyncFunctionDef]:
@@ -163,9 +212,12 @@ def transform_source(source: str) -> tuple[str, tuple[str, ...]]:
 
 
 def source_path_from_environment() -> Path:
-    return Path(
-        os.getenv("MAIN_USER_BOT_SOURCE", DEFAULT_SOURCE_PATH)
-    ).expanduser().resolve()
+    configured_source = os.getenv("MAIN_USER_BOT_SOURCE", "").strip()
+    if not configured_source:
+        raise RuntimePatchError(
+            "MAIN_USER_BOT_SOURCE must identify the existing user bot source"
+        )
+    return Path(configured_source).expanduser().resolve()
 
 
 def load_and_transform(source_path: Path) -> tuple[str, tuple[str, ...]]:
@@ -241,3 +293,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

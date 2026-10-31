@@ -126,7 +126,7 @@ export default function DashboardPage({
 }) {
   const [now, setNow] = useState(() => Date.now());
   const usdtAvailable = isDisplayReady(rateSources.current, now);
-  const tryAvailable = isDisplayReady(rateSources.currentTry ?? rateSources.current, now);
+  const tryAvailable = isDisplayReady(rateSources.canonical, now);
   const displayAvailable = usdtAvailable || tryAvailable;
   const usdtTradable = isTradeReady(rateSources, 'buy_usdt', now);
   const tryTradable = isTradeReady(rateSources, 'buy_lira', now);
@@ -327,7 +327,7 @@ export default function DashboardPage({
             title="لیر"
             available={tryAvailable}
             indicative={!tryTradable}
-            sourceCount={(rateSources.currentTry ?? rateSources.current).sourceCount}
+            sourceCount={rateSources.canonical.sourceCount}
             code="TRY"
             buy={rates.buy_lira}
             sell={rates.sell_lira}
@@ -397,3 +397,4 @@ export default function DashboardPage({
     </div>
   );
 }
+

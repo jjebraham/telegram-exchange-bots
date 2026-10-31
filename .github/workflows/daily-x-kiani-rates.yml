@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "x_daily_rates.py"
+      - "kiani_try_api.py"
       - "x_post_policy.py"
       - "x_channel_*.py"
       - "tests/test_x_channel_posts.py"
@@ -14,6 +15,7 @@ on:
       - "deploy/systemd/kiani-x-*"
       - "x_text/**"
       - "tests/test_x_daily_rates.py"
+      - "tests/test_kiani_try_api.py"
       - ".github/workflows/daily-x-kiani-rates.yml"
       - "X_DAILY_RATES_SETUP.md"
   schedule:
@@ -68,6 +70,7 @@ jobs:
       X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
       X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
       KIANI_RATES_URL: https://miniapp.kiani.exchange/api/rates/current
+      KIANI_TRY_RATES_URL: https://miniapp.kiani.exchange/api/rates/try
       X_RATE_STATE_FILE: .x-rate-state/latest.json
       X_RATE_ALERT_THRESHOLD: "0.5"
 
@@ -87,8 +90,8 @@ jobs:
 
       - name: Syntax and formatting tests
         run: |
-          python -m py_compile x_daily_rates.py
-          python -m unittest tests.test_x_daily_rates tests.test_x_channel_posts tests.test_x_export tests.test_hawala_x_bridge -v
+          python -m py_compile kiani_try_api.py x_daily_rates.py channel_split/publish_channels.py main_user_runtime.py
+          python -m unittest tests.test_kiani_try_api tests.test_x_daily_rates tests.test_x_channel_posts tests.test_x_export tests.test_hawala_x_bridge tests.test_channel_split_kiani_posts -v
 
       - name: Restore last published rate state
         if: ${{ github.event_name != 'pull_request' }}
@@ -148,3 +151,4 @@ jobs:
       - name: Check for significant hourly rate movement
         if: ${{ github.event_name == 'schedule' && github.event.schedule == '37 8-22 * * *' }}
         run: python x_daily_rates.py --mode alert --alert-threshold "$X_RATE_ALERT_THRESHOLD" --state-file "$X_RATE_STATE_FILE"
+

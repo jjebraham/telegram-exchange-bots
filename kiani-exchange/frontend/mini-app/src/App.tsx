@@ -1,5 +1,6 @@
 import kianiBrandLockup from './assets/kiani-brand-lockup.png';
-import { isTradeReady, MINIMUM_TRADE_SOURCES } from './rateAvailability';
+import { dashboardRatesWithCanonicalTry } from './dashboardTryRates.mjs';
+import { isDisplayReady, isTradeReady, MINIMUM_TRADE_SOURCES } from './rateAvailability';
 import type { RateSources, RateSourceState } from './rateAvailability';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { calculateFee, calculateReceiveAmount } from './exchangeMath';
@@ -180,6 +181,7 @@ function App() {
   );
   const [selectedExchange, setSelectedExchange] = useState<ExchangeType | null>(null);
   const displayRatesRef = useRef<Rates>(rates);
+  const canonicalDisplayRatesRef = useRef<Pick<Rates, 'buy_lira' | 'sell_lira'> | null>(null);
   const hasLoadedRatesRef = useRef(false);
   const rateRequestRef = useRef(false);
   const changedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -268,25 +270,20 @@ function App() {
       displayRatesRef.current = next;
       setDisplayRates(next);
 
-      setRateDeltas({
+      setRateDeltas((old) => ({
+        ...old,
         usdt: previous.buy_usdt > 0
           ? ((values.buy_usdt - previous.buy_usdt) / previous.buy_usdt) * 100 : 0,
-        try: previous.buy_lira > 0
-          ? ((values.buy_lira - previous.buy_lira) / previous.buy_lira) * 100 : 0,
-      });
+      }));
 
       const changed = new Set<string>();
       if (previous.buy_usdt > 0 && previous.buy_usdt !== next.buy_usdt)
         changed.add('usdt-buy');
       if (previous.sell_usdt > 0 && previous.sell_usdt !== next.sell_usdt)
         changed.add('usdt-sell');
-      if (previous.buy_lira > 0 && previous.buy_lira !== next.buy_lira)
-        changed.add('try-buy');
-      if (previous.sell_lira > 0 && previous.sell_lira !== next.sell_lira)
-        changed.add('try-sell');
 
       if (changed.size) {
-        setChangedRates(changed);
+        setChangedRates((old) => new Set([...old, ...changed]));
         if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
         changedTimerRef.current = setTimeout(
           () => setChangedRates(new Set()),
@@ -402,7 +399,23 @@ function App() {
         }
 
         const receivedAt = Date.now() - age * 1000;
+        const previous = canonicalDisplayRatesRef.current;
+        canonicalDisplayRatesRef.current = values;
         setRates((old) => ({ ...old, ...values }));
+        if (previous) {
+          setRateDeltas((old) => ({
+            ...old,
+            try: ((values.buy_lira - previous.buy_lira) / previous.buy_lira) * 100,
+          }));
+          const changed = new Set<string>();
+          if (previous.buy_lira !== values.buy_lira) changed.add('try-buy');
+          if (previous.sell_lira !== values.sell_lira) changed.add('try-sell');
+          if (changed.size) {
+            setChangedRates((old) => new Set([...old, ...changed]));
+            if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
+            changedTimerRef.current = setTimeout(() => setChangedRates(new Set()), 1100);
+          }
+        }
         setRateSources((old) => ({
           ...old,
           canonical: { ok: true, receivedAt, expiresAt: receivedAt + 90_000, transactionRatesAvailable: true, sourceCount },
@@ -535,7 +548,11 @@ function App() {
       <main className={activeTab === 'dashboard' ? 'ke-main ke-dashboard-main' : 'ke-main ke-legacy-main'}>
         {activeTab === 'dashboard' && (
           <CustomerMarketDashboard
-            rates={displayRates}
+            rates={dashboardRatesWithCanonicalTry(
+              displayRates,
+              rates,
+              isDisplayReady(rateSources.canonical),
+            )}
             loading={loading}
             onExchangeClick={handleExchangeClick}
             onRefresh={fetchRates}
