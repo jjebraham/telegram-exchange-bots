@@ -1,5 +1,9 @@
+Warning: truncated output (original token count: 22417)
+Total output lines: 2220
+
 import kianiBrandLockup from './assets/kiani-brand-lockup.png';
-import { isTradeReady, MINIMUM_TRADE_SOURCES } from './rateAvailability';
+import { dashboardRatesWithCanonicalTry } from './dashboardTryRates.mjs';
+import { isDisplayReady, isTradeReady, MINIMUM_TRADE_SOURCES } from './rateAvailability';
 import type { RateSources, RateSourceState } from './rateAvailability';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { calculateFee, calculateReceiveAmount } from './exchangeMath';
@@ -180,6 +184,7 @@ function App() {
   );
   const [selectedExchange, setSelectedExchange] = useState<ExchangeType | null>(null);
   const displayRatesRef = useRef<Rates>(rates);
+  const canonicalDisplayRatesRef = useRef<Pick<Rates, 'buy_lira' | 'sell_lira'> | null>(null);
   const hasLoadedRatesRef = useRef(false);
   const rateRequestRef = useRef(false);
   const changedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -268,25 +273,19 @@ function App() {
       displayRatesRef.current = next;
       setDisplayRates(next);
 
-      setRateDeltas({
+      setRateDeltas((old) => ({
+        ...old,
         usdt: previous.buy_usdt > 0
           ? ((values.buy_usdt - previous.buy_usdt) / previous.buy_usdt) * 100 : 0,
-        try: previous.buy_lira > 0
-          ? ((values.buy_lira - previous.buy_lira) / previous.buy_lira) * 100 : 0,
-      });
+      }));
 
       const changed = new Set<string>();
       if (previous.buy_usdt > 0 && previous.buy_usdt !== next.buy_usdt)
         changed.add('usdt-buy');
       if (previous.sell_usdt > 0 && previous.sell_usdt !== next.sell_usdt)
         changed.add('usdt-sell');
-      if (previous.buy_lira > 0 && previous.buy_lira !== next.buy_lira)
-        changed.add('try-buy');
-      if (previous.sell_lira > 0 && previous.sell_lira !== next.sell_lira)
-        changed.add('try-sell');
-
       if (changed.size) {
-        setChangedRates(changed);
+        setChangedRates((old) => new Set([...old, ...changed]));
         if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
         changedTimerRef.current = setTimeout(
           () => setChangedRates(new Set()),
@@ -402,7 +401,23 @@ function App() {
         }
 
         const receivedAt = Date.now() - age * 1000;
+        const previous = canonicalDisplayRatesRef.current;
+        canonicalDisplayRatesRef.current = values;
         setRates((old) => ({ ...old, ...values }));
+        if (previous) {
+          setRateDeltas((old) => ({
+            ...old,
+            try: ((values.buy_lira - previous.buy_lira) / previous.buy_lira) * 100,
+          }));
+          const changed = new Set<string>();
+          if (previous.buy_lira !== values.buy_lira) changed.add('try-buy');
+          if (previous.sell_lira !== values.sell_lira) changed.add('try-sell');
+          if (changed.size) {
+            setChangedRates((old) => new Set([...old, ...changed]));
+            if (changedTimerRef.current) clearTimeout(changedTimerRef.current);
+            changedTimerRef.current = setTimeout(() => setChangedRates(new Set()), 1100);
+          }
+        }
         setRateSources((old) => ({
           ...old,
           canonical: { ok: true, receivedAt, expiresAt: receivedAt + 90_000, transactionRatesAvailable: true, sourceCount },
@@ -535,7 +550,11 @@ function App() {
       <main className={activeTab === 'dashboard' ? 'ke-main ke-dashboard-main' : 'ke-main ke-legacy-main'}>
         {activeTab === 'dashboard' && (
           <CustomerMarketDashboard
-            rates={displayRates}
+            rates={dashboardRatesWithCanonicalTry(
+              displayRates,
+              rates,
+              isDisplayReady(rateSources.canonical),
+            )}
             loading={loading}
             onExchangeClick={handleExchangeClick}
             onRefresh={fetchRates}
@@ -1030,250 +1049,7 @@ function ExchangePage({
       ) : (
         <div className="bg-white rounded-2xl p-6 shadow-lg">
           <h2 className="text-2xl font-bold text-green-600 mb-6 text-center">
-            درخواست ثبت شد
-          </h2>
-
-          <div className="space-y-4">
-            <InfoRow label="شماره پیگیری" value={transactionRef} />
-            <InfoRow
-              label="نام"
-              value={`${user?.first_name} ${user?.last_name}`}
-            />
-            <InfoRow label="شماره تماس" value={user?.phone_number || ''} />
-            <InfoRow
-              label="نوع معامله"
-              value={EXCHANGE_LABELS[selectedExchange]}
-            />
-            <InfoRow
-              label="مبلغ ارسالی"
-              value={`${parseFloat(removeCommas(amount)).toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'send')}`}
-            />
-            {fee > 0 && (
-              <InfoRow
-                label="کارمزد"
-                value={`${fee.toLocaleString('fa-IR')} ${getCurrencyUnit(selectedExchange, 'receive')}`}
-              />
-            )}
-            <InfoRow
-              label="مبلغ دریافتی"
-              value={formatReceiveAmount(receiveAmount, selectedExchange, 'receive')}
-            />
-            <InfoRow
-              label="تاریخ و زمان"
-              value={new Date().toLocaleString('fa-IR')}
-            />
-
-            {/* Countdown Timer */}
-            <div className="bg-yellow-50 border-2 border-yellow-200 rounded-xl p-4">
-              <p className="text-sm text-gray-700 mb-2">زمان باقیمانده:</p>
-              <p className="text-3xl font-bold text-yellow-600 text-center font-mono">
-                {formatCountdown(countdown)}
-              </p>
-            </div>
-
-            {/* Status */}
-            <div className="bg-blue-50 rounded-xl p-4">
-              <p className="text-sm text-gray-700 mb-2">وضعیت:</p>
-              <span className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-full font-semibold">
-                در انتظار تایید
-              </span>
-            </div>
-
-            {/* Cancel Button */}
-            <button
-              onClick={async () => {
-                if (!confirm('آیا مطمئن هستید که می‌خواهید این درخواست را لغو کنید؟')) {
-                  return;
-                }
-                
-                try {
-                  // Call backend to cancel transaction
-                  const response = await fetch(`${API_URL}/transactions/${transactionRef}/cancel`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${localStorage.getItem('token')}`,
-                    },
-                  });
-                  
-                  if (response.ok) {
-                    // Clear countdown interval
-                    if (countdownIntervalRef.current) {
-                      clearInterval(countdownIntervalRef.current);
-                      countdownIntervalRef.current = null;
-                    }
-                    
-                    // Reset form
-                    setRequestSubmitted(false);
-                    setAmount('');
-                    setFormattedAmount('');
-                    setNumericAmount(0);
-                    setReceiveAmount(0);
-                    setFee(0);
-                    setTotalAmount(0);
-                    setError('');
-                    setCountdown(3600);
-                    setTransactionRef('');
-                    notifyMessage('درخواست با موفقیت لغو شد');
-                  } else {
-                    // Try to get error details from response
-                    try {
-                      const errorData = await response.json();
-                      notifyMessage(`خطا در لغو درخواست: ${errorData.detail || 'خطای ناشناخته'}`);
-                    } catch {
-                      notifyMessage(`خطا در لغو درخواست (کد: ${response.status})`);
-                    }
-                    
-                    // Even if cancel fails, reset the form so user can try again
-                    // Clear countdown interval
-                    if (countdownIntervalRef.current) {
-                      clearInterval(countdownIntervalRef.current);
-                      countdownIntervalRef.current = null;
-                    }
-                    
-                    setRequestSubmitted(false);
-                    setAmount('');
-                    setFormattedAmount('');
-                    setNumericAmount(0);
-                    setReceiveAmount(0);
-                    setFee(0);
-                    setTotalAmount(0);
-                    setError('');
-                    setCountdown(3600);
-                  }
-                } catch (error) {
-                  console.error('Cancel error:', error);
-                  notifyMessage('خطا در ارتباط با سرور. لطفاً اتصال اینترنت خود را بررسی کنید.');
-                  
-                  // Reset form even on network error
-                  // Clear countdown interval
-                  if (countdownIntervalRef.current) {
-                    clearInterval(countdownIntervalRef.current);
-                    countdownIntervalRef.current = null;
-                  }
-                  
-                  setRequestSubmitted(false);
-                  setAmount('');
-                  setFormattedAmount('');
-                  setNumericAmount(0);
-                  setReceiveAmount(0);
-                  setFee(0);
-                  setTotalAmount(0);
-                  setError('');
-                  setCountdown(3600);
-                }
-              }}
-              className="w-full py-3 bg-red-100 text-red-600 rounded-xl font-semibold hover:bg-red-200"
-            >
-              لغو درخواست
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── PART 4: Registration Page ──────────────────────────────────────────────
-
-interface RegistrationFormData {
-  firstName: string;
-  lastName: string;
-  fatherName: string;
-  nationalId: string;
-  dateOfBirth: string;
-  bankCardNumber: string;
-  phoneNumber: string;
-  password: string;
-  confirmPassword: string;
-  acceptedTerms: boolean;
-}
-
-function RegistrationPage({
-  onLoginRedirect,
-}: {
-  onLoginRedirect: () => void;
-}) {
-  const [attempts, setAttempts] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
-  const [progress, setProgress] = useState(0);
-  type RegistrationStage = 'precheck' | 'mobile' | 'civil' | 'card' | 'creating' | 'done';
-  const [verificationStage, setVerificationStage] = useState<RegistrationStage>('precheck');
-  const [verificationModalStatus, setVerificationModalStatus] = useState<'idle' | 'working' | 'success' | 'error'>('idle');
-  const [verificationMessage, setVerificationMessage] = useState('');
-  const [registrationCompleted, setRegistrationCompleted] = useState(false);
-  const progressCeilingRef = useRef(18);
-  const [showTerms, setShowTerms] = useState(false);
-  const [registrationAvailability, setRegistrationAvailability] = useState<'loading' | 'ready' | 'paused' | 'unavailable'>('loading');
-  useEffect(() => {
-    let active = true;
-    fetch(`${API_URL}/users/registration-options`, { cache: 'no-store' })
-      .then(async (response) => {
-        const options = await response.json().catch(() => null);
-        if (!active) return;
-        setRegistrationAvailability(response.ok && options?.registration_enabled === true ? 'ready'
-          : response.ok && options?.reason === 'birth_date_verification_unavailable' ? 'paused' : 'unavailable');
-      })
-      .catch(() => { if (active) setRegistrationAvailability('unavailable'); });
-    return () => { active = false; };
-  }, []);
-  const [formData, setFormData] = useState<RegistrationFormData>({
-    firstName: '',
-    lastName: '',
-    fatherName: '',
-    nationalId: '',
-    dateOfBirth: '',
-    bankCardNumber: '',
-    phoneNumber: '',
-    password: '',
-    confirmPassword: '',
-    acceptedTerms: false,
-  });
-  const [errors, setErrors] = useState<Partial<Record<keyof RegistrationFormData, string>>>({});
-
-  useEffect(() => {
-    checkAttemptLimit();
-  }, []);
-
-  useEffect(() => {
-    if (!submitting) return;
-    const preventLeave = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', preventLeave);
-    return () => window.removeEventListener('beforeunload', preventLeave);
-  }, [submitting]);
-
-  const isValidNationalId = (nid: string) => {
-    // Exactly 10 digits and not all same digits
-    const cleaned = nid.replace(/\D/g, '');
-    return /^\d{10}$/.test(cleaned) && new Set(cleaned).size > 1;
-  };
-
-  const isValidJalaliDate = (date: string) => {
-    const cleaned = date.replace(/\//g, '');
-    // Must be exactly 8 digits
-    if (!/^\d{8}$/.test(cleaned)) return false;
-    
-    const year = parseInt(cleaned.substring(0, 4));
-    const month = parseInt(cleaned.substring(4, 6));
-    const day = parseInt(cleaned.substring(6, 8));
-    
-    // Year: 1300 to 1399, but 1387+ are under 18 and rejected later
-    if (year < 1300 || year > 1399) return false;
-    
-    // Month: 01 to 12
-    if (month < 1 || month > 12) return false;
-    
-    // Day: 01 to 31 (simple validation)
-    if (day < 1 || day > 31) return false;
-    
-    return true;
-  };
-
-  const isValidBankCard = (card: string) => {
-    const cleaned = card.replace(/\s/g, '').replace(/\D/g, '');
+            درخواست …2417 tokens truncated…ace(/\D/g, '');
     return /^\d{16}$/.test(cleaned) && isValidLuhn(cleaned);
   };
 
@@ -2201,3 +1977,4 @@ function HistoryPage() {
 }
 
 export default App;
+

@@ -1,0 +1,10 @@
+{
+  "name": "kiani-x-text-validator",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned official twitter-text validator used by Kiani X publishers",
+  "dependencies": {
+    "twitter-text": "3.1.0"
+  }
+}
+
