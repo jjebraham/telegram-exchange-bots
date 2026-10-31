@@ -34,6 +34,16 @@ if len(attempts) != 2 or elapsed[0] != 15:
     raise RuntimeError('Scheduled lock retry verification failed.')
 print('Busy news lock: retried and acquired without publication.')
 
+for message, expected in (
+    ('Translation introduced a number absent from the source.', 'unverified_number'),
+    ('Persian translation length is outside the card limits.', 'invalid_length'),
+    ('DeepSeek translation request failed (HTTP 402).', 'deepseek_http_402'),
+    ('private untrusted message https://example.invalid/token', 'other_news_error'),
+):
+    if reels.scheduled_translation_error(NewsError(message)) != expected:
+        raise RuntimeError('Safe translation-error classification failed.')
+print('Safe translation-error classification: passed.')
+
 try:
     blocked, history = ranked.histories(time.time())
     print('Read-only news history: accessible;',
@@ -45,3 +55,4 @@ except NewsError as exc:
     print('Read-only news history stopped:', message)
     raise SystemExit(1)
 print('No Meta, Telegram or DeepSeek request was made.')
+
