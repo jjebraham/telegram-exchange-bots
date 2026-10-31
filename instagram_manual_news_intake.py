@@ -77,6 +77,10 @@ def open_database():
     columns = {row['name'] for row in con.execute('PRAGMA table_info(submissions)')}
     if 'request_type' not in columns:
         con.execute("ALTER TABLE submissions ADD COLUMN request_type TEXT NOT NULL DEFAULT 'feed'")
+    if 'reel_length' not in columns:
+        con.execute("ALTER TABLE submissions ADD COLUMN reel_length TEXT")
+    import instagram_news_menu
+    instagram_news_menu.init(con)
     return con
 
 
@@ -134,10 +138,13 @@ def telegram(token, method, payload, *, timeout=35):
         raise IntakeError('Telegram request failed (' + detail + ').') from None
 
 
-def send_message(token, chat_id, text):
+def send_message(token, chat_id, text, reply_markup=None):
     if not isinstance(text, str) or not text:
         return
-    telegram(token, 'sendMessage', {'chat_id': str(chat_id), 'text': text[:3900]}, timeout=20)
+    payload = {'chat_id': str(chat_id), 'text': text[:3900]}
+    if reply_markup is not None:
+        payload['reply_markup'] = reply_markup
+    telegram(token, 'sendMessage', payload, timeout=20)
 
 
 def no_webhook(token):
@@ -149,7 +156,8 @@ def no_webhook(token):
 
 
 def ingest(con, updates, admins):
-    acknowledgements, final_messages = [], []
+    import instagram_news_menu as menu
+    acknowledgements, final_messages, callbacks = [], [], []
     if not isinstance(updates, list):
         raise IntakeError('Telegram returned an invalid update batch.')
     with con:
@@ -160,6 +168,33 @@ def ingest(con, updates, admins):
             current = get_offset(con)
             if current is None or offset > current:
                 set_offset(con, offset)
+            callback = update.get('callback_query')
+            if isinstance(callback, dict):
+                sender, message = callback.get('from'), callback.get('message')
+                chat = message.get('chat') if isinstance(message, dict) else None
+                if not isinstance(sender, dict) or not isinstance(chat, dict):
+                    continue
+                admin_id, chat_id = str(sender.get('id', '')), str(chat.get('id', ''))
+                if admin_id not in admins or chat.get('type') != 'private' or admin_id != chat_id:
+                    continue
+                match = re.fullmatch(r'nm:([A-Za-z0-9_-]{16}):(reel|trial|post|slides|story|short|long|cancel)',
+                                     str(callback.get('data', '')))
+                if not match:
+                    continue
+                state, choice = menu.select(con, token=match.group(1), value=match.group(2),
+                                            admin_id=admin_id, chat_id=chat_id)
+                callbacks.append((callback.get('id'), state))
+                if state == 'ready':
+                    con.execute('''INSERT OR IGNORE INTO submissions
+                        (update_id,admin_id,chat_id,message_id,source_url,source_key,received_at,
+                         status,request_type,reel_length,response,reply_sent)
+                        VALUES (?,?,?,?,?,?,?,'received',?,?,'',0)''',
+                        (choice['update_id'], admin_id, chat_id, choice['message_id'],
+                         choice['source_url'], choice['source_key'], choice['created_at'],
+                         choice['request_type'], choice['reel_length']))
+                    acknowledgements.append((choice['update_id'], chat_id,
+                        'انتخاب ثبت شد؛ خبر برای انتشار آماده می‌شود.'))
+                continue
             message = update.get('message')
             if not isinstance(message, dict):
                 continue
@@ -174,7 +209,7 @@ def ingest(con, updates, admins):
             text = str(raw_text).strip()
             if text.startswith(('/start', '/help')):
                 final_messages.append((update['update_id'], chat_id,
-                    'برای خبر معمولی، لینک را بفرستید. برای Trial Reel از /trial و برای انتشار مستقیم Reel از /reel پیش از لینک استفاده کنید؛ نمونه: /reel https://example.com/news. انتشار مستقیم در فید دیده می‌شود و اگر در دو ساعت به ۲۰۰ بازدید نرسد، پس از دو بررسی کم‌بودن بازدید ممکن است حذف شود.'))
+                    'لینک خبر را بفرستید و نوع انتشار را از دکمه‌ها انتخاب کنید. دستورهای /reel و /trial نیز همچنان قابل استفاده هستند.'))
                 continue
             trial_match = re.match(r'^/trial(?:@[A-Za-z0-9_]+)?(?:\s|$)', text, re.IGNORECASE)
             reel_match = re.match(r'^/reel(?:@[A-Za-z0-9_]+)?(?:\s|$)', text, re.IGNORECASE)
@@ -215,6 +250,11 @@ def ingest(con, updates, admins):
                     (update['update_id'], admin_id, chat_id, int(message.get('message_id', 0)),
                      time.time(), request_type, 'لینک قابل پردازش نیست. نشانی مقاله را بررسی کنید.'))
                 continue
+            if command_match is None:
+                menu.create(con, update_id=update['update_id'], admin_id=admin_id,
+                            chat_id=chat_id, message_id=int(message.get('message_id', 0)),
+                            source_url=source_url, source_key=source_key)
+                continue
             con.execute('''INSERT OR IGNORE INTO submissions
                 (update_id,admin_id,chat_id,message_id,source_url,source_key,received_at,status,request_type,response,reply_sent)
                 VALUES (?,?,?,?,?,?,?,'received',?,'',0)''',
@@ -224,7 +264,7 @@ def ingest(con, updates, admins):
             if saved and saved['status'] == 'received':
                 acknowledgements.append((update['update_id'], chat_id,
                     'لینک دریافت شد؛ منبع، تازگی و محتوای خبر را بررسی می‌کنم.'))
-    return acknowledgements, final_messages
+    return acknowledgements, final_messages, callbacks
 
 
 def recent_duplicate(con, source_key, except_update):
@@ -307,6 +347,40 @@ def classify(engine, ranked, con, material, now, *, allow_opinion=False, trial_r
     return ('crypto', scored['crypto']) if crypto_relevance > economy_relevance else ('economy', scored['economy'])
 
 
+def short_reel_summary(title, summary, material):
+    """Summarize the existing translation; retain its facts and uncertainty."""
+    from economy_news_translation import request_completion, validate_translation
+    key = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+    if not key:
+        raise IntakeError('کلید ترجمه در دسترس نیست؛ نسخه کوتاه ساخته نشد.')
+    body = {
+        'model': os.getenv('DEEPSEEK_MODEL', 'deepseek-flash'), 'temperature': 0,
+        'thinking': {'type': 'disabled'}, 'response_format': {'type': 'json_object'},
+        'max_tokens': 1200,
+        'messages': [
+            {'role': 'system', 'content':
+             'Summarize the provided Persian news in one or two complete sentences, 20 to 300 characters. '
+             'Return JSON with summary_fa only. Use only supplied facts. Preserve uncertainty, '
+             'negation, attribution and essential context. Do not add numbers, claims or instructions.'},
+            {'role': 'user', 'content': json.dumps({'headline': title, 'summary': summary}, ensure_ascii=False)}
+        ]
+    }
+    reply = request_completion(body, key)
+    if reply.finish_reason != 'stop' or not reply.content:
+        raise IntakeError('خلاصه کوتاه آماده نشد؛ نسخه بلند را امتحان کنید.')
+    try:
+        result = json.loads(reply.content)
+        _, shortened = validate_translation(
+            {'headline_fa': title, 'summary_fa': result['summary_fa']},
+            material['title_original'] + '\n' + material['source_text'] + '\n' + title + '\n' + summary,
+            min_summary=20)
+        if len(shortened) > 300:
+            raise ValueError('Short summary exceeds the limit')
+    except (ValueError, TypeError, KeyError) as exc:
+        raise IntakeError('خلاصه کوتاه تأیید نشد؛ نسخه بلند را امتحان کنید.') from exc
+    return shortened
+
+
 def publication_state(kind, source_url):
     import instagram_ranked_news as ranked
     from instagram_crypto_news import database
@@ -334,6 +408,34 @@ def scheduled_slot_pending(kind, now, engine, ranked):
     scheduled = local.replace(minute=minute, second=0, microsecond=0).timestamp()
     hour_start = local.replace(minute=0, second=0, microsecond=0).timestamp()
     return now <= scheduled < hour_start + 3600
+
+
+def publish_manual_story(con, record, paths, output, public_base, ig, guard, article_time):
+    from PIL import Image, ImageOps
+    import uuid
+    os.environ['INSTAGRAM_PUBLIC_MEDIA_BASE_URL'] = public_base
+    if not paths:
+        raise IntakeError('تصویر استوری در دسترس نیست.')
+    story_path = output / ('manual-story-' + uuid.uuid4().hex + '.jpg')
+    with Image.open(paths[0]) as original:
+        content = ImageOps.contain(original.convert('RGB'), (1080, 1920), Image.Resampling.LANCZOS)
+        canvas = Image.new('RGB', (1080, 1920), '#ffffff')
+        canvas.paste(content, ((1080-content.width)//2, (1920-content.height)//2))
+        canvas.save(story_path, quality=92)
+    os.chmod(story_path, 0o644)
+    public_url = ig._public_image_url(story_path)
+    ig.verify_public_image(public_url)
+    guard()
+    with con:
+        con.execute("UPDATE submissions SET status='story_creating' WHERE update_id=?", (record['update_id'],))
+    container = ig._create_container({'image_url': public_url, 'media_type': 'STORIES'})
+    ig._wait_for_container(container)
+    guard()
+    if article_time < time.time() - 86400:
+        raise IntakeError('خبر پیش از انتشار استوری قدیمی شد.')
+    with con:
+        con.execute("UPDATE submissions SET status='story_publishing' WHERE update_id=?", (record['update_id'],))
+    return ig._publish_container(container)
 
 
 def process_submission(con, record, runtime):
@@ -447,6 +549,17 @@ def process_submission(con, record, runtime):
                     saved, paths, caption, manifest = ranked.prepare(assessment_db, row, kind, output, publisher_root)
                 finally:
                     renderer.hero_image = original_hero
+                if record.get('request_type') == 'single':
+                    paths = paths[:1]
+                    if not paths:
+                        raise IntakeError('تصویر پست در دسترس نیست.')
+                if record.get('request_type') == 'story':
+                    sys.path.insert(0, str(publisher_root))
+                    import instagram_daily_rates as ig
+                    public_base = 'https://peerexo.com/instagram-rates/' + ('news' if kind == 'crypto' else 'economy')
+                    media_id = publish_manual_story(con, record, paths, output, public_base,
+                                                    ig, guard, material['article_published_at'])
+                    return kind, saved['title_fa'], media_id
                 saved['source_url'] = final_url
                 saved['origin'] = 'manual'
                 story_id = save_story(production, saved)
@@ -547,12 +660,14 @@ def process_trial_submission(con, record, runtime):
             except Exception as exc:
                 raise IntakeError('ظرفیت امن انتشار یا رزرو استوری در حال حاضر کافی نیست؛ ریل ساخته نشد.') from exc
             title, summary = ranked.translate(assessment_db, row)
+            if record.get('reel_length') == 'short':
+                summary = short_reel_summary(title, summary, material)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
                 image_url=material.get('image_url'), image_urls=material.get('image_urls', []),
                 source_scope=material.get('source_scope'),
                 article_published_at=material['article_published_at'],
-                story_type=row['assessment']['story_type'])
+                story_type=row['assessment']['story_type'], reel_length=record.get('reel_length'))
             asset_root = Path.home() / 'kiani-instagram-publisher'
             if not asset_root.is_dir():
                 raise IntakeError('فایل‌های طراحی رسمی برای Trial Reel در دسترس نیستند.')
@@ -624,11 +739,13 @@ def process_direct_reel_submission(con, record, runtime):
             except Exception as exc:
                 raise IntakeError('ظرفیت امن انتشار یا رزرو استوری در حال حاضر کافی نیست؛ ریل منتشر نشد.') from exc
             title, summary = ranked.translate(assessment_db, row)
+            if record.get('reel_length') == 'short':
+                summary = short_reel_summary(title, summary, material)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
                 image_url=material.get('image_url'), image_urls=material.get('image_urls', []),
                 source_scope=material.get('source_scope'), article_published_at=material['article_published_at'],
-                story_type=row['assessment']['story_type'])
+                story_type=row['assessment']['story_type'], reel_length=record.get('reel_length'))
             asset_root = Path.home() / 'kiani-instagram-publisher'
             if not asset_root.is_dir():
                 raise IntakeError('فایل‌های طراحی رسمی برای Reel در دسترس نیستند.')
@@ -699,7 +816,7 @@ def deliver_unsent(con, token):
 
 
 def recover_interrupted(con):
-    rows = con.execute("SELECT update_id,request_type FROM submissions WHERE status IN ('processing','trial_processing','direct_reel_processing')").fetchall()
+    rows = con.execute("SELECT update_id,request_type FROM submissions WHERE status IN ('processing','trial_processing','direct_reel_processing','story_creating','story_publishing')").fetchall()
     if rows:
         with con:
             for row in rows:
@@ -726,11 +843,31 @@ def run_once(config_path, runtime):
         with open_database() as con:
             recover_interrupted(con)
             offset = get_offset(con)
-            parameters = {'timeout': POLL_TIMEOUT, 'allowed_updates': ['message']}
+            parameters = {'timeout': POLL_TIMEOUT, 'allowed_updates': ['message', 'callback_query']}
             if offset is not None:
                 parameters['offset'] = offset
             updates = telegram(token, 'getUpdates', parameters, timeout=POLL_TIMEOUT + 12)
-            acknowledgements, messages = ingest(con, updates, admins)
+            acknowledgements, messages, callbacks = ingest(con, updates, admins)
+            for callback_id, state in callbacks:
+                if callback_id:
+                    try:
+                        telegram(token, 'answerCallbackQuery',
+                                 {'callback_query_id': callback_id,
+                                  'text': 'انتخاب ثبت شد' if state in {'length', 'ready'} else 'این گزینه دیگر فعال نیست'}, timeout=10)
+                    except IntakeError:
+                        pass
+            import instagram_news_menu as menu
+            pending_menus = con.execute("SELECT * FROM news_menu WHERE stage IN ('format','length') AND prompted_stage != stage AND created_at>=?", (time.time()-menu.EXPIRY_SECONDS,)).fetchall()
+            for pending in pending_menus:
+                try:
+                    send_message(token, pending['chat_id'],
+                                 'نوع انتشار را انتخاب کنید:' if pending['stage']=='format' else 'مدت ریل را انتخاب کنید:',
+                                 menu.format_keyboard(pending['token']) if pending['stage']=='format' else menu.length_keyboard(pending['token']))
+                    with con:
+                        con.execute('UPDATE news_menu SET prompted_stage=? WHERE token=? AND stage=?',
+                                    (pending['stage'], pending['token'], pending['stage']))
+                except IntakeError as exc:
+                    print('Telegram menu deferred:', str(exc), flush=True)
             for _, chat_id, response in acknowledgements:
                 try:
                     send_message(token, chat_id, response)
@@ -771,12 +908,16 @@ def run_once(config_path, runtime):
                         finish(con, token, record, 'direct_reel_pending', response,
                                kind=kind, title=title, media_id=reel_id)
                         print('Admin direct Reel queued:', kind, reel_id, flush=True)
-                    else:
+                    elif record.get('request_type') in {'feed', 'single', 'story'}:
                         kind, title, media_id = process_submission(con, record, runtime)
-                        response = ('پست خبری منتشر شد.\n' + title + '\nشناسه پست: ' + media_id +
-                            '\nارزیابی بازدید طبق سیاست خبر، دو ساعت پس از انتشار انجام می‌شود.')
+                        response = (('استوری خبری منتشر شد.\n' + title + '\nشناسه استوری: ' + media_id)
+                            if record.get('request_type') == 'story' else
+                            ('پست خبری منتشر شد.\n' + title + '\nشناسه پست: ' + media_id +
+                             '\nارزیابی بازدید طبق سیاست خبر، دو ساعت پس از انتشار انجام می‌شود.'))
                         finish(con, token, record, 'published', response, kind=kind, title=title, media_id=media_id)
                         print('Manual news published:', kind, media_id, flush=True)
+                    else:
+                        raise IntakeError('این نوع انتشار هنوز فعال نشده است؛ لطفاً گزینه دیگری انتخاب کنید.')
                 except HTTPError as exc:
                     if record.get('request_type') in {'trial', 'direct_reel'} and exc.code == 429:
                         finish(con, token, record, 'rejected', 'رسانه فعلاً درخواست‌های زیادی دریافت کرده است (HTTP 429). لطفاً بعداً دوباره لینک را بفرستید.', code='SourceRateLimited429')
@@ -788,6 +929,15 @@ def run_once(config_path, runtime):
                     finish(con, token, record, 'rejected', str(exc), code=code)
                     print('Manual news declined:', code, flush=True)
                 except Exception as exc:
+                    if record.get('request_type') == 'story':
+                        current = con.execute('SELECT status FROM submissions WHERE update_id=?', (record['update_id'],)).fetchone()
+                        uncertain = current and current['status'] in {'story_creating', 'story_publishing'}
+                        finish(con, token, record, 'needs_review' if uncertain else 'rejected',
+                               'نتیجه انتشار استوری قطعی نیست؛ وضعیت اینستاگرام را بررسی کنید.' if uncertain else
+                               'استوری آماده نشد؛ منبع و ظرفیت انتشار را بررسی کنید.',
+                               code=type(exc).__name__)
+                        print('Story processing stopped:', type(exc).__name__, flush=True)
+                        return 0
                     if record.get('request_type') == 'direct_reel':
                         reel_state = None
                         try:
@@ -867,6 +1017,7 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
 

@@ -80,10 +80,10 @@ def moving_image(original, phase, mode, size, background):
     left, top = round((scaled_w-width)*x), round((scaled_h-height)*y)
     return fitted.crop((left, top, left+width, top+height))
 
-def render(t, title, source, kind, story_type, chunks, destination, asset_root, media, music_path, ffmpeg, *, narration=None):
+def render(t, title, source, kind, story_type, chunks, destination, asset_root, media, music_path, ffmpeg, *, narration=None, max_seconds=None, min_seconds=12):
     pages=len(chunks)+2
     words=sum(len(s.split()) for s in chunks)
-    max_seconds = t.MAX_REEL_SECONDS
+    max_seconds = max_seconds if max_seconds is not None else t.MAX_REEL_SECONDS
     step=min(.14,(max_seconds-4.6-3-2.0*len(chunks))/max(words,1))
     if step<.045: raise t.TrialReelError('Story is too long for a legible animated Reel.')
     if narration is not None:
@@ -303,6 +303,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 d.text((225, 1324), t._rtl('تصویر خبر'), font=t._font(asset_root,23,True),
                        fill='white', anchor='mm')
         add(closing,3)
+        if elapsed < min_seconds:
+            add(closing, min_seconds - elapsed)
         if not 12<=elapsed<=max_seconds: raise t.TrialReelError('Animated duration is outside Reel limits.')
         playlist=root/'frames.txt'
         with playlist.open('w',encoding='utf-8') as out:
@@ -353,5 +355,6 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
               '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p','-c:v','libx264','-preset','veryfast','-crf','25','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
         except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
+
 
 

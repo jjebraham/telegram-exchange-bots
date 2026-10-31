@@ -100,7 +100,7 @@ def main():
         raise RuntimeError('The reviewed runtime is outside the pinned private source directory.')
     if not all((runtime / name).is_file() and not (runtime / name).is_symlink() for name in (
             'instagram_trial_reels.py', 'instagram_trial_music.py', 'instagram_reel_motion.py', 'instagram_reel_media.py', 'instagram_reel_source_image.py',
-            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_reel_commons.py', 'instagram_reel_stock.py', 'instagram_manual_news_intake.py', 'instagram_ranked_news.py',
+            'instagram_reel_usage.py', 'report_reel_usage.py', 'instagram_reel_commons.py', 'instagram_reel_stock.py', 'instagram_manual_news_intake.py', 'instagram_news_menu.py', 'instagram_ranked_news.py',
             'instagram_direct_reel_retention.py')):
         raise RuntimeError('A required Trial Reel runtime file is missing or unsafe.')
 
@@ -262,6 +262,8 @@ def main():
 
     print('Existing Telegram bot:', '@' + str(json.loads(bot_config.read_text()).get('bot_username', 'configured')))
     print('Authorized private admins:', len(admins))
+    print('A plain news link opens buttons for direct Reel, Trial Reel, single-image Feed, carousel or Story.')
+    print('Button-selected Reel lengths: short 15–30 seconds; long up to 90 seconds.')
     print('Admin commands: /trial <reviewed publisher URL> and /reel <reviewed publisher URL>.')
     print('Direct Reel: up to 10 admin posts/day; 200 views at two hours, with two low readings 10 minutes apart.')
     print('Automatic Trial Reel slots: 11:00, 13:00, 15:00, 17:00 and 20:30 Europe/Istanbul.')
@@ -288,6 +290,7 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel activation stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 
 
 

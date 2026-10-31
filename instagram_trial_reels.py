@@ -254,11 +254,18 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
         raise TrialReelError('FFmpeg and ffprobe are required to render and verify Trial Reels.')
     import sys
     from instagram_reel_motion import render
-    render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg, narration=narration)
+    length = story.get('reel_length')
+    if length not in (None, 'short', 'long'):
+        raise TrialReelError('Unknown Reel length.')
+    max_seconds = {'short': 30, 'long': 90}.get(length, MAX_REEL_SECONDS)
+    render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg, narration=narration, max_seconds=max_seconds, min_seconds=15 if length == 'short' else 12)
     if destination.is_symlink() or not destination.is_file() or not 100_000 <= destination.stat().st_size <= 250_000_000:
         raise TrialReelError('The rendered Reel is missing or has an invalid file size.')
     os.chmod(destination, 0o644)
-    return _probe_video(destination, ffprobe)
+    duration = _probe_video(destination, ffprobe)
+    if duration > max_seconds + 0.15 or length == 'short' and duration < 14.85:
+        raise TrialReelError('Rendered Reel is outside the selected duration.')
+    return duration
 
 
 def _connect():
@@ -948,6 +955,7 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
 

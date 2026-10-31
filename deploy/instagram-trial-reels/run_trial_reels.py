@@ -12,6 +12,7 @@ import sys
 
 FILES = (
     'instagram_manual_news_intake.py',
+    'instagram_news_menu.py',
     'instagram_trial_reels.py',
     'instagram_direct_reel_retention.py',
     'instagram_trial_music.py',
@@ -38,6 +39,7 @@ FILES = (
     'deploy/instagram-trial-reels/configure_stock.py',
     'deploy/instagram-trial-reels/check_reel_motion.py',
     'deploy/instagram-trial-reels/check_reel_cover.py',
+    'deploy/instagram-trial-reels/check_news_menu.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
 )
 
@@ -99,6 +101,7 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 
 
 
