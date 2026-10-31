@@ -460,18 +460,45 @@ def publish_manual_story(con, record, paths, output, public_base, ig, guard, art
     container = ig._create_container({'image_url': public_url, 'media_type': 'STORIES'})
     ig._wait_for_container(container)
     guard()
-    if article_time < time.time() - 86400:
-        raise IntakeError('خبر پیش از انتشار استوری قدیمی شد.')
     with con:
         con.execute("UPDATE submissions SET status='story_publishing' WHERE update_id=?", (record['update_id'],))
     return ig._publish_container(container)
+
+
+def prepare_admin_news(con, row, kind, output, asset_root, ranked):
+    """Render an admin-selected source without automatic editorial gates."""
+    title, summary = ranked.translate(con, row)
+    saved = {k: row[k] for k in ('source_url', 'source_name', 'image_url', 'article_date', 'title_original')}
+    saved.update(title_fa=title, summary_fa=summary, origin='manual', highlights_json='[]')
+    import instagram_news_renderer as renderer
+    original = renderer.metadata
+    try:
+        renderer.metadata = lambda story: story
+        story_type = row.get('assessment', {}).get('story_type')
+        predicted = story_type == 'forecast' or bool(re.search(
+            r'\b(?:price[ -]prediction|forecast|prediction)\b',
+            row.get('title_original', ''), re.IGNORECASE))
+        news_label = ('تحلیل و پیش‌بینی' if predicted else
+                      'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی')
+        old_mask = os.umask(0o022)
+        try:
+            paths, caption, manifest = renderer.render_news(
+                [saved], output, asset_root,
+                news_label=news_label,
+                caption_title='صرافی کیانی | ' + news_label,
+                caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi' if kind == 'crypto' else 'خبر اقتصادی روز | kiani.exchange')
+        finally:
+            os.umask(old_mask)
+    finally:
+        renderer.metadata = original
+    return saved, paths, caption, manifest
 
 
 def process_submission(con, record, runtime):
     import crypto_news_trial as engine
     import instagram_ranked_news as ranked
     from instagram_crypto_news import NewsError, database, publish, save_story
-    from instagram_news_batch import guard, plan
+    from instagram_news_batch import guard
 
     update_id = record['update_id']
     source_url, source_key = record['source_url'], record['source_key']
@@ -487,7 +514,7 @@ def process_submission(con, record, runtime):
     if canonical_url(source_url) in blocked:
         raise IntakeError('این خبر قبلاً منتشر شده یا تلاش انتشار آن نیازمند بررسی است.')
     material = read_manual_source(engine, dict(id='manual-' + str(update_id), source_url=source_url,
-        title_original='', source_name=''), now)
+        title_original='', source_name=''), now, relaxed=True)
     final_url = canonical_url(material['source_url'])
     if final_url in blocked:
         raise IntakeError('نشانی نهایی این خبر قبلاً منتشر شده یا تلاش انتشار آن نیازمند بررسی است.')
@@ -503,41 +530,24 @@ def process_submission(con, record, runtime):
         assessment_db.row_factory = sqlite3.Row
         os.chmod(trial_path, 0o600)
         engine.init_trial(assessment_db)
-        kind, row = classify(engine, ranked, assessment_db, material, now)
+        try:
+            kind, row = classify(engine, ranked, assessment_db, material, now, trial_relaxed=True)
+        except Exception as exc:
+            print('Manual classification unavailable; using crypto category:', type(exc).__name__, flush=True)
+            kind, row = 'crypto', dict(material, assessment={'story_type': 'opinion'})
         with con:
             con.execute('UPDATE submissions SET kind=? WHERE update_id=?', (kind, update_id))
         record['kind'] = kind
         ranked.configure_engine(kind)
-        _blocked, history = ranked.histories(now)
-        groups = engine.event_groups(assessment_db, [row], history)
-        if not groups or groups[0].get('published_match'):
-            raise IntakeError('همین رویداد قبلاً منتشر شده است؛ انتشار تکراری انجام نشد.')
-
         with ranked.locks(kind):
             with database(ranked.SOURCES[kind]) as production:
                 now = time.time()
                 blocked_now, _ = ranked.histories(now)
                 if final_url in blocked_now:
                     raise IntakeError('این خبر در فاصله بررسی تا انتشار ثبت شده است؛ انتشار تکراری انجام نشد.')
-                cap, quota = plan(True)
-                if ranked.consumed(production, now) >= cap:
-                    raise IntakeError('سقف روزانه یا ظرفیت قابل‌استفاده خبر برای این دسته تکمیل شده است.')
-                if hourly_count(production, now):
-                    raise IntakeError('در این ساعت از این دسته یک پست منتشر شده است؛ برای جلوگیری از ازدحام این لینک منتشر نشد.')
-                if scheduled_slot_pending(kind, now, engine, ranked):
-                    raise IntakeError('زمان انتشار برنامه‌ریزی‌شده همین دسته در این ساعت نزدیک است؛ این لینک منتشر نشد تا دو پست پشت سر هم قرار نگیرند.')
                 reservation = guard()
                 print('Manual news quota checked:', json.dumps(dict(category=kind,
-                    category_day_cap=cap, category_posts_today=ranked.consumed(production, now),
-                    remaining=quota.get('remaining'), reserved_units=reservation.get('reserved_units'))), flush=True)
-
-                components = row['components']
-                row['components'] = dict(impact=row['assessment']['impact']['points'],
-                    relevance=round(row['assessment']['relevance']['points'] * .8),
-                    usefulness=round(row['assessment']['usefulness']['points'] * .75),
-                    sourcing=components['sourcing'], freshness=components['freshness'], attention=0)
-                row['trial_score'] = sum(row['components'].values())
-                row['coverage_outlets'] = [material['source_name']]
+                    reserved_units=reservation.get('reserved_units'))), flush=True)
                 publisher_root = Path.home() / 'kiani-instagram-publisher'
                 if not publisher_root.is_dir():
                     raise IntakeError('The installed Instagram artwork assets are unavailable.')
@@ -576,7 +586,7 @@ def process_submission(con, record, runtime):
 
                 try:
                     renderer.hero_image = safe_hero
-                    saved, paths, caption, manifest = ranked.prepare(assessment_db, row, kind, output, publisher_root)
+                    saved, paths, caption, manifest = prepare_admin_news(assessment_db, row, kind, output, publisher_root, ranked)
                 finally:
                     renderer.hero_image = original_hero
                 if record.get('request_type') == 'single':
@@ -593,15 +603,10 @@ def process_submission(con, record, runtime):
                 saved['source_url'] = final_url
                 saved['origin'] = 'manual'
                 story_id = save_story(production, saved)
-                with production:
-                    production.execute('UPDATE instagram_news SET importance_score=?,importance_reasons=? WHERE id=?',
-                        (row['trial_score'], json.dumps(row['components']), story_id))
                 story = dict(production.execute('SELECT * FROM instagram_news WHERE id=?', (story_id,)).fetchone())
                 public_base = 'https://peerexo.com/instagram-rates/' + ('news' if kind == 'crypto' else 'economy')
                 manifest['manual_telegram_intake'] = dict(update_id=update_id, category=kind,
                     source_url=final_url, received_at=record['received_at'])
-                manifest['news_v2_ranking'] = dict(score=row['trial_score'], components=row['components'],
-                    outlets=[material['source_name']], version=ranked.VERSION)
                 os.environ['INSTAGRAM_PUBLIC_MEDIA_BASE_URL'] = public_base
                 sys.path.insert(0, str(publisher_root))
                 import instagram_daily_rates as ig
@@ -611,18 +616,7 @@ def process_submission(con, record, runtime):
                         return getattr(ig, name)
 
                     def _publish_container(self, container):
-                        current = time.time()
-                        if material['article_published_at'] < current - 86400:
-                            raise NewsError('The source became stale before publication.')
-                        if ranked.consumed(production, current, story_id) >= cap:
-                            raise NewsError('The daily news limit was reached before publication.')
-                        if hourly_count(production, current, story_id):
-                            raise NewsError('A news post already occupies this hour.')
-                        if scheduled_slot_pending(kind, current, engine, ranked):
-                            raise NewsError('A scheduled news slot is imminent in this hour.')
                         guard()
-                        if material['article_published_at'] < time.time() - 86400:
-                            raise NewsError('The source became stale during final checks.')
                         return ig._publish_container(container)
 
                 media_id = publish(production, [story], paths, caption, FinalQuotaGuard(), manifest)
@@ -1049,6 +1043,7 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
 
