@@ -825,6 +825,34 @@ def wait_for_scheduled_news_lock(factory, max_wait, *, sleeper=time.sleep, clock
             yield
         return
 
+
+def scheduled_translation_error(exc):
+    """Classify known translation errors without logging content or secrets."""
+    if type(exc).__name__ != 'NewsError':
+        return 'unexpected_error'
+    message = str(exc)
+    exact = {
+        'DEEPSEEK_API_KEY is missing; load the existing translation environment.': 'missing_api_key',
+        'Translation response must be a JSON object.': 'invalid_json_object',
+        'Persian translation length is outside the card limits.': 'invalid_length',
+        'The selected news needs a Persian headline and summary.': 'missing_persian_text',
+        'Translation must not contain model-added links or hashtags.': 'disallowed_link_or_hashtag',
+        'Translation introduced a number absent from the source.': 'unverified_number',
+    }
+    if message in exact:
+        return exact[message]
+    http = re.fullmatch(r'DeepSeek translation request failed \(HTTP ([45][0-9]{2})\)\.', message)
+    if http:
+        return 'deepseek_http_' + http.group(1)
+    if message.startswith('DeepSeek translation request failed ('):
+        return 'deepseek_request_failed'
+    if message.startswith('DeepSeek did not finish a translation ('):
+        return 'deepseek_unfinished'
+    if message.startswith('DeepSeek returned no complete translation after '):
+        return 'deepseek_incomplete'
+    return 'other_news_error'
+
+
 def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
     """Choose and prepare the highest-ranked eligible story for one durable slot."""
     origin = 'daily_top_story' if reel_mode == 'trial' else 'daily_direct'
@@ -926,7 +954,11 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
         configure_engine(kind)
         import instagram_ranked_news as ranked
         with database(ranked.SOURCES[kind]) as con:
-            title, summary = ranked.translate(con, row)
+            try:
+                title, summary = ranked.translate(con, row)
+            except Exception as exc:
+                print('Automatic Reel translation failure:', scheduled_translation_error(exc), flush=True)
+                raise
         story = dict(source_url=row['source_url'], source_name=row['source_name'],
             title_original=row['title_original'], title_fa=title, summary_fa=summary,
             image_url=row.get('image_url'), image_urls=row.get('image_urls', []),
@@ -983,6 +1015,7 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
 
