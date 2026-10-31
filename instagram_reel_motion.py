@@ -39,7 +39,7 @@ def grid_cover(t, title, kind, asset_root, media):
     d.text((220, 1000), t._rtl('در یک نگاه'), font=t._font(asset_root, 25, True), fill=t.INK, anchor='mm')
     # Preserve every word and only shrink within a bounded readable range.
     rows = None
-    for size in (70, 64, 58, 52, 48):
+    for size in (84, 78, 72, 70, 64, 58, 52, 48):
         font = t._font(asset_root, size, True)
         try:
             candidate = t._wrap(d, title, font, 740)
