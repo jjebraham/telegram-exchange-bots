@@ -12,6 +12,7 @@ import sys
 
 FILES = (
     'instagram_manual_news_intake.py',
+    'test_intake_menu.py',
     'instagram_news_menu.py',
     'instagram_trial_reels.py',
     'instagram_direct_reel_retention.py',
@@ -103,6 +104,7 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 
 
 
