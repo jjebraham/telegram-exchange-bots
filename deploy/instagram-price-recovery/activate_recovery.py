@@ -62,11 +62,22 @@ def revised_cron(original, home, role):
     hour = '8' if role == 'rates' else '6'
     lines = original.decode().splitlines(keepends=True)
     found = []
+    zones = {}
     for i, line in enumerate(lines):
-        if line.strip().startswith(('CRON_TZ=', 'TZ=')) and line.strip().split('=', 1)[1].strip('\"\'') not in {'UTC', 'Etc/UTC'}:
-            raise RuntimeError('A custom cron timezone requires review.')
-        if line.lstrip().startswith('#') or str(launcher) not in line:
+        if line.lstrip().startswith('#'):
             continue
+        match = re.fullmatch(r'\s*(CRON_TZ|TZ)\s*=\s*(["\']?)([^"\'\s]+)\2\s*', line.strip())
+        if match:
+            zones[match.group(1)] = match.group(3)
+            continue
+        malformed = re.match(r'^\s*(CRON_TZ|TZ)\s*=', line)
+        if malformed:
+            zones[malformed.group(1)] = 'UNREVIEWED'
+            continue
+        if str(launcher) not in line:
+            continue
+        if any(value not in {'UTC', 'Etc/UTC'} for value in zones.values()):
+            raise RuntimeError('The target gold/rates job has a custom cron timezone; review required.')
         fields = line.split()
         if fields[:5] not in (['30', hour, '*', '*', '*'], ['30,35,40', hour, '*', '*', '*']):
             raise RuntimeError('The existing '+role+' job differs from the reviewed daily schedule.')
