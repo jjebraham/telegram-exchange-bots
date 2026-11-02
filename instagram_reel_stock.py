@@ -11,7 +11,7 @@ import stat
 import time
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, unquote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from PIL import Image, ImageOps
 
@@ -97,9 +97,22 @@ def _database(state=STATE):
     con.commit()
     return con
 
-def queries(story):
+def _story_search_text(story):
     text = ' '.join(str(story.get(key, '')) for key in
-                    ('title_original', 'title_fa', 'summary_fa')).lower()
+                    ('title_original', 'title_fa', 'summary_fa')).casefold()
+    if any(re.search(pattern, text) for pattern, _ in TOPICS):
+        return text
+    try:
+        slug = unquote(urlsplit(str(story.get('source_url', ''))).path.rsplit('/', 1)[-1])
+    except ValueError:
+        return text
+    # Use the publisher's article slug only if the title supplied no topic.
+    # Do not inspect query strings or substitute generic unrelated keywords.
+    return text + ' ' + re.sub(r'[^a-z0-9]+', ' ', slug.casefold()[:500])
+
+
+def queries(story):
+    text = _story_search_text(story)
     matches = [terms for pattern, terms in TOPICS if re.search(pattern, text)]
     if not matches:
         return []
@@ -114,8 +127,7 @@ def queries(story):
     return selected
 
 def _matches_story_topic(story, item):
-    text = ' '.join(str(story.get(key, '')) for key in
-                    ('title_original', 'title_fa', 'summary_fa')).casefold()
+    text = _story_search_text(story)
     profile = next((anchors for pattern, anchors in RELEVANCE
                     if re.search(pattern, text)), None)
     description = str(item.get('description', '')).casefold()
