@@ -26,6 +26,9 @@ TOPICS = (
     (('gold',), 'gold bullion', 'gold'),
     (('silver',), 'silver bullion', 'silver'),
     (('oil', 'brent'), 'crude oil', 'oil'),
+    (('asset management', 'asset-management', 'asset manager', 'wealth management', 'wealth manager',
+      'fund management', 'fund manager', 'investment management', 'investment manager', 'portfolio management', 'financial services'),
+     'investment management finance', ('finance', 'investment', 'asset management', 'fund management')),
     (('crypto', 'cryptocurrency', 'blockchain'), 'cryptocurrency blockchain', 'cryptocurrency'),
 )
 LICENSES = {
@@ -184,3 +187,4 @@ def collect(story, output_dir, limit=7, *, seconds=30):
                 target.unlink()
             continue
     return selected
+
