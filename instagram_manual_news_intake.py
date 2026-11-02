@@ -376,9 +376,32 @@ def classify(engine, ranked, con, material, now, *, allow_opinion=False, trial_r
     return ('crypto', scored['crypto']) if crypto_relevance > economy_relevance else ('economy', scored['economy'])
 
 
+def extractive_short_summary(summary, limit=300):
+    """Keep a complete opening sentence or sentences, with no new facts."""
+    normalized = re.sub(r'\s+', ' ', summary).strip()
+    if not normalized:
+        return None
+    sentences = re.split(r'(?<=[.!?؟۔])\s+', normalized)
+    chosen = []
+    for sentence in sentences:
+        candidate = ' '.join(chosen + [sentence])
+        if len(candidate) > limit:
+            break
+        chosen.append(sentence)
+    if not chosen or len(' '.join(chosen)) < 20:
+        return None
+    # A partial selection is allowed only at an actual sentence boundary.
+    if len(chosen) < len(sentences) and not re.search(r'[.!?؟۔]$', chosen[-1]):
+        return None
+    if len(sentences) == 1 and chosen[0] != normalized:
+        return None
+    return ' '.join(chosen)
+
+
 def short_reel_summary(title, summary, material):
     """Summarize the existing translation; retain its facts and uncertainty."""
     from economy_news_translation import request_completion, validate_translation
+    from instagram_crypto_news import NewsError
     key = os.environ.get('DEEPSEEK_API_KEY', '').strip()
     if not key:
         raise IntakeError('کلید ترجمه در دسترس نیست؛ نسخه کوتاه ساخته نشد.')
@@ -394,20 +417,30 @@ def short_reel_summary(title, summary, material):
             {'role': 'user', 'content': json.dumps({'headline': title, 'summary': summary}, ensure_ascii=False)}
         ]
     }
-    reply = request_completion(body, key)
-    if reply.finish_reason != 'stop' or not reply.content:
-        raise IntakeError('خلاصه کوتاه آماده نشد؛ نسخه بلند را امتحان کنید.')
-    try:
-        result = json.loads(reply.content)
-        _, shortened = validate_translation(
-            {'headline_fa': title, 'summary_fa': result['summary_fa']},
-            material['title_original'] + '\n' + material['source_text'] + '\n' + title + '\n' + summary,
-            min_summary=20)
-        if len(shortened) > 300:
-            raise ValueError('Short summary exceeds the limit')
-    except (ValueError, TypeError, KeyError) as exc:
-        raise IntakeError('خلاصه کوتاه تأیید نشد؛ نسخه بلند را امتحان کنید.') from exc
-    return shortened
+    for attempt in range(2):
+        reply = request_completion(body, key)
+        try:
+            if reply.finish_reason != 'stop' or not reply.content:
+                raise ValueError('Incomplete summary')
+            result = json.loads(reply.content)
+            _, shortened = validate_translation(
+                {'headline_fa': title, 'summary_fa': result['summary_fa']},
+                material['title_original'] + '\n' + material['source_text'] + '\n' + title + '\n' + summary,
+                min_summary=20)
+            if len(shortened) > 300:
+                raise ValueError('Short summary exceeds the limit')
+            return shortened
+        except (ValueError, TypeError, KeyError, NewsError):
+            extracted = extractive_short_summary(summary)
+            if extracted:
+                validate_translation({'headline_fa': title, 'summary_fa': extracted},
+                    material['title_original'] + '\n' + material['source_text'] + '\n' + title + '\n' + summary,
+                    min_summary=20)
+                print('Short Reel: using complete sentences from the verified summary.', flush=True)
+                return extracted
+            if attempt == 0:
+                print('Short Reel summary failed validation; retrying once.', flush=True)
+    raise IntakeError('خلاصه کوتاه قابل تأیید نیست؛ نسخه بلند را انتخاب کنید.')
 
 
 def publication_state(kind, source_url):
@@ -686,6 +719,7 @@ def process_trial_submission(con, record, runtime):
             except Exception as exc:
                 raise IntakeError('ظرفیت امن انتشار یا رزرو استوری در حال حاضر کافی نیست؛ ریل ساخته نشد.') from exc
             title, summary = ranked.translate(assessment_db, row)
+            full_summary = summary
             if record.get('reel_length') == 'short':
                 summary = short_reel_summary(title, summary, material)
             story = dict(source_url=final_url, source_name=material['source_name'],
@@ -693,7 +727,8 @@ def process_trial_submission(con, record, runtime):
                 image_url=material.get('image_url'), image_urls=material.get('image_urls', []),
                 source_scope=material.get('source_scope'),
                 article_published_at=material['article_published_at'],
-                story_type=row['assessment']['story_type'], reel_length=record.get('reel_length'))
+                story_type=row['assessment']['story_type'], reel_length=record.get('reel_length'),
+                full_summary_fa=full_summary if record.get('reel_length') == 'short' else None)
             asset_root = Path.home() / 'kiani-instagram-publisher'
             if not asset_root.is_dir():
                 raise IntakeError('فایل‌های طراحی رسمی برای Trial Reel در دسترس نیستند.')
@@ -766,13 +801,15 @@ def process_direct_reel_submission(con, record, runtime):
             except Exception as exc:
                 raise IntakeError('ظرفیت امن انتشار یا رزرو استوری در حال حاضر کافی نیست؛ ریل منتشر نشد.') from exc
             title, summary = ranked.translate(assessment_db, row)
+            full_summary = summary
             if record.get('reel_length') == 'short':
                 summary = short_reel_summary(title, summary, material)
             story = dict(source_url=final_url, source_name=material['source_name'],
                 title_original=material['title_original'], title_fa=title, summary_fa=summary,
                 image_url=material.get('image_url'), image_urls=material.get('image_urls', []),
                 source_scope=material.get('source_scope'), article_published_at=material['article_published_at'],
-                story_type=row['assessment']['story_type'], reel_length=record.get('reel_length'))
+                story_type=row['assessment']['story_type'], reel_length=record.get('reel_length'),
+                full_summary_fa=full_summary if record.get('reel_length') == 'short' else None)
             asset_root = Path.home() / 'kiani-instagram-publisher'
             if not asset_root.is_dir():
                 raise IntakeError('فایل‌های طراحی رسمی برای Reel در دسترس نیستند.')
