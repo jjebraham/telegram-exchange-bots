@@ -161,6 +161,12 @@ class IntakeMenuTest(unittest.TestCase):
         crypto.database, crypto.save_story, crypto.publish = database, save_story, publish
         batch = types.ModuleType('instagram_news_batch')
         batch.guard = lambda: {'reserved_units': 4}
+        pictures = types.ModuleType('instagram_news_slide_images')
+        pictures.SlideImageError = type('SlideImageError', (Exception,), {})
+        pictures.collect = lambda engine, story, path, **kwargs: [
+            {'path': path/'one.jpg', 'kind':'publisher'},
+            {'path': path/'two.jpg', 'kind':'publisher'}]
+        pictures.caption_credit = lambda images: ''
         ig = types.ModuleType('instagram_daily_rates')
         ig._publish_container = lambda container: 'fake-media'
         old_is_dir = Path.is_dir
@@ -171,7 +177,8 @@ class IntakeMenuTest(unittest.TestCase):
             return dict(material)
         modules = {'crypto_news_trial': engine, 'instagram_ranked_news': ranked,
                    'instagram_news_renderer': renderer, 'instagram_crypto_news': crypto,
-                   'instagram_news_batch': batch, 'instagram_daily_rates': ig}
+                   'instagram_news_batch': batch, 'instagram_daily_rates': ig,
+                   'instagram_news_slide_images': pictures}
         with patch.dict(sys.modules, modules), patch.object(Path, 'is_dir', is_dir), \
              patch.object(intake, 'read_manual_source', side_effect=read_source), \
              patch.object(intake, 'publish_manual_story', return_value='fake-story') as story:
