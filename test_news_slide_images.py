@@ -78,6 +78,21 @@ class ImageTests(unittest.TestCase):
         parser.feed('<img src="advert.jpg"><article><figure><img src="story.jpg"></figure></article>')
         self.assertEqual(parser.urls, ['story.jpg'])
 
+    def test_asset_management_story_finds_finance_not_unrelated_bitcoin(self):
+        import instagram_reel_stock as stock
+        import instagram_reel_commons as commons
+        story = {'title_original':'Animoca Brands expands asset management business with Abu Dhabi approval'}
+        self.assertIn('investment finance', stock.queries(story))
+        self.assertTrue(stock._matches_story_topic(story, {'description':'business finance investment'}))
+        self.assertFalse(stock._matches_story_topic(story, {'description':'bitcoin cryptocurrency mining'}))
+        self.assertEqual(commons._topic(story)[0], 'investment management finance')
+
+    def test_ai_topic_does_not_become_a_bitcoin_search(self):
+        import instagram_reel_stock as stock
+        story = {'title_original':'ChatGPT and Claude chatbot restrictions'}
+        self.assertIn('artificial intelligence', stock.queries(story))
+        self.assertFalse(stock._matches_story_topic(story, {'description':'bitcoin cryptocurrency mining'}))
+
 
 if __name__ == '__main__':
     unittest.main()
