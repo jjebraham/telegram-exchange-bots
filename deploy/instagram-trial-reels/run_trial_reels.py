@@ -12,7 +12,9 @@ import sys
 
 FILES = (
     'instagram_manual_news_intake.py',
+    'instagram_news_slide_images.py',
     'test_intake_menu.py',
+    'test_news_slide_images.py',
     'instagram_news_menu.py',
     'instagram_trial_reels.py',
     'instagram_direct_reel_retention.py',
@@ -42,6 +44,8 @@ FILES = (
     'deploy/instagram-trial-reels/check_reel_cover.py',
     'deploy/instagram-trial-reels/check_news_menu.py',
     'deploy/instagram-trial-reels/check_admin_layout.py',
+    'deploy/instagram-trial-reels/check_slide_images.py',
+    'deploy/instagram-trial-reels/check_live_slide_images.py',
     'deploy/instagram-trial-reels/check_reel_long_news.py',
     'deploy/instagram-trial-reels/check_blockchain_news.py',
     'deploy/instagram-trial-reels/check_scheduler_lock.py',
