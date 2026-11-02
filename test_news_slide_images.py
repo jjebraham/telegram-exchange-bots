@@ -66,6 +66,18 @@ class ImageTests(unittest.TestCase):
             found = slides.collect(None, self.story, self.root, origin='manual', minimum=1)
         self.assertEqual(len(found),1)
 
+    def test_automatic_news_discovers_additional_article_figures(self):
+        self.story.pop('image_urls')
+        modules = self.modules({'hero':'red', 'second':'blue'})
+        with patch.dict(sys.modules, modules), patch.object(slides, 'discover_figures', return_value=['second']):
+            found = slides.collect(None, self.story, self.root, origin='automatic')
+        self.assertEqual(len(found),2)
+
+    def test_figure_parser_excludes_images_outside_articles(self):
+        parser = slides.ArticleFigures()
+        parser.feed('<img src="advert.jpg"><article><figure><img src="story.jpg"></figure></article>')
+        self.assertEqual(parser.urls, ['story.jpg'])
+
 
 if __name__ == '__main__':
     unittest.main()
