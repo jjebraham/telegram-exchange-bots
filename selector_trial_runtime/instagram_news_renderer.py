@@ -93,7 +93,8 @@ def hero_image(story, cache):
 def render_news(stories, output, asset_root, *, news_label='خبر کریپتو',
                 caption_title='صرافی کیانی | خبر کریپتو',
                 caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi',
-                require_image=False, adaptive_body=False):
+                require_image=False, adaptive_body=False, slide_images=None,
+                minimum_slide_images=0):
     """Render one cover and lossless large-type summary pages; never publish."""
     if len(stories) != 1:
         raise ValueError('Each readable news carousel must contain exactly one story.')
@@ -105,6 +106,24 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
     summary = re.sub(r'\s+', ' ', str(story.get('summary_fa') or '')).strip()
     if not title or not summary or len(title) > 300 or len(summary) > 8000:
         raise ValueError('A bounded, nonempty verified headline and summary are required.')
+    pictures, picture_keys = [], set()
+    if slide_images is not None:
+        for path in slide_images[:4]:
+            path = Path(path)
+            if path.is_symlink() or not path.is_file():
+                raise ValueError('A selected slide image is unavailable.')
+            with Image.open(path) as image:
+                if image.width < 256 or image.height < 128 or image.width * image.height > 40_000_000:
+                    raise ValueError('A selected slide image has unsuitable dimensions.')
+                picture = ImageOps.exif_transpose(image).convert('RGB').copy()
+                key = hashlib.sha256(picture.resize((32, 32)).tobytes()).hexdigest()
+                if key in picture_keys:
+                    raise ValueError('News slide images must be distinct.')
+                picture_keys.add(key)
+                pictures.append(picture)
+        if len(pictures) < minimum_slide_images:
+            raise ValueError('Not enough verified images for the required news slides.')
+        adaptive_body = True
     fonts = {}
 
     def font(size, bold=False):
@@ -166,32 +185,38 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
         for row in wrap_spans(summary[start:end], BODY_FONT_PX, 824, adaptive=adaptive_body):
             lines.append(dict(start=row['start']+start, end=row['end']+start, text=row['text']))
         start = following
-    def adaptive_top(rows):
+    def adaptive_top(rows, low=440, high=1115):
         boxes = [scratch.textbbox((body_x(row['text']), i * BODY_LEADING), rtl(row['text']),
                                   font=font(BODY_FONT_PX), anchor='rt')
                  for i, row in enumerate(rows)]
         top = min(box[1] for box in boxes)
         bottom = max(box[3] for box in boxes)
-        if bottom - top > 675:
+        if bottom - top > high-low:
             return None
-        return 440 + (675 - (bottom - top)) // 2 - top
+        return low + (high-low - (bottom - top)) // 2 - top
 
     pages = []
     while lines:
-        count = min(BODY_LINES_PER_PAGE, len(lines))
+        illustrated = len(pages) < max(0, len(pictures)-1)
+        count = min(4 if illustrated else BODY_LINES_PER_PAGE, len(lines))
         if len(lines) > count:
             for candidate in range(count, max(2, count-4), -1):
                 if re.search(r'[.!?؟][»”"]?$', lines[candidate-1]['text']):
                     count = candidate
                     break
         if adaptive_body:
-            while count and adaptive_top(lines[:count]) is None:
+            while count and adaptive_top(lines[:count], 730 if illustrated else 440, 1115) is None:
                 count -= 1
             if not count:
                 raise ValueError('A text line exceeds the fixed readable card height.')
         pages.append(lines[:count])
         lines = lines[count:]
     if not pages or len(pages) > 9:
+        if slide_images is not None and len(pictures) > max(2, minimum_slide_images):
+            return render_news(stories, output, asset_root, news_label=news_label,
+                caption_title=caption_title, caption_footer=caption_footer,
+                require_image=require_image, adaptive_body=adaptive_body,
+                slide_images=slide_images[:-1], minimum_slide_images=minimum_slide_images)
         raise ValueError('The full summary exceeds ten large-type slides; no text was truncated.')
     page_spans = [dict(start=rows[0]['start'], end=rows[-1]['end'],
                        text=summary[rows[0]['start']:rows[-1]['end']],
@@ -215,7 +240,7 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
     if headline_rows is None:
         raise ValueError('The complete headline needs editorial shortening; readable fonts were not reduced.')
 
-    hero = hero_image(story, output / '.source-images')
+    hero = pictures[0] if pictures else hero_image(story, output / '.source-images')
     if require_image and hero is None:
         raise ValueError('A source illustration is required for this news post.')
     logo_root = ET.parse(asset_root / 'assets/instagram/kiani-logo.svg').getroot()
@@ -285,14 +310,17 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
         fa(draw, heading, (1016, 264), 80, bold=True)
         draw.rounded_rectangle((856, 389, 1016, 397), radius=4, fill=GREEN)
         draw.rounded_rectangle((64, 425, 1016, 1145), radius=32, fill='#FFFFFF')
+        illustrated = index-2 < max(0, len(pictures)-1)
+        if illustrated:
+            image.paste(ImageOps.fit(pictures[index-1], (888, 258), Image.Resampling.LANCZOS), (96, 450))
         block_height = (len(rows)-1)*BODY_LEADING + BODY_FONT_PX
-        top = adaptive_top(rows) if adaptive_body else 425 + max(36, (720-block_height)//2)
+        top = adaptive_top(rows, 730 if illustrated else 440, 1115) if adaptive_body else 425 + max(36, (720-block_height)//2)
         for row_index, row in enumerate(rows):
             y = top + row_index*BODY_LEADING
             shaped = rtl(row['text'])
             x = body_x(row['text']) if adaptive_body else 952
             bounds = draw.textbbox((x, y), shaped, font=font(BODY_FONT_PX), anchor='rt')
-            if bounds[0] < 112 or bounds[2] > 968 or bounds[1] < 440 or bounds[3] > 1115:
+            if bounds[0] < 112 or bounds[2] > 968 or bounds[1] < (730 if illustrated else 440) or bounds[3] > 1115:
                 raise ValueError('Large-type text exceeds its safe card; nothing was truncated.')
             fa(draw, row['text'], (x, y), BODY_FONT_PX)
         if index < total:
@@ -328,6 +356,8 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
                     max_body_lines=BODY_LINES_PER_PAGE, body_pages=page_spans,
                     summary_normalized=summary, summary_sha256=hashlib.sha256(summary.encode()).hexdigest(),
                     text_complete=True, hero_available=hero is not None, headline_font_px=headline_size,
+                    illustrated_body_pages=min(len(pages), max(0, len(pictures)-1)),
+                    used_slide_images=min(len(pictures), len(pages)+1),
                     assets_fingerprint=hashlib.sha256(b'\0'.join(n.encode()+b'\0'+(asset_root/n).read_bytes()
                                                                for n in ASSET_FILES)).hexdigest())
     (output / (prefix + '.json')).write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
