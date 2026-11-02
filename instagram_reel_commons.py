@@ -82,10 +82,15 @@ def _plain(value):
 
 def _topic(story):
     title = str(story.get('title_original', '')).casefold()
-    for words, query, keyword in TOPICS:
-        if any(re.search(r'(?<![a-z0-9])' + re.escape(word) + r'(?![a-z0-9])', title)
-               for word in words):
-            return query, keyword
+    try:
+        slug = unquote(urlsplit(str(story.get('source_url', ''))).path.rsplit('/', 1)[-1])
+    except ValueError:
+        slug = ''
+    for text in (title, re.sub(r'[^a-z0-9]+', ' ', slug.casefold()[:500])):
+        for words, query, keyword in TOPICS:
+            if any(re.search(r'(?<![a-z0-9])' + re.escape(word) + r'(?![a-z0-9])', text)
+                   for word in words):
+                return query, keyword
     return None
 
 
