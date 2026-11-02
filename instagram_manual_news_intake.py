@@ -498,9 +498,9 @@ def publish_manual_story(con, record, paths, output, public_base, ig, guard, art
     return ig._publish_container(container)
 
 
-def prepare_admin_news(con, row, kind, output, asset_root, ranked):
+def prepare_admin_news(con, row, kind, output, asset_root, ranked, *, image_paths=None, minimum_images=0, prepared_translation=None):
     """Render an admin-selected source without automatic editorial gates."""
-    title, summary = ranked.translate(con, row)
+    title, summary = prepared_translation if prepared_translation is not None else ranked.translate(con, row)
     saved = {k: row[k] for k in ('source_url', 'source_name', 'image_url', 'article_date', 'title_original')}
     saved.update(title_fa=title, summary_fa=summary, origin='manual', highlights_json='[]')
     import instagram_news_renderer as renderer
@@ -520,7 +520,7 @@ def prepare_admin_news(con, row, kind, output, asset_root, ranked):
                 news_label=news_label,
                 caption_title='صرافی کیانی | ' + news_label,
                 caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi' if kind == 'crypto' else 'خبر اقتصادی روز | kiani.exchange',
-                adaptive_body=True)
+                adaptive_body=True, slide_images=image_paths, minimum_slide_images=minimum_images)
         finally:
             os.umask(old_mask)
     finally:
@@ -587,42 +587,38 @@ def process_submission(con, record, runtime):
                     raise IntakeError('The installed Instagram artwork assets are unavailable.')
                 output = Path('/var/www/peerexo.com/public/instagram-rates/' +
                               ('news' if kind == 'crypto' else 'economy'))
-                import instagram_news_renderer as renderer
-                from PIL import Image
-                original_hero = renderer.hero_image
-
-                def safe_hero(story, cache):
-                    image_url = story.get('image_url')
-                    if not image_url:
-                        return None
-                    try:
-                        safe_url = engine.checked_url(image_url, article=True)
-                        request = Request(safe_url, headers={
-                            'User-Agent': 'KianiExchange-NewsSelectorTrial/1.0',
-                            'Accept': 'image/*'})
-                        with build_opener(engine.PublisherRedirects()).open(request, timeout=20) as response:
-                            final_url = engine.checked_url(response.geturl(), article=True)
-                            if not response.headers.get_content_type().startswith('image/'):
-                                raise ValueError('Not an approved source image')
-                            data = response.read(10_000_001)
-                        if len(data) > 10_000_000:
-                            raise ValueError('Source image is too large')
-                        with Image.open(io.BytesIO(data)) as opened:
-                            image = opened.convert('RGB')
-                            image.thumbnail((1920, 1920), Image.Resampling.LANCZOS)
-                            cache.mkdir(parents=True, exist_ok=True, mode=0o700)
-                            target = cache / (hashlib.sha256(final_url.encode()).hexdigest() + '.jpg')
-                            image.save(target, quality=95)
-                            return image.copy()
-                    except Exception as exc:
-                        print('Approved source illustration unavailable:', type(exc).__name__, flush=True)
-                        return None
-
+                from tempfile import TemporaryDirectory
+                from instagram_news_slide_images import collect as collect_slide_images, caption_credit, SlideImageError
+                minimum = 2 if record.get('request_type') == 'feed' else 1
                 try:
-                    renderer.hero_image = safe_hero
-                    saved, paths, caption, manifest = prepare_admin_news(assessment_db, row, kind, output, publisher_root, ranked)
-                finally:
-                    renderer.hero_image = original_hero
+                    with TemporaryDirectory(prefix='news-slide-images-', dir=STATE) as temp:
+                        title, summary = ranked.translate(assessment_db, row)
+                        image_context = dict(row, title_fa=title, summary_fa=summary)
+                        images = collect_slide_images(engine, image_context, Path(temp), origin='manual', minimum=minimum)
+                        saved, paths, caption, manifest = prepare_admin_news(
+                            assessment_db, row, kind, output, publisher_root, ranked,
+                            image_paths=[item['path'] for item in images], minimum_images=minimum,
+                            prepared_translation=(title, summary))
+                        images = images[:manifest.get('used_slide_images', len(images))]
+                        attribution = caption_credit(images)
+                        if attribution:
+                            caption += '\n\n' + attribution
+                        if len(caption) > 2200:
+                            raise SlideImageError('ذکر منبع تصاویر در کپشن جا نمی‌شود؛ پست منتشر نشد.')
+                        manifest['caption'] = caption
+                        manifest['slide_images'] = [{'kind': item.get('kind'), 'provider': item.get('provider'),
+                            'id': item.get('id'), 'source_url': item.get('source_url')} for item in images]
+                except SlideImageError as exc:
+                    raise IntakeError(str(exc)) from None
+
+                def remember_slide_images():
+                    used = [item for item in images if item.get('provider') in {'pixabay', 'pexels'}]
+                    if used:
+                        try:
+                            from instagram_reel_stock import mark_used
+                            mark_used(used)
+                        except Exception as exc:
+                            print('News image history update deferred:', type(exc).__name__, flush=True)
                 if record.get('request_type') == 'single':
                     paths = paths[:1]
                     if not paths:
@@ -633,6 +629,7 @@ def process_submission(con, record, runtime):
                     public_base = 'https://peerexo.com/instagram-rates/' + ('news' if kind == 'crypto' else 'economy')
                     media_id = publish_manual_story(con, record, paths, output, public_base,
                                                     ig, guard, material['article_published_at'])
+                    remember_slide_images()
                     return kind, saved['title_fa'], media_id
                 saved['source_url'] = final_url
                 saved['origin'] = 'manual'
@@ -654,6 +651,7 @@ def process_submission(con, record, runtime):
                         return ig._publish_container(container)
 
                 media_id = publish(production, [story], paths, caption, FinalQuotaGuard(), manifest)
+                remember_slide_images()
                 return kind, saved['title_fa'], media_id
 
 
