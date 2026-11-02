@@ -1,0 +1,72 @@
+"""Offline checks for required, distinct news slide images."""
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from PIL import Image
+
+import instagram_news_slide_images as slides
+
+
+class ImageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.story = dict(source_url='https://example.com/news', image_url='hero',
+                          image_urls=['hero','duplicate','second'], title_original='Bitcoin',
+                          title_fa='بیت کوین', summary_fa='متن فارسی')
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def modules(self, colors, stock=None, commons=None):
+        source = types.ModuleType('instagram_reel_source_image')
+        def fetch(engine, article, url, path, timeout=20):
+            if url not in colors:
+                raise ValueError('Unavailable')
+            Image.new('RGB', (900,500), colors[url]).save(path)
+            return path
+        source.fetch = fetch
+        st = types.ModuleType('instagram_reel_stock')
+        st.collect = lambda *args, **kwargs: list(stock or [])
+        co = types.ModuleType('instagram_reel_commons')
+        co.collect = lambda *args, **kwargs: list(commons or [])
+        return {'instagram_reel_source_image':source, 'instagram_reel_stock':st,
+                'instagram_reel_commons':co}
+
+    def test_distinct_article_images_and_duplicate_rejected(self):
+        modules = self.modules({'hero':'red','duplicate':'red','second':'blue'})
+        with patch.dict(sys.modules, modules):
+            found = slides.collect(None, self.story, self.root, origin='manual')
+        self.assertEqual(len(found), 2)
+        self.assertNotEqual(slides.image_key(found[0]['path']), slides.image_key(found[1]['path']))
+
+    def test_second_image_can_be_licensed_and_credited(self):
+        stock_path = self.root/'stock.jpg'
+        Image.new('RGB',(900,500),'blue').save(stock_path)
+        item = dict(path=stock_path,kind='illustrative',provider='pixabay',id='1',
+                    author='Artist',source_url='https://pixabay.com/example')
+        with patch.dict(sys.modules, self.modules({'hero':'red'}, stock=[item])):
+            found = slides.collect(None, self.story, self.root, origin='manual')
+        self.assertEqual(len(found),2)
+        credit = slides.caption_credit(found)
+        self.assertIn('نمادین', credit)
+        self.assertIn('Artist', credit)
+        self.assertIn('https://pixabay.com/example', credit)
+
+    def test_fewer_than_two_stops_carousel(self):
+        with patch.dict(sys.modules, self.modules({'hero':'red'})):
+            with self.assertRaises(slides.SlideImageError):
+                slides.collect(None, self.story, self.root, origin='manual')
+
+    def test_single_image_format_can_use_one(self):
+        with patch.dict(sys.modules, self.modules({'hero':'red'})):
+            found = slides.collect(None, self.story, self.root, origin='manual', minimum=1)
+        self.assertEqual(len(found),1)
+
+
+if __name__ == '__main__':
+    unittest.main()
+
