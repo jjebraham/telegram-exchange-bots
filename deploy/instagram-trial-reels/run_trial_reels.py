@@ -42,6 +42,7 @@ FILES = (
     'deploy/instagram-trial-reels/check_reel_cover.py',
     'deploy/instagram-trial-reels/check_news_menu.py',
     'deploy/instagram-trial-reels/check_admin_layout.py',
+    'deploy/instagram-trial-reels/check_reel_long_news.py',
     'deploy/instagram-trial-reels/check_blockchain_news.py',
     'deploy/instagram-trial-reels/check_scheduler_lock.py',
     'deploy/instagram-trial-reels/TRIAL-REELS.md',
