@@ -112,9 +112,8 @@ def _chunks(text, limit=170):
                 current = word
             else:
                 current = candidate
-        if current:
-            chunks.append(current)
-            current = ''
+    if current:
+        chunks.append(current)
     return chunks
 
 
@@ -243,8 +242,8 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
     source = _safe_text(story.get('source_name'), 180)
     story_type = story.get('story_type', 'hard_news')
     chunks = _chunks(summary)
-    if not chunks or len(chunks) > 8:
-        raise TrialReelError('The complete verified summary needs more than eight Reel text cards.')
+    if not chunks or len(chunks) > 16:
+        raise TrialReelError('The complete verified summary exceeds the readable Reel card limit.')
     pages = len(chunks) + 2
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
@@ -356,6 +355,9 @@ def _caption(story, kind, reel_mode='trial'):
         story['source_name'] + '\n' + story['source_url'])
     if story.get('source_scope') == 'coindesk_rss_summary':
         text += '\n\nاین ویدئو بر اساس عنوان و خلاصه فید رسمی کوین‌دسک تهیه شده است.'
+    full_summary = story.get('full_summary_fa')
+    if isinstance(full_summary, str) and full_summary.strip() and full_summary.strip() != story.get('summary_fa', '').strip():
+        text += '\n\nنسخه کوتاه خبر'
     if reel_mode == 'trial':
         text += '\n\nاین ویدئو به‌صورت Trial Reel منتشر شده است.'
     if len(text) > 2200:
@@ -610,6 +612,12 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
+        full_summary = normalized.get('full_summary_fa')
+        if isinstance(full_summary, str) and full_summary.strip() and full_summary.strip() != normalized['summary_fa'].strip():
+            addition = '\n\nخلاصه کامل خبر:\n' + full_summary.strip()
+            if len(caption) + len(addition) <= 2200:
+                caption += addition
+                _update(con, trial_id, caption=caption, updated_at=time.time())
         duration = render_video(normalized, kind, video_path, asset_root,
                                 music_path=music_path if music else None, media=media)
         if stock_used:
