@@ -30,6 +30,8 @@ TOPICS = (
     (r'\busdt\b|\btether\b|\bstablecoin', ('cryptocurrency trading', 'digital currency')),
     (r'\bgold\b|\bsilver\b', ('gold bullion', 'precious metals')),
     (r'\boil\b|\bbrent\b', ('oil industry', 'energy market')),
+    (r'\b(?:asset|wealth|fund|investment|portfolio)[ -](?:management|manager)\b|\bfinancial services\b',
+     ('investment finance', 'financial business', 'investment portfolio')),
     (r'\bcrypto|blockchain|defi\b', ('cryptocurrency trading', 'blockchain technology')),
     (r'\binflation\b|\beconomy\b|\beconomic\b|\brate\b|\bbank', ('financial market', 'economy finance')),
 )
@@ -45,6 +47,8 @@ RELEVANCE = (
     (r'\busdt\b|\btether\b|\bstablecoin', ('tether', 'stablecoin', 'cryptocurrency')),
     (r'\bgold\b|\bsilver\b', ('gold', 'silver', 'bullion', 'precious metal')),
     (r'\boil\b|\bbrent\b', ('oil', 'crude', 'petroleum', 'energy market')),
+    (r'\b(?:asset|wealth|fund|investment|portfolio)[ -](?:management|manager)\b|\bfinancial services\b',
+     ('finance', 'financial', 'investment', 'business', 'portfolio', 'fund management')),
     (r'\bcrypto|blockchain|defi\b', ('cryptocurrency', 'crypto', 'blockchain', 'defi')),
     (r'\binflation\b|\beconomy\b|\beconomic\b|\brate\b|\bbank',
      ('financial market', 'economy', 'inflation', 'bank', 'interest rate')),
@@ -266,3 +270,4 @@ def mark_used(items, *, state=STATE):
             con.execute('INSERT OR REPLACE INTO seen VALUES(?,?,?)',
                         (item['provider'],item['id'],now))
         con.commit()
+
