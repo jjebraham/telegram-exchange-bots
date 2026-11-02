@@ -280,8 +280,51 @@ class IntakeMenuTest(unittest.TestCase):
         with patch.dict('os.environ', {'DEEPSEEK_API_KEY': 'dummy'}), patch.object(translation, 'request_completion', return_value=good):
             self.assertIn('۵', intake.short_reel_summary(title, summary, material))
         with patch.dict('os.environ', {'DEEPSEEK_API_KEY': 'dummy'}), patch.object(translation, 'request_completion', return_value=bad):
-            with self.assertRaises(Exception):
-                intake.short_reel_summary(title, summary, material)
+            result = intake.short_reel_summary(title, summary, material)
+            self.assertEqual(result, summary)
+            self.assertNotIn('۹۹', result)
+
+    def test_short_summary_fallback_preserves_complete_sentences(self):
+        first = 'این نخستین جمله خبر است و اطلاعات اصلی را بیان می‌کند.'
+        rest = 'این جمله دوم توضیحات تکمیلی را شرح می‌دهد و اطلاعات بیشتری ارائه می‌کند.'
+        result = intake.extractive_short_summary(first + ' ' + rest, limit=len(first) + 1)
+        self.assertEqual(result, first)
+        self.assertIsNone(intake.extractive_short_summary('کلمه ' * 100, limit=100))
+
+    def test_long_summary_packs_sentences_without_losing_words(self):
+        from instagram_trial_reels import _chunks
+        summary = ' '.join('این جمله شماره {} درباره خبر است.'.format(n) for n in range(1, 13))
+        chunks = _chunks(summary)
+        self.assertLess(len(chunks), 12)
+        self.assertEqual(' '.join(chunks).split(), summary.split())
+        self.assertTrue(all(len(chunk) <= 170 for chunk in chunks))
+
+    def test_long_reel_can_use_more_than_eight_complete_cards(self):
+        import instagram_trial_reels as reel
+        original = ' '.join(('واژه' + str(i) + 'ب' * 135) for i in range(10))
+        captured = []
+        def render(t, title, source, kind, story_type, chunks, destination, *args, **kwargs):
+            captured.extend(chunks)
+            Path(destination).write_bytes(b'x' * 100001)
+        fake_motion = types.SimpleNamespace(render=render)
+        story = {'title_fa':'عنوان فارسی خبر', 'summary_fa':original,
+                 'source_name':'Example', 'reel_length':'long'}
+        with patch.dict(sys.modules, {'instagram_reel_motion':fake_motion}), \
+             patch.object(reel, '_probe_video', return_value=30):
+            reel.render_video(story, 'crypto', self.state/'out.mp4', self.state,
+                              ffmpeg='fake', ffprobe='fake')
+        self.assertGreater(len(captured), 8)
+        self.assertEqual(' '.join(captured).split(), original.split())
+
+    def test_short_summary_only_retries_when_no_safe_extract_exists(self):
+        long_sentence = 'متن ' * 100
+        material = {'title_original':'Example', 'source_text':long_sentence}
+        bad = translation.Completion('{bad json')
+        with patch.dict('os.environ', {'DEEPSEEK_API_KEY':'dummy'}), \
+             patch.object(translation, 'request_completion', return_value=bad) as call:
+            with self.assertRaises(intake.IntakeError):
+                intake.short_reel_summary('عنوان فارسی خبر', long_sentence, material)
+        self.assertEqual(call.call_count, 2)
 
 
 if __name__ == '__main__':
