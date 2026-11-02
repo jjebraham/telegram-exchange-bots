@@ -93,6 +93,23 @@ class ImageTests(unittest.TestCase):
         self.assertIn('artificial intelligence', stock.queries(story))
         self.assertFalse(stock._matches_story_topic(story, {'description':'bitcoin cryptocurrency mining'}))
 
+    def test_article_slug_supplies_missing_asset_management_topic(self):
+        import instagram_reel_stock as stock
+        import instagram_reel_commons as commons
+        story = {'title_original':'Animoca Brands obtains approval',
+                 'source_url':'https://cointelegraph.com/news/animoca-brands-expands-asset-management-business-with-abu-dhabi-approval'}
+        self.assertIn('investment finance', stock.queries(story))
+        self.assertTrue(stock._matches_story_topic(story, {'description':'business finance investment'}))
+        self.assertFalse(stock._matches_story_topic(story, {'description':'bitcoin cryptocurrency mining'}))
+        self.assertEqual(commons._topic(story)[0], 'investment management finance')
+
+    def test_slug_cannot_override_a_recognized_ai_title(self):
+        import instagram_reel_stock as stock
+        story = {'title_original':'ChatGPT and Claude chatbot restrictions',
+                 'source_url':'https://example.com/news/bitcoin-asset-management'}
+        self.assertEqual(stock.queries(story)[0], 'artificial intelligence')
+        self.assertFalse(stock._matches_story_topic(story, {'description':'bitcoin cryptocurrency mining'}))
+
 
 if __name__ == '__main__':
     unittest.main()
