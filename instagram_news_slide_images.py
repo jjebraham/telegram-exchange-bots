@@ -3,11 +3,56 @@ from pathlib import Path
 import hashlib
 import time
 import uuid
+from html.parser import HTMLParser
+from urllib.parse import urljoin
+from urllib.request import Request, build_opener
 from PIL import Image, ImageOps
 
 
 class SlideImageError(RuntimeError):
     pass
+
+
+class ArticleFigures(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.article_depth = 0
+        self.figure_depth = 0
+        self.urls = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in {'article', 'main'}:
+            self.article_depth += 1
+        if self.article_depth and tag == 'figure':
+            self.figure_depth += 1
+        if self.article_depth and self.figure_depth and tag == 'img' and len(self.urls) < 16:
+            value = (attrs.get('data-src') or attrs.get('data-lazy-src') or
+                     attrs.get('data-original') or attrs.get('src') or '')
+            if (not value or value.startswith('data:')) and attrs.get('data-srcset'):
+                value = attrs['data-srcset'].split(',')[-1].strip().split(' ')[0]
+            if isinstance(value, str) and value and not value.startswith('data:'):
+                self.urls.append(value)
+
+    def handle_endtag(self, tag):
+        if tag == 'figure' and self.figure_depth:
+            self.figure_depth -= 1
+        if tag in {'article', 'main'} and self.article_depth:
+            self.article_depth -= 1
+
+
+def discover_figures(engine, article_url):
+    """Read only figures in the same approved article, with bounded requests."""
+    url = engine.checked_url(article_url, article=True)
+    request = Request(url, headers={'User-Agent':'KianiExchange-NewsSelectorTrial/1.0', 'Accept':'text/html'})
+    with build_opener(engine.PublisherRedirects()).open(request, timeout=12) as response:
+        engine.checked_url(response.geturl(), article=True)
+        raw = response.read(2_000_001)
+    if not raw or len(raw) > 2_000_000:
+        raise SlideImageError('The source article could not be checked for figures.')
+    parser = ArticleFigures()
+    parser.feed(raw.decode('utf-8', errors='replace'))
+    return [urljoin(url, value) for value in parser.urls]
 
 
 def image_key(path):
@@ -41,6 +86,11 @@ def collect(engine, story, directory, *, origin, minimum=2, limit=4):
     urls = [story.get('image_url')]
     if isinstance(story.get('image_urls'), list):
         urls.extend(story['image_urls'])
+    elif origin != 'manual':
+        try:
+            urls.extend(discover_figures(engine, story['source_url']))
+        except Exception as exc:
+            print('Additional article images unavailable:', type(exc).__name__, flush=True)
     distinct_urls, deadline = set(), time.monotonic()+25
     for url in urls:
         if not isinstance(url, str) or not url or url in distinct_urls:
