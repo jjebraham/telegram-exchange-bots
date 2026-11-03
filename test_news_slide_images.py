@@ -110,6 +110,24 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(stock.queries(story)[0], 'artificial intelligence')
         self.assertFalse(stock._matches_story_topic(story, {'description':'bitcoin cryptocurrency mining'}))
 
+    def test_election_story_uses_relevant_illustrations(self):
+        import instagram_reel_stock as stock
+        import instagram_reel_commons as commons
+        story = {'title_original':'US midterm prediction markets',
+                 'source_url':'https://cointelegraph.com/news/us-midterm-prediction-markets'}
+        self.assertIn('election ballot', stock.queries(story))
+        self.assertTrue(stock._matches_story_topic(story, {'description':'election voting ballot box'}))
+        self.assertFalse(stock._matches_story_topic(story, {'description':'bitcoin cryptocurrency mining'}))
+        self.assertEqual(commons._topic(story)[0], 'election ballot voting')
+
+    def test_election_slug_supplies_topic_when_title_is_vague(self):
+        import instagram_reel_stock as stock
+        import instagram_reel_commons as commons
+        story = {'title_original':'Markets prepare for changes',
+                 'source_url':'https://cointelegraph.com/news/us-midterm-prediction-markets'}
+        self.assertEqual(stock.queries(story)[0], 'election ballot')
+        self.assertEqual(commons._topic(story)[0], 'election ballot voting')
+
 
 if __name__ == '__main__':
     unittest.main()
