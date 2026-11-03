@@ -20,6 +20,8 @@ TOPICS = (
       'machine learning'), 'artificial intelligence',
      ('artificial intelligence', 'chatgpt', 'claude', 'copilot',
       'language model', 'machine learning')),
+    (('midterm', 'midterms', 'election', 'elections', 'ballot', 'ballots', 'voting'),
+     'election ballot voting', ('election', 'ballot', 'voting')),
     (('bitcoin', 'btc'), 'bitcoin cryptocurrency', 'bitcoin'),
     (('ethereum', 'ether', 'eth'), 'ethereum cryptocurrency', 'ethereum'),
     (('tether', 'usdt'), 'tether cryptocurrency', 'tether'),
