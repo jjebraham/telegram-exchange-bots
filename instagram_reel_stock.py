@@ -24,6 +24,8 @@ UA = 'KianiExchangeInstagramReels/1.0 (https://kiani.exchange)'
 TOPICS = (
     (r'\bchatgpt\b|\bclaude\b|\bcopilot\b|\bllms?\b|\bartificial intelligence\b|\bmachine learning\b|\bgenerative ai\b|\bai\b',
      ('artificial intelligence', 'AI chatbot interface', 'machine learning')),
+    (r'\bmidterms?\b|\belections?\b|\bballots?\b|\bvot(?:e|es|ers|ing)\b',
+     ('election ballot', 'voting ballot box', 'election voting')),
     (r'\bhack(?:er|ers|ing|ed)?\b|\bphish|cyber|security|\bfraud\b|\bscam', ('cyber security', 'computer network security')),
     (r'\bbitcoin\b|\bbtc\b', ('bitcoin cryptocurrency', 'cryptocurrency trading')),
     (r'\bethereum\b|\bether\b|\beth\b', ('ethereum cryptocurrency', 'blockchain technology')),
@@ -39,6 +41,8 @@ RELEVANCE = (
     (r'\bchatgpt\b|\bclaude\b|\bcopilot\b|\bllms?\b|\bartificial intelligence\b|\bmachine learning\b|\bgenerative ai\b|\bai\b',
      ('artificial intelligence', 'machine learning', 'chatgpt', 'claude',
       'copilot', 'chatbot', 'language model', 'neural network', 'data center')),
+    (r'\bmidterms?\b|\belections?\b|\bballots?\b|\bvot(?:e|es|ers|ing)\b',
+     ('election', 'voting', 'voter', 'vote', 'ballot', 'polling station')),
     (r'\bhack(?:er|ers|ing|ed)?\b|\bphish|cyber|security|\bfraud\b|\bscam',
      ('cybersecurity', 'cyber security', 'hacker', 'phishing',
       'computer security', 'data breach', 'network security')),
