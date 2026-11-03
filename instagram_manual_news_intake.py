@@ -633,12 +633,12 @@ def process_submission(con, record, runtime):
                 minimum = 2 if record.get('request_type') == 'feed' else 1
                 try:
                     with TemporaryDirectory(prefix='news-slide-images-', dir=STATE) as temp:
-                        print('Manual news stage: translation', flush=True)
+                        print('Manual news stage:', update_id, 'translation', flush=True)
                         title, summary = translate_admin_news(ranked, assessment_db, row)
                         image_context = dict(row, title_fa=title, summary_fa=summary)
-                        print('Manual news stage: images', flush=True)
+                        print('Manual news stage:', update_id, 'images', flush=True)
                         images = collect_slide_images(engine, image_context, Path(temp), origin='manual', minimum=minimum)
-                        print('Manual news stage: layout', flush=True)
+                        print('Manual news stage:', update_id, 'layout', flush=True)
                         saved, paths, caption, manifest = prepare_admin_news(
                             assessment_db, row, kind, output, publisher_root, ranked,
                             image_paths=[item['path'] for item in images], minimum_images=minimum,
@@ -694,7 +694,7 @@ def process_submission(con, record, runtime):
                         guard()
                         return ig._publish_container(container)
 
-                print('Manual news stage: publishing', flush=True)
+                print('Manual news stage:', update_id, 'publishing', flush=True)
                 media_id = publish(production, [story], paths, caption, FinalQuotaGuard(), manifest)
                 remember_slide_images()
                 return kind, saved['title_fa'], media_id
@@ -1095,7 +1095,7 @@ def run_once(config_path, runtime):
                         error_code, response = manual_news_error(exc)
                         finish(con, token, record, 'rejected',
                             response, code=error_code)
-                        print('Manual news error reason:', error_code, flush=True)
+                        print('Manual news error reason:', record['update_id'], error_code, flush=True)
                     print('Manual news processing stopped:', type(exc).__name__, flush=True)
             deliver_notices(token, admins, send_message)
             return 0
