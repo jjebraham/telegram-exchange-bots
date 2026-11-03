@@ -46,6 +46,42 @@ class IntakeMenuTest(unittest.TestCase):
             'id': str(update_id), 'from': {'id': who}, 'data': 'nm:' + token + ':' + value,
             'message': {'chat': {'id': who, 'type': 'private'}}}}
 
+    def test_manual_translation_retries_validation_without_accepting_bad_facts(self):
+        from instagram_crypto_news import NewsError
+        calls = []
+        def translate(con, row):
+            calls.append(1)
+            if len(calls) == 1:
+                raise NewsError('Translation introduced a number absent from the source.')
+            return ('عنوان فارسی', 'خلاصه فارسی معتبر')
+        ranked = types.SimpleNamespace(translate=translate)
+        self.assertEqual(intake.translate_admin_news(ranked, None, {}),
+                         ('عنوان فارسی', 'خلاصه فارسی معتبر'))
+        self.assertEqual(len(calls), 2)
+        def invalid(con, row):
+            raise NewsError('Translation introduced a number absent from the source.')
+        with self.assertRaises(NewsError):
+            intake.translate_admin_news(types.SimpleNamespace(translate=invalid), None, {})
+
+    def test_manual_translation_does_not_retry_other_errors(self):
+        from instagram_crypto_news import NewsError
+        calls = []
+        def translate(con, row):
+            calls.append(1)
+            raise NewsError('DeepSeek translation request failed (HTTP 429).')
+        with self.assertRaises(NewsError):
+            intake.translate_admin_news(types.SimpleNamespace(translate=translate), None, {})
+        self.assertEqual(len(calls), 1)
+
+    def test_manual_error_classification_never_includes_arbitrary_message(self):
+        from instagram_crypto_news import NewsError
+        code, message = intake.manual_news_error(NewsError('Translation introduced a number absent from the source.'))
+        self.assertEqual(code, 'TranslationUnsupportedNumber')
+        self.assertIn('ترجمه', message)
+        code, message = intake.manual_news_error(NewsError('private response secret'))
+        self.assertEqual(code, 'NewsError')
+        self.assertNotIn('secret', message)
+
     def test_link_waits_then_reel_length_queues_once(self):
         intake.ingest(self.con, [self.message(1, 'https://example.com/article')], {'12345'})
         self.assertEqual(self.con.execute('SELECT COUNT(*) FROM submissions').fetchone()[0], 0)
