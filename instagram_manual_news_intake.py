@@ -498,6 +498,47 @@ def publish_manual_story(con, record, paths, output, public_base, ig, guard, art
     return ig._publish_container(container)
 
 
+_TRANSLATION_VALIDATION_ERRORS = {
+    'Translation response must be a JSON object.': 'TranslationInvalidJson',
+    'Persian translation length is outside the card limits.': 'TranslationLength',
+    'The selected news needs a Persian headline and summary.': 'TranslationNotPersian',
+    'Translation must not contain model-added links or hashtags.': 'TranslationAddedLinks',
+    'Translation introduced a number absent from the source.': 'TranslationUnsupportedNumber',
+}
+
+
+def translate_admin_news(ranked, con, row):
+    """Retry one rejected translation, keeping all factual checks in place."""
+    from instagram_crypto_news import NewsError
+    for attempt in range(2):
+        try:
+            return ranked.translate(con, row)
+        except NewsError as exc:
+            code = _TRANSLATION_VALIDATION_ERRORS.get(str(exc))
+            if not code or attempt:
+                raise
+            print('Manual translation validation retry:', code, flush=True)
+
+
+def manual_news_error(exc):
+    """Return only fixed, non-sensitive error identifiers and admin messages."""
+    from instagram_crypto_news import NewsError
+    if isinstance(exc, NewsError):
+        code = _TRANSLATION_VALIDATION_ERRORS.get(str(exc))
+        if code:
+            return code, ('ترجمه خبر پس از تلاش دوباره تأیید نشد؛ '
+                          'برای جلوگیری از انتشار اطلاعات نادرست، پست منتشر نشد. '
+                          'لطفاً دوباره تلاش کنید.')
+        if str(exc).startswith('DeepSeek translation request failed ('):
+            return 'TranslationServiceError', ('دسترسی به سرویس ترجمه انجام نشد؛ '
+                                               'پست منتشر نشد. لطفاً بعداً دوباره تلاش کنید.')
+        if str(exc).startswith('DeepSeek returned no complete translation after ') or str(exc).startswith('DeepSeek did not finish a translation ('):
+            return 'TranslationIncomplete', ('سرویس ترجمه پاسخ کامل نداد؛ '
+                                             'پست منتشر نشد. لطفاً دوباره تلاش کنید.')
+    return type(exc).__name__, ('این خبر منتشر نشد. خطا هنگام آماده‌سازی یا انتشار رخ داد؛ '
+                                'لطفاً دوباره تلاش کنید.')
+
+
 def prepare_admin_news(con, row, kind, output, asset_root, ranked, *, image_paths=None, minimum_images=0, prepared_translation=None):
     """Render an admin-selected source without automatic editorial gates."""
     title, summary = prepared_translation if prepared_translation is not None else ranked.translate(con, row)
@@ -592,9 +633,12 @@ def process_submission(con, record, runtime):
                 minimum = 2 if record.get('request_type') == 'feed' else 1
                 try:
                     with TemporaryDirectory(prefix='news-slide-images-', dir=STATE) as temp:
-                        title, summary = ranked.translate(assessment_db, row)
+                        print('Manual news stage: translation', flush=True)
+                        title, summary = translate_admin_news(ranked, assessment_db, row)
                         image_context = dict(row, title_fa=title, summary_fa=summary)
+                        print('Manual news stage: images', flush=True)
                         images = collect_slide_images(engine, image_context, Path(temp), origin='manual', minimum=minimum)
+                        print('Manual news stage: layout', flush=True)
                         saved, paths, caption, manifest = prepare_admin_news(
                             assessment_db, row, kind, output, publisher_root, ranked,
                             image_paths=[item['path'] for item in images], minimum_images=minimum,
@@ -650,6 +694,7 @@ def process_submission(con, record, runtime):
                         guard()
                         return ig._publish_container(container)
 
+                print('Manual news stage: publishing', flush=True)
                 media_id = publish(production, [story], paths, caption, FinalQuotaGuard(), manifest)
                 remember_slide_images()
                 return kind, saved['title_fa'], media_id
@@ -1047,9 +1092,10 @@ def run_once(config_path, runtime):
                             'نتیجه درخواست انتشار قطعی نیست؛ برای جلوگیری از پست تکراری، ارسال خودکار متوقف شد. وضعیت اینستاگرام را بررسی کنید.',
                             code='UncertainPublish')
                     else:
+                        error_code, response = manual_news_error(exc)
                         finish(con, token, record, 'rejected',
-                            'این خبر منتشر نشد. منبع، دسته‌بندی یا ظرفیت انتشار شرایط لازم را نداشت؛ لینک را بررسی کنید و در صورت نیاز بعداً دوباره بفرستید.',
-                            code=type(exc).__name__)
+                            response, code=error_code)
+                        print('Manual news error reason:', error_code, flush=True)
                     print('Manual news processing stopped:', type(exc).__name__, flush=True)
             deliver_notices(token, admins, send_message)
             return 0
