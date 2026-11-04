@@ -20,7 +20,8 @@ GOLD_FILES = ('iran_gold_data.py', 'iran_gold_quorum.py', 'iran_gold_servix.py',
 FILES = GOLD_FILES + ('instagram_daily_rates.py', 'instagram_carousel.py',
     'deploy/instagram-price-recovery/run_recovery.py',
     'deploy/instagram-price-recovery/activate_recovery.py', 'deploy/instagram-price-recovery/README.md',
-    'deploy/instagram-price-recovery/check_gold_retry.py')
+    'deploy/instagram-price-recovery/check_gold_retry.py',
+    'tests/test_partial_metals.py', 'deploy/instagram-price-recovery/check_partial_metals.py')
 
 
 def main():
@@ -28,6 +29,7 @@ def main():
     parser.add_argument('--repo', type=Path, default=Path.home()/'telegram_bot_repo')
     parser.add_argument('--revision', required=True)
     parser.add_argument('--activate', action='store_true')
+    parser.add_argument('--extract-only', action='store_true')
     parser.add_argument('--target', choices=('both', 'rates', 'gold'), default='both')
     args = parser.parse_args()
     if not hasattr(os, 'geteuid') or os.geteuid() == 0 or not re.fullmatch('[0-9a-f]{40}', args.revision):
@@ -51,6 +53,11 @@ def main():
         if not target.exists():
             target.write_bytes(data)
     print(f'Extracted/verified {len(FILES)} files ({total/1024:.1f} KiB); no checkout.', flush=True)
+    if args.extract_only:
+        if args.activate:
+            parser.error('--extract-only cannot be combined with --activate')
+        print('Extraction only; no source, database or Instagram request was made.', flush=True)
+        return 0
     helper = root/'deploy/instagram-price-recovery/activate_recovery.py'
     python = Path.home()/'kiani-instagram-venv/bin/python'
     command = [str(python), '-u', str(helper), '--runtime', str(root), '--repo', str(args.repo),
@@ -71,4 +78,5 @@ if __name__ == '__main__':
     except Exception as exc:
         print('Repair launcher stopped:', str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
+
 
