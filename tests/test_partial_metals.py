@@ -8,6 +8,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import time
 import types
 import unittest
 
@@ -17,6 +18,8 @@ import global_metals_data as metals
 import instagram_global_metals_renderer as renderer
 sys.modules.setdefault('fcntl', types.ModuleType('fcntl'))
 import instagram_iran_gold as gold
+sys.path.insert(0, str(ROOT/'deploy/instagram-price-recovery'))
+import activate_recovery as activation
 
 
 class PartialMetalsTest(unittest.TestCase):
@@ -89,6 +92,25 @@ class PartialMetalsTest(unittest.TestCase):
         with patch.object(gold, 'validate', side_effect=gold.GoldError('bad source')):
             self.assertEqual(gold.comparison(con, self.now, 24), {})
         con.close()
+
+    def test_upgrade_preview_rechecks_consensus_without_requiring_one_provider(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            with sqlite3.connect(state/'gold.sqlite3') as con:
+                con.execute('CREATE TABLE gold_previews(runtime_hash TEXT, assets_hash TEXT, created_at REAL, snapshot_json TEXT)')
+                con.execute('CREATE TABLE gold_history(day TEXT, observed_at TEXT, prices_json TEXT, media_id TEXT)')
+                con.execute('INSERT INTO gold_previews VALUES (?,?,?,?)',
+                            ('hash', 'hash', time.time(), json.dumps({'status':'verified','rows':[]})))
+            con.close()
+            with patch.object(gold, 'STATE', state), patch.object(gold, 'fingerprint', return_value='hash'), \
+                 patch.object(gold, 'validate') as validate, patch.object(activation.subprocess, 'run'):
+                activation.gold_probe(ROOT)
+                validate.assert_called_once()
+            with patch.object(gold, 'STATE', state), patch.object(gold, 'fingerprint', return_value='hash'), \
+                 patch.object(gold, 'validate', side_effect=gold.GoldError('bad quorum')), \
+                 patch.object(activation.subprocess, 'run'):
+                with self.assertRaises(gold.GoldError):
+                    activation.gold_probe(ROOT)
 
 
 if __name__ == '__main__':
