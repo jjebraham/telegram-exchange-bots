@@ -19,6 +19,8 @@ FILES = (
     'instagram_trial_reels.py',
     'instagram_direct_reel_retention.py',
     'instagram_trial_music.py',
+    'test_trial_music.py',
+    'deploy/instagram-trial-reels/check_music_pool.py',
     'instagram_reel_usage.py',
     'report_reel_usage.py',
     'instagram_reel_media.py',
