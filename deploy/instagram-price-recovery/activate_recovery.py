@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from datetime import datetime
 import fcntl
 import hashlib
@@ -122,18 +122,20 @@ def gold_probe(runtime):
     python = Path.home()/'kiani-instagram-venv/bin/python'
     subprocess.run([str(python), '-B', '-u', str(runtime/'instagram_iran_gold.py')],
                    cwd=runtime, check=True)
-    # The preview must prove the new route actually contributed to the gold
-    # agreement, rather than silently passing only the existing fallback pair.
+    # This upgrade preserves the existing quorum policy. TGJU is one of the
+    # possible providers, rather than a mandatory installation prerequisite.
     path = gold.STATE/'gold.sqlite3'
-    with sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True) as con:
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True)) as con:
         row = con.execute('SELECT snapshot_json FROM gold_previews WHERE runtime_hash=? AND assets_hash=? '
                           'AND created_at BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 1',
                           (gold.fingerprint(runtime), gold.fingerprint(Path.home()/'kiani-instagram-publisher', gold.ASSETS),
                            time.time()-900, time.time())).fetchone()
+        baseline = gold.last_prices(con)
     snapshot = json.loads(row[0]) if row else {}
-    if not any(r['id'] in {'gold18', 'mesghal'} and 'tgju' in r.get('sources', []) for r in snapshot.get('rows', [])):
-        raise RuntimeError('A fresh gold preview with TGJU-confirmed gold18 or mesghal is required.')
-    print('Akamai TGJU corroboration and the existing full-board checks passed. No Meta contact.', flush=True)
+    if not row:
+        raise RuntimeError('A fresh preview of the upgraded gold runtime is required.')
+    gold.validate(snapshot, baseline=baseline)
+    print('Fresh seven-price gold consensus and the existing full-board checks passed. No Meta contact.', flush=True)
 
 
 def activate(runtime, repo, revision, role):
@@ -188,8 +190,6 @@ def activate(runtime, repo, revision, role):
             gold.labels(datetime.now(gold.TEHRAN), shared)
             snapshot = gold.collect(baseline)
             gold.validate(snapshot, baseline=baseline)
-            if not any(r['id'] in {'gold18', 'mesghal'} and 'tgju' in r['sources'] for r in snapshot['rows']):
-                raise RuntimeError('Fresh activation prices lack TGJU gold corroboration.')
             audit = state/'runs'/('source-recovery-'+uuid.uuid4().hex[:12]+'.json')
             atomic(audit, json.dumps(dict(snapshot=snapshot), ensure_ascii=False, indent=2).encode())
             proof['source_audit'] = str(audit)
