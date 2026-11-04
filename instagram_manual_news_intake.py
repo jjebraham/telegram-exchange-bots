@@ -517,7 +517,7 @@ def translate_admin_news(ranked, con, row):
             code = _TRANSLATION_VALIDATION_ERRORS.get(str(exc))
             if not code or attempt:
                 raise
-            print('Manual translation validation retry:', code, flush=True)
+            print('News translation validation retry:', code, flush=True)
 
 
 def manual_news_error(exc):
