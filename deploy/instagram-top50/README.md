@@ -1,8 +1,8 @@
 # Kiani top 50 cryptocurrency prices
 
 One Instagram Feed carousel daily at **16:00 Europe/Istanbul (13:00 UTC)**.
-There are seven 1080 × 1350 JPEG slides: a market-pulse cover, a decliners
-slide, and the existing five price slides with ten coins each.
+There are twelve 1080 × 1350 JPEG slides: a market-pulse cover, a decliners
+slide, and ten price slides with five coins each and larger type.
 
 The cover counts the positive, negative and unchanged 24-hour USD movements
 among the top-50 coins with a reported change, and shows BTC and ETH when
@@ -15,9 +15,11 @@ coins. The caption describes the different universes and threshold.
 
 ## Upgrade the existing deployed publisher
 
-The pinned `run_gainers.py` stages an exact release and makes a fresh seven-slide
-preview without contacting Meta. `--activate` verifies the previously deployed
-PR #76 revision `94d11ec70a6bad4e8ab8dde8c279335ed40d4bda`, source hashes,
+The pinned `run_gainers.py` stages an exact release and makes a fresh twelve-slide
+preview without contacting Meta. Before activation, `check_meta12.py` creates
+12 temporary image containers and a carousel container to check compatibility;
+it does not publish. Activation requires its recent account-specific proof. `--activate` verifies the previously deployed
+PR #86 revision `4ac7df62d40ab64f5310e6be402a622ffa5eb9d6`, source hashes,
 launcher, existing UTC schedule and Story registration. It requires a matching
 recent preview and a separate fresh source check, and creates a backup before
 activation. It posts nothing. The first slide remains the delayed Story image.
@@ -36,7 +38,7 @@ the 24 October original expiry was 13:00:51 UTC and the job failed at 13:01:00.
   final publication request. SQLite writes remain on the main thread.
 - Typed expiry errors allow at most **three total preparation attempts** in one
   publishing invocation, separated by two seconds. Each retry collects all
-  CoinPaprika data and a fresh Akamai quote, renders seven new uniquely named
+  CoinPaprika data and a fresh Akamai quote, renders twelve new uniquely named
   images, saves a separate snapshot/manifest, and creates new containers.
 - No old evidence, images or containers are relabelled as fresh. The quote's
   original 90-second proofs, original expiry, <=35-second collector age at
@@ -148,7 +150,7 @@ mkdir -p /var/www/peerexo.com/public/instagram-rates/top50
   --publisher-root "$HOME/kiani-instagram-publisher"
 ```
 
-It collects fresh prices and saves seven slides without publishing. To publish
+It collects fresh prices and saves twelve slides without publishing. To publish
 a fresh manual carousel, run the same command with `--publish`. Keep the default
 database so schedule activation can find the successful manual publication.
 The public directory must serve JPEGs at

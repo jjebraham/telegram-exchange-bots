@@ -26,14 +26,14 @@ LEGACY = {
     'instagram_top50_prices.py': 'aaaf133b87dc3a57f42e43470195d54a1944e7f891afe786c01ff29a9f7fed07',
     'instagram_top50_renderer.py': '146f861ef8858791305199b195639ab143a2a28c670fc27c1f9a8bc3ec6f1acb',
 }
-DEPLOYED_GAINERS_REVISION = '94d11ec70a6bad4e8ab8dde8c279335ed40d4bda'
+DEPLOYED_GAINERS_REVISION = '4ac7df62d40ab64f5310e6be402a622ffa5eb9d6'
 DEPLOYED_GAINERS_HASHES = {
-    'instagram_top50_prices.py': 'abba357174288ec4f0b14829e7f7d54da26532b039a1a53cd38e38bb56f8da23',
-    'crypto_top50_data.py': '57adf2d4706aa00d86f0a2569198400a68f16fd85ae726bec00dd86514d18458',
-    'instagram_top50_renderer.py': '50d5d4d82c1e607273f6ed12d85db0e1eb6c67992d362f5358c7b1213489d6cd',
+    'instagram_top50_prices.py': '6617dbf60487436a8a49c9637f1a6d6570a91cd11e7f5dd680dafbff84c298c0',
+    'crypto_top50_data.py': '8ce69e40f8d05d732b1870070c82561fed34033b4a2d47af55fdfb6bb78e0d8f',
+    'instagram_top50_renderer.py': '91c7738208529214d9514e9dfce70ad165871655e8d5d1d6940399a73b5f1d0b',
     'crypto_akamai_rate.py': 'e3fe7f9c629a4711d32270e6b3147d31ed1150b864e572428b803f4f8afd134e',
 }
-DEPLOYED_GAINERS_RUNTIME_HASH = '4a2022af7c205b912b4f0e9c2e17075de10785ade25716da5aa1e39c5fdc8e43'
+DEPLOYED_GAINERS_RUNTIME_HASH = '8d21ec43f2a30d7f9bd0ebd967231b2f0dac4df4b8f0b5b3bbb49a7bda2c344f'
 
 
 def owned(path):
@@ -152,15 +152,26 @@ def main():
                 manifest = json.loads(row['manifest_json'])
                 if (manifest.get('top50_runtime_fingerprint') == runtime_hash and
                         manifest.get('shared_assets_fingerprint') == assets_hash and not manifest.get('sample') and
-                        manifest.get('sections') == ['market_pulse', 'declines'] + ['top50']*5 and len(manifest.get('images', [])) == 7):
+                        manifest.get('sections') == ['market_pulse', 'declines'] + ['top50']*10 and len(manifest.get('images', [])) == 12):
                     snapshot = json.loads(row['data_json'])
                     validate_snapshot(snapshot)
                     preview = row['id']
                     break
             if not preview:
-                raise RuntimeError('Run a verified seven-slide preview from this exact runtime/assets before activation.')
+                raise RuntimeError('Run a verified twelve-slide preview from this exact runtime/assets before activation.')
         finally:
             con.close()
+        proof_path = app.DEFAULT_DB.parent / 'meta-12-carousel-proof.json'
+        proof = json.loads(owned(proof_path))
+        account = os.environ.get('INSTAGRAM_USER_ID', '').strip()
+        token = os.environ.get('INSTAGRAM_ACCESS_TOKEN', '').strip()
+        if (not account or not token or proof.get('revision') != args.revision or
+                proof.get('runtime_hash') != runtime_hash or proof.get('assets_hash') != assets_hash or
+                proof.get('account_hash') != hashlib.sha256(account.encode()).hexdigest() or
+                proof.get('token_hash') != hashlib.sha256(token.encode()).hexdigest() or
+                proof.get('preview_id') != preview or proof.get('ready') is not True or
+                not 0 <= time.time() - float(proof.get('checked_at', 0)) <= 24*3600):
+            raise RuntimeError('A recent matching twelve-image Meta container check is required; no post published.')
         # A new source-only check is required; a historical preview never
         # authorizes reuse of its prices for the next scheduled publication.
         snapshot = collect()
@@ -199,7 +210,7 @@ def main():
     print('Market USDT: existing Akamai feed; unadjusted median ask; original source proofs/expiry preserved.')
     print('Preparation: three concurrent slide uploads; at most three total attempts with fresh rebuilds on expiry only.')
     print('Final freshness check remains mandatory. Uncertain publication stops all retries; no stale image/evidence reuse.')
-    print('Feed: daily 16:00 Europe/Istanbul; market pulse, decliners and five top 50 price slides.')
+    print('Feed: daily 16:00 Europe/Istanbul; market pulse, decliners and ten price slides (five coins each).')
     print('Market movers: up to five gains and five declines beyond 2%; volume > USD 50,000; CoinPaprika.')
     print('Story: first-slide market pulse, 30 minutes after successful Feed publication.')
     print('Next scheduled attempt:', start.isoformat())
