@@ -229,11 +229,13 @@ def validate_quote(provider, asset, q, now):
     return value
 
 
-def assess(providers, now):
+def assess(providers, now, *, gold_only=False):
     if not isinstance(providers, dict) or set(providers)-set(URLS):
         raise GoldError('Unreviewed global-metals provider.')
     rows = []
     for asset, spec in SPEC.items():
+        if gold_only and asset != 'gold':
+            continue
         eligible, rejected = {}, {}
         for provider, board in providers.items():
             try:
@@ -273,16 +275,27 @@ def assess(providers, now):
 
 def validate(snapshot, now=None):
     now = now or datetime.now(UTC)
-    if snapshot.get('layout_sample') or snapshot.get('status') != 'verified' or snapshot.get('schema_version') != 1:
+    status = snapshot.get('status')
+    if snapshot.get('layout_sample') or status not in {'verified', 'gold_only'} or snapshot.get('schema_version') != 1:
         raise GoldError('Only a verified live global-metals snapshot can be published.')
     if not -5 <= (now-stamp(snapshot['generated_at'])).total_seconds() <= 180:
         raise GoldError('Global-metals collection expired.')
-    expected = assess(snapshot['providers'], now)
+    expected = assess(snapshot['providers'], now, gold_only=status == 'gold_only')
     fields = ('id', 'name', 'price', 'sources', 'selected_source', 'agreement_pct')
-    if len(snapshot['rows']) != 2 or any(a[k] != b[k] for a,b in zip(expected, snapshot['rows']) for k in fields):
+    if len(snapshot['rows']) != len(expected) or any(a[k] != b[k] for a,b in zip(expected, snapshot['rows']) for k in fields):
         raise GoldError('Displayed global-metals rows differ from verified source values.')
-    if snapshot.get('ratio') != str(number(expected[0]['price'])/number(expected[1]['price'])):
-        raise GoldError('Gold-to-silver ratio differs from verified prices.')
+    if status == 'verified':
+        if snapshot.get('ratio') != str(number(expected[0]['price'])/number(expected[1]['price'])):
+            raise GoldError('Gold-to-silver ratio differs from verified prices.')
+    else:
+        if snapshot.get('ratio') is not None:
+            raise GoldError('A gold-only board cannot include a silver ratio.')
+        try:
+            assess(snapshot['providers'], now)
+        except GoldError:
+            pass
+        else:
+            raise GoldError('A complete verified board cannot be replaced by a gold-only board.')
 
 
 def collect():
@@ -315,5 +328,12 @@ def collect():
         snapshot.update(status='verified', ratio=str(number(snapshot['rows'][0]['price'])/number(snapshot['rows'][1]['price'])))
         validate(snapshot)
     except GoldError as exc:
-        snapshot.update(status='blocked', reason=str(exc))
+        reason = str(exc)
+        try:
+            snapshot['rows'] = assess(providers, datetime.now(UTC), gold_only=True)
+            snapshot.update(status='gold_only', ratio=None, reason=reason)
+            validate(snapshot)
+        except GoldError:
+            snapshot.update(status='blocked', rows=[], ratio=None, reason=reason)
     return snapshot
+
