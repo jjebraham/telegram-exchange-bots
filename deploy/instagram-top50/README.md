@@ -1,58 +1,27 @@
 # Kiani top 50 cryptocurrency prices
 
 One Instagram Feed carousel daily at **16:00 Europe/Istanbul (13:00 UTC)**.
-There are six 1080 × 1350 JPEG slides: a 24-hour gainers cover followed by
-the existing five price slides, with ten of the top 50 coins on each price slide.
-The installed rates, economy news and crypto news jobs keep their schedules.
+There are seven 1080 × 1350 JPEG slides: a market-pulse cover, a decliners
+slide, and the existing five price slides with ten coins each.
 
-## Gainers cover
-
-- The owner selected the **top 100 by market capitalization**, not just the 50
-  coins in the price tables. Define that universe globally BEFORE excluding
-  stablecoins and wrapped/staked duplicates, using CoinPaprika USD market caps.
-- Rank eligible coins by full-precision **positive 24-hour USD price change**,
-  descending. Market cap descending and coin ID break ties deterministically.
-  Require USD trading volume over the same 24 hours to be **greater than 50,000**.
-  Apply the existing exact-identity classification exclusions and freshness rules.
-- Show at most ten. If fewer than ten qualify, display the actual count; never
-  call a losing/unchanged coin a gainer. If none qualify, the cover says so and
-  the usual 50-price slides remain. Missing/stale/malformed candidate data is
-  excluded with a reason; an incomplete top-100 market-cap universe blocks the run.
-- USD prices, Toman conversions and percentage changes come from the same
-  snapshot as the five price slides. All conversions use the same market USDT
-  rate rounded to the nearest 100 Toman, preserving full USD source precision.
-- Save the 100-member source evidence, classifications, policy, exclusions and
-  selected ranking. Recompute that ranking before rendering/publication and
-  recheck selected quote/rate freshness immediately before final publication.
-- This uses the existing **CoinPaprika** feed. CoinMarketCap's gainers page is
-  the feature reference, not an additional data source or a promise of identical
-  rankings. Both source name and the 24-hour window are labelled on the slide.
-- The existing delayed Story uses the first image, so it will preview gainers
-  30 minutes after a successful Feed. No new Story job or second Feed is added.
-  Top 50 remains protected from the news-retention deletion policy.
+The cover counts the positive, negative and unchanged 24-hour USD movements
+among the top-50 coins with a reported change, and shows BTC and ETH when
+available. It also displays at most five eligible gainers whose displayed change
+is greater than 2%. The second slide shows at most five eligible decliners with
+a displayed change below -2%. These lists use the existing top-100 universe,
+classification exclusions, quote freshness and 24-hour volume above $50,000.
+An empty or short list is labelled accurately rather than filled with arbitrary
+coins. The caption describes the different universes and threshold.
 
 ## Upgrade the existing deployed publisher
 
-Use the pinned `deploy/instagram-top50/run_gainers.py` bootstrap. Default mode
-extracts nine small files without a full checkout and renders a six-slide live
-preview. There is no Meta API contact. It prints the preview links.
-
-`--activate` verifies the installed PR55 runtime/launcher or the confirmed deployed
-PR69 gainers release `06e8796386f345b2c3d544a67040061dab2ccf82` (all four source
-hashes, activation fingerprint and exact launcher), plus the exact existing daily
-16:00 Istanbul cron entry, Story source and matching six-slide preview from the
-new runtime/assets within 24 hours. A separate fresh source-only validation is
-required at activation. It installs an immutable versioned runtime and switches
-only the top 50 launcher to that runtime, with private backup and guarded rollback.
-An identical repeat is accepted; unexpected installed edits refuse activation.
-
-The crontab, Story registration and original publication database are not
-rewritten. Existing successful posts still count toward the daily duplicate
-guard. No immediate publication, catch-up or historical Story occurs during
-installation. No automated unit tests run as part of the upgrade.
-
-The previous schema-2 saved snapshots remain previewable with the sample banner;
-new publication requires schema 3 and exactly six slides with gainers first.
+The pinned `run_gainers.py` stages an exact release and makes a fresh seven-slide
+preview without contacting Meta. `--activate` verifies the previously deployed
+PR #76 revision `94d11ec70a6bad4e8ab8dde8c279335ed40d4bda`, source hashes,
+launcher, existing UTC schedule and Story registration. It requires a matching
+recent preview and a separate fresh source check, and creates a backup before
+activation. It posts nothing. The first slide remains the delayed Story image.
+The same source-evidence expiry and daily duplicate protections apply.
 
 ## Fix for evidence expiring during Meta preparation
 
@@ -63,11 +32,11 @@ the 24 October original expiry was 13:00:51 UTC and the job failed at 13:01:00.
 
 - Verify public images concurrently, with at most three requests in flight.
 - Prepare/wait for Meta child containers with at most three workers. Keep the
-  exact slide order, all six readiness checks, parent readiness, and the single
+  exact slide order, all child readiness checks, parent readiness, and the single
   final publication request. SQLite writes remain on the main thread.
 - Typed expiry errors allow at most **three total preparation attempts** in one
   publishing invocation, separated by two seconds. Each retry collects all
-  CoinPaprika data and a fresh Akamai quote, renders six new uniquely named
+  CoinPaprika data and a fresh Akamai quote, renders seven new uniquely named
   images, saves a separate snapshot/manifest, and creates new containers.
 - No old evidence, images or containers are relabelled as fresh. The quote's
   original 90-second proofs, original expiry, <=35-second collector age at
@@ -179,7 +148,7 @@ mkdir -p /var/www/peerexo.com/public/instagram-rates/top50
   --publisher-root "$HOME/kiani-instagram-publisher"
 ```
 
-It collects fresh prices and saves six slides without publishing. To publish
+It collects fresh prices and saves seven slides without publishing. To publish
 a fresh manual carousel, run the same command with `--publish`. Keep the default
 database so schedule activation can find the successful manual publication.
 The public directory must serve JPEGs at
