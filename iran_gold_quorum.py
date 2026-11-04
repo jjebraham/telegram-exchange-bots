@@ -121,6 +121,9 @@ def quote_price(provider, asset, quote, now):
     if not Decimal(spec[5]) <= price <= Decimal(spec[6]):
         raise GoldError('Price outside conservative toman range: ' + asset)
     if provider == 'tgju':
+        if quote.get('transport') == 'akamai-restricted-ssh/tgju_current':
+            from iran_gold_tgju import validate_quote
+            return validate_quote(asset, quote, now)
         expected_url = 'https://www.tgju.org/profile/' + spec[2]
         if quote['unit'] != 'rial' or number(quote['original_rial']) / 10 != price or price != price.to_integral_value():
             raise GoldError('TGJU exact rial/toman conversion failed.')
@@ -234,6 +237,9 @@ def collect(baseline=None):
             if provider == 'servix':
                 from iran_gold_servix import collect as servix
                 value = servix(now)
+            elif provider == 'tgju':
+                from iran_gold_tgju import collect as tgju_relay
+                value = tgju_relay()
             else:
                 value = tgju_one(asset, now) if asset else (dolar(now) if provider == 'dolarchand' else alanchand(now))
             return key, value, None
@@ -241,7 +247,7 @@ def collect(baseline=None):
             return key, None, dict(code=exc.code if isinstance(exc, GoldError) else 'source',
                 error_type=type(exc).__name__, http_status=exc.code if isinstance(exc, HTTPError) else None,
                 detail=str(exc) if isinstance(exc, GoldError) else 'Provider request/parsing failed.')
-    jobs = [('servix', None), ('dolarchand', None), ('alanchand', None), *[('tgju', asset) for asset in SPEC]]
+    jobs = [('servix', None), ('dolarchand', None), ('alanchand', None), ('tgju', None)]
     with ThreadPoolExecutor(max_workers=5) as pool:
         tasks = [pool.submit(one, job) for job in jobs]
         for completed in as_completed(tasks):
@@ -255,7 +261,11 @@ def collect(baseline=None):
             else:
                 health[provider].update(status='blocked' if error else 'ok', **(error or {}))
                 if value:
-                    if provider == 'servix':
+                    if provider == 'tgju':
+                        providers[provider] = value['quotes']
+                        health[provider]['instruments'] = value['rejected']
+                        health[provider]['status'] = 'ok' if len(value['quotes']) == len(SPEC) else 'partial' if value['quotes'] else 'blocked'
+                    elif provider == 'servix':
                         providers[provider] = value['quotes']
                         health[provider]['instruments'] = value['rejected']
                         health[provider]['status'] = 'ok' if len(value['quotes']) == len(SPEC) else 'partial' if value['quotes'] else 'blocked'

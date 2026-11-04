@@ -57,6 +57,13 @@ class PublishError(RuntimeError):
     """Raised when required live data or Instagram publishing fails."""
 
 
+class CustomerRatesUnavailable(PublishError):
+    """A live producer explicitly has no current quote; never substitute one."""
+
+
+_RATE_PUBLICATION_RECEIPT = None
+
+
 def _positive_decimal(value: Any, label: str) -> Decimal:
     try:
         parsed = Decimal(str(value))
@@ -90,6 +97,9 @@ def fetch_customer_rates(url: str | None = None, attempts: int = 4) -> dict[str,
             missing = [key for key in keys if key not in raw_rates]
             if missing:
                 raise PublishError("Rates API is missing customer quotes: " + ", ".join(missing))
+            unavailable = [key for key in keys if raw_rates[key] is None]
+            if unavailable:
+                raise CustomerRatesUnavailable("Current customer quotes unavailable: " + ", ".join(unavailable))
             rates = {key: _positive_decimal(raw_rates[key], key) for key in keys}
             if rates["sell_lira"] >= rates["buy_lira"] or rates["sell_usdt"] >= rates["buy_usdt"]:
                 raise PublishError("Rates API returned crossed customer buy/sell quotes")
@@ -100,6 +110,9 @@ def fetch_customer_rates(url: str | None = None, attempts: int = 4) -> dict[str,
             retryable = exc.code in TRANSIENT_HTTP_CODES
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = PublishError(f"Could not load current rates: {exc}")
+            retryable = True
+        except CustomerRatesUnavailable as exc:
+            last_error = exc
             retryable = True
         except PublishError:
             raise
@@ -550,6 +563,10 @@ def _wait_for_container(container_id: str) -> None:
 
 
 def _publish_container(container_id: str) -> str:
+    receipt = _RATE_PUBLICATION_RECEIPT
+    if receipt is not None:
+        path, evidence = receipt
+        _save_state(path, dict(evidence, status="publishing", container_id=container_id))
     published = _graph_request(
         "/media_publish",
         "POST",
@@ -558,6 +575,9 @@ def _publish_container(container_id: str) -> str:
     media_id = str(published.get("id", "")).strip()
     if not media_id:
         raise PublishError("Instagram did not return the published media ID")
+    if receipt is not None:
+        path, evidence = receipt
+        _save_state(path, dict(evidence, status="published", container_id=container_id, media_id=media_id))
     return media_id
 
 
@@ -615,6 +635,50 @@ def _save_state(path: Path, state: dict[str, Any]) -> None:
             os.unlink(temp_name)
 
 
+def _receipt_path(state_path: Path) -> Path:
+    path = Path(str(state_path) + ".publication.json")
+    if path.is_symlink() or path.exists() and (
+        not path.is_file() or hasattr(os, "getuid") and path.stat().st_uid != os.getuid()
+    ):
+        raise PublishError("Rates publication receipt has an unexpected owner or type")
+    return path
+
+
+def _recover_rate_receipt(state_path: Path, state, *, force=False):
+    """Recover a confirmed response, but never retry an uncertain final request."""
+    path = _receipt_path(state_path)
+    receipt = _load_state(path)
+    if receipt is None:
+        if path.exists():
+            raise PublishError("Rates publication receipt is malformed; manual review required")
+        return state
+    if (receipt.get("schema_version") != 1 or
+            receipt.get("account_id") != os.getenv("INSTAGRAM_USER_ID", "").strip() or
+            not isinstance(receipt.get("planned_state"), dict)):
+        raise PublishError("Rates publication receipt needs manual review")
+    if receipt.get("status") != "published":
+        raise PublishError("Previous rates publication may have succeeded; reconcile its container before retrying")
+    media_id = receipt.get("media_id")
+    recovered = dict(receipt["planned_state"], media_id=media_id)
+    day = recovered.get("posted_date", "")
+    if not re.fullmatch(r"[0-9]+", str(media_id or "")) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        raise PublishError("Confirmed rates publication receipt is malformed")
+    if not state or str(state.get("posted_date", "")) < day:
+        _save_state(state_path, recovered)
+        print("Recovered confirmed rates publication state; no new post was sent.", flush=True)
+        return recovered
+    if state.get("posted_date") == day and str(state.get("media_id")) != str(media_id) and not force:
+        raise PublishError("Rates publication state and receipt disagree; manual review required")
+    return state
+
+
+def _prepare_rate_receipt(state_path: Path, planned_state: dict[str, Any]) -> None:
+    global _RATE_PUBLICATION_RECEIPT
+    _RATE_PUBLICATION_RECEIPT = (_receipt_path(state_path), dict(
+        schema_version=1, account_id=os.getenv("INSTAGRAM_USER_ID", "").strip(),
+        planned_state=dict(planned_state)))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create and publish the daily Kiani Exchange Instagram rate card")
     action = parser.add_mutually_exclusive_group()
@@ -659,6 +723,8 @@ def main() -> int:
             print("Another publisher is running for this state file; skipping.")
             return 0
     state = _load_state(state_path)
+    if args.publish:
+        state = _recover_rate_receipt(state_path, state, force=args.force)
     today = now.date().isoformat()
     if args.publish and not args.force and state and state.get("posted_date") == today:
         print(f"Instagram banner already published for {today}; skipping duplicate run.")
@@ -672,6 +738,9 @@ def main() -> int:
             if args.sample_preview:
                 rates, sections = sample_bundle()
             else:
+                # Check the required cover first. A later read supplies the one
+                # current response shared by both customer-rate slides.
+                fetch_customer_rates()
                 sections = collect_sections()
                 rates = fetch_customer_rates()
             now = datetime.now(ISTANBUL_TZ)
@@ -689,12 +758,14 @@ def main() -> int:
             assert_fresh_sections(sections)
         except CarouselError as exc:
             raise PublishError(str(exc)) from exc
-        media_id = publish_carousel(image_urls, caption)
-        _save_state(state_path, {
+        planned_state = {
             "posted_date": now.date().isoformat(), "posted_at": now.isoformat(),
-            "mode": mode, "format": "carousel", "media_id": media_id,
+            "mode": mode, "format": "carousel",
             "image_urls": image_urls, "sections": [section["kind"] for section in sections],
-        })
+        }
+        _prepare_rate_receipt(state_path, planned_state)
+        media_id = publish_carousel(image_urls, caption)
+        _save_state(state_path, dict(planned_state, media_id=media_id))
         print(f"Published Kiani Exchange Instagram carousel ({len(paths)} slides, media id: {media_id})")
         return 0
 
@@ -730,6 +801,9 @@ def main() -> int:
         return 0
 
     verify_public_image(image_url)
+    _prepare_rate_receipt(state_path, {
+        "posted_date": today, "posted_at": now.isoformat(), "mode": mode, "image_url": image_url,
+    })
     media_id = publish_image(image_url, mode, build_caption(rates, now))
     _save_state(
         state_path,

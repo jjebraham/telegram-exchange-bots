@@ -35,8 +35,9 @@ def bars(image, x, y, size, silver=False):
 def render(snapshot, output, asset_root, *, preview=False):
     if snapshot.get('layout_sample') and not preview:
         raise ValueError('A global-metals layout sample cannot be published.')
-    if len(snapshot.get('rows', [])) != 2:
-        raise ValueError('Both verified global metals are required for this slide.')
+    partial = snapshot.get('status') == 'gold_only'
+    if len(snapshot.get('rows', [])) != (1 if partial else 2):
+        raise ValueError('Global-metal rows do not match the verification state.')
     asset_root, output = Path(asset_root), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     fonts = {}
@@ -75,13 +76,16 @@ def render(snapshot, output, asset_root, *, preview=False):
     fa(fa_date,(540,354),26,fill=MUTED,anchor='mm')
     draw.text((540,390),en_date,font=font(23),fill=MUTED,anchor='mm')
     fa('قیمت هر اونس تروا (دلار آمریکا)',(540,434),27,fill=MUTED,anchor='mm')
-    for i,row in enumerate(snapshot['rows']):
+    displayed = list(snapshot['rows'])
+    if partial:
+        displayed.append(dict(name='اونس نقره', price=None, day=None, week=None))
+    for i,row in enumerate(displayed):
         top = 475+i*238
         draw.rounded_rectangle((50,top,1030,top+220),24,fill='white')
         bars(image,914,top+25,95,silver=i==1)
         fa(row['name'],(897,top+54),37,True,width=310)
         draw.text((897,top+95),'XAU / USD' if i==0 else 'XAG / USD',font=font(23),fill=MUTED,anchor='rm')
-        price = '$ '+fixed(row['price'])
+        price = '—' if row['price'] is None else '$ '+fixed(row['price'])
         size = 68
         while draw.textlength(price,font=font(size,True))>570:
             size -= 1
@@ -96,12 +100,15 @@ def render(snapshot, output, asset_root, *, preview=False):
             text = '—' if value is None else f"{Decimal(value):+.2f}%"
             draw.text((cx,top+175),text,font=font(31,True),fill=color,anchor='mm')
             fa(label,(lx,top+175),27,fill=MUTED)
+        if row['price'] is None:
+            fa('نرخ نقره تأیید نشد',(510,top+109),20,fill=MUTED,anchor='mm')
     draw.rounded_rectangle((50,965,1030,1170),24,fill='#E3F0E9')
     bars(image,845,1010,90); bars(image,910,1057,82,True)
     fa('نسبت طلا به نقره',(510,1006),34,True,anchor='mm')
-    ratio = fixed(snapshot['ratio'])
+    ratio = '—' if partial else fixed(snapshot['ratio'])
     draw.text((510,1071),ratio,font=font(73,True),fill=INK,anchor='mm')
-    fa('ارزش ۱ اونس طلا ≈ '+ratio+' اونس نقره',(510,1135),24,fill=MUTED,anchor='mm',width=780)
+    fa('نسبت بدون نرخ تأییدشده نقره محاسبه نمی‌شود' if partial else
+       'ارزش ۱ اونس طلا ≈ '+ratio+' اونس نقره',(510,1135),24,fill=MUTED,anchor='mm',width=780)
     clocks = [datetime.fromisoformat(snapshot['providers'][p][row['id']]['updated_at']) for row in snapshot['rows'] for p in row['sources']]
     oldest = min(clocks).astimezone(TEHRAN)
     fa('قدیمی‌ترین نرخ منبع: '+oldest.strftime('%H:%M').translate(DIGITS)+' تهران',(540,1207),24,fill=MUTED,anchor='mm')
@@ -120,5 +127,9 @@ def caption(snapshot):
     for r in snapshot['rows']:
         changes = ['—' if r.get(k) is None else f"{Decimal(r[k]):+.2f}%" for k in ('day','week')]
         lines.append(r['name']+': $'+fixed(r['price'])+' | روزانه / هفتگی: '+' / '.join(changes))
-    lines.append('نسبت طلا به نقره: '+fixed(snapshot['ratio']))
+    if snapshot.get('status') == 'gold_only':
+        lines.append('نرخ نقره تأیید نشد؛ نسبت طلا به نقره در دسترس نیست.')
+    else:
+        lines.append('نسبت طلا به نقره: '+fixed(snapshot['ratio']))
     return '\n'.join(lines)
+
