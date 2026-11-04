@@ -192,6 +192,10 @@ def summary_slides(snapshot, mode, draw, text):
     t('CoinPaprika · تغییرات ۲۴ ساعته', (540, 1265), 23, fa=True, fill=MUTED)
 
 
+def price_sections(snapshot):
+    return [('prices', page, snapshot['coins'][(page-1)*5:page*5]) for page in range(1, 11)]
+
+
 def render(snapshot, output, asset_root):
     validate_snapshot(snapshot)
     output, asset_root = Path(output).resolve(), Path(asset_root).resolve()
@@ -233,7 +237,7 @@ def render(snapshot, output, asset_root):
     stamp = f'{local:%Y/%m/%d · %H:%M} استانبول'
     prefix = f"kiani-top50-{local:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:10]}"
     paths = []
-    sections = [('prices', page, snapshot['coins'][(page-1)*10:page*10]) for page in range(1, 6)]
+    sections = price_sections(snapshot)
     if snapshot.get('schema') == 3:
         sections[0:0] = [('pulse', 0, []), ('declines', 0, [])]
     total = len(sections)
@@ -263,23 +267,23 @@ def render(snapshot, output, asset_root):
             title = 'رشد ارزها در ۲۴ ساعت'
         text(draw, title, (540, 232), 64, fa=True, bold=True, width=952)
         subtitle = ('۲۴ ساعت گذشته · از میان ۱۰۰ ارز برتر بازار' if is_gainers else
-                    f'قیمت به دلار و تومان · بدون استیبل‌کوین · بخش {price_page} از 5')
+                    f'قیمت به دلار و تومان · بدون استیبل‌کوین · بخش {price_page} از 10')
         text(draw, subtitle,
              (540, 297), 27, fa=True, fill=MUTED, width=952)
         draw.rounded_rectangle((320, 326, 760, 370), radius=21, fill='#DDEBE2')
         text(draw, 'هر تتر = ' + price_text(snapshot['usdt_toman']) + ' تومان',
              (540, 348), 26, fa=True, bold=True, width=412)
         for label, x in (('۲۴ ساعت', 145), ('دلار', 311), ('تومان', 537), ('ارز', 805), ('#', 976)):
-            text(draw, label, (x, 400), 25, fa=True, bold=True, fill=MUTED)
-        row_step = min(138, 592 / max(1, len(rows) - 1)) if is_gainers and len(rows) < 9 else 74
-        half_height = min(52, row_step / 2 - 7) if is_gainers else 33
-        first_y = 480 if is_gainers else 461
+            text(draw, label, (x, 400), 27, fa=True, bold=True, fill=MUTED)
+        row_step = 145
+        half_height = 59
+        first_y = 478
         for index, coin in enumerate(rows):
             y = round(first_y + index*row_step)
             draw.rounded_rectangle((64, y-half_height, 1016, y+half_height), radius=16,
                                    fill=('#D5E9DA' if index < 3 else 'white') if is_gainers else
                                         ('white' if index % 2 == 0 else STRIPE))
-            text(draw, coin['position'], (977, y), 25, bold=True,
+            text(draw, coin['position'], (977, y), 30, bold=True,
                  fill=GREEN if is_gainers else MUTED, width=48)
             icon = icons[coin['id']]
             if icon is not None:
@@ -289,12 +293,12 @@ def render(snapshot, output, asset_root):
                 shade = colors[int(hashlib.sha256(coin['id'].encode()).hexdigest(), 16) % len(colors)]
                 draw.ellipse((899, y-23, 945, y+23), fill=shade)
                 text(draw, coin['symbol'][:2], (922, y), 20, bold=True, fill='white', width=38)
-            text(draw, coin['symbol'], (879, y-12), 29, bold=True, fill=GREEN, anchor='rm', width=201)
+            text(draw, coin['symbol'], (879, y-17), 36, bold=True, fill=GREEN, anchor='rm', width=201)
             name = NAMES.get(coin['id'], coin['name'])
-            text(draw, name, (879, y+19), 20, fa=coin['id'] in NAMES,
+            text(draw, name, (879, y+22), 25, fa=coin['id'] in NAMES,
                  anchor='rm', fill=MUTED, width=201)
-            text(draw, price_text(coin['toman']), (537, y), 30, bold=True, width=253)
-            text(draw, price_text(coin['usd'], usd=True), (311, y), 28, width=178)
+            text(draw, price_text(coin['toman']), (537, y), 37, bold=True, width=253)
+            text(draw, price_text(coin['usd'], usd=True), (311, y), 34, width=178)
             if coin['change_24h'] is None:
                 change, color, direction = '—', MUTED, 0
             else:
@@ -310,7 +314,7 @@ def render(snapshot, output, asset_root):
                 draw.polygon(points, fill=color)
             elif coin['change_24h'] is not None:
                 draw.ellipse((81, y-3, 87, y+3), fill=MUTED)
-            text(draw, change, (158, y), 24, fill=color, width=112)
+            text(draw, change, (158, y), 29, bold=True, fill=color, width=112)
             if is_gainers and half_height >= 45:
                 width = float(Decimal(coin['change_24h']) / Decimal(rows[0]['change_24h'])) * 545
                 draw.rounded_rectangle((100, y+32, 100+max(3, width), y+37), radius=2, fill=GREEN)
@@ -344,12 +348,12 @@ def render(snapshot, output, asset_root):
 def caption(snapshot):
     local = datetime.fromisoformat(snapshot['generated_at']).astimezone(ZoneInfo('Europe/Istanbul'))
     intro = ('صرافی کیانی | نبض بازار و قیمت ۵۰ ارز دیجیتال\n\n'
-             '۷ اسلاید: نمای بازار، بیشترین افت‌ها و سپس قیمت ۵۰ ارز در ۵ اسلاید.\n'
+             '۱۲ اسلاید: نمای بازار، بیشترین افت‌ها و سپس قیمت ۵۰ ارز در ۱۰ اسلاید.\n'
              'نمای بازار بر اساس ارزهای دارای تغییر ۲۴ ساعته در فهرست ۵۰ ارز است.\n'
              'حداکثر ۵ رشد و ۵ افت بیش از ۲٪ بر اساس تغییر قیمت دلاری ۲۴ ساعت، میان ۱۰۰ ارز اول از نظر ارزش بازار پیش از حذف استیبل‌کوین‌ها.\n'
              'فقط داده تازه و حجم معاملات ۲۴ساعته بالاتر از ۵۰ هزار دلار؛ بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n'
              'اگر تعداد ارزهای واجد شرایط کمتر از ۵ باشد، فقط همان‌ها نمایش داده می‌شوند.\n\n'
-             if snapshot.get('schema') == 3 else 'صرافی کیانی | قیمت ۵۰ ارز دیجیتال برتر\n\n۵ اسلاید؛ قیمت به دلار و تومان و تغییر ۲۴ ساعته قیمت دلاری.\n')
+             if snapshot.get('schema') == 3 else 'صرافی کیانی | قیمت ۵۰ ارز دیجیتال برتر\n\n۱۰ اسلاید؛ قیمت به دلار و تومان و تغییر ۲۴ ساعته قیمت دلاری.\n')
     return (intro +
             'فهرست ۵۰ ارز بر اساس ارزش بازار، بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n\n'
             'قیمت تومان = قیمت دلاری هر ارز × نرخ بازار تتر\n'
