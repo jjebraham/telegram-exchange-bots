@@ -78,6 +78,8 @@ def database(path):
             assets_hash TEXT NOT NULL, snapshot_json TEXT NOT NULL, manifest_json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS gold_history (
             day TEXT PRIMARY KEY, observed_at TEXT NOT NULL, prices_json TEXT NOT NULL, media_id TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS gold_observations (
+            observed_at TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS global_metals_history (
             day TEXT PRIMARY KEY, observed_at TEXT NOT NULL, prices_json TEXT NOT NULL, media_id TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS instagram_news_publications (
@@ -101,6 +103,26 @@ def comparison(con, now, hours):
             prices = json.loads(row['prices_json'])
             if set(prices) == set(SPEC):
                 eligible.append((abs(age - hours), row['day'], prices))
+    # Retain complete verified observations independently of publication. This
+    # gives a genuine 24-hour baseline when Meta or the global slide blocks a
+    # post; it never substitutes an older day or an unverified source value.
+    exists = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gold_observations'").fetchone()
+    observations = con.execute('SELECT * FROM gold_observations ORDER BY observed_at DESC LIMIT 150') if exists else ()
+    for row in observations:
+        try:
+            observed = stamp(row['observed_at'])
+            age = (now.astimezone(UTC) - observed).total_seconds() / 3600
+            if abs(age - hours) > (1 if hours == 24 else 3):
+                continue
+            snapshot = json.loads(row['snapshot_json'])
+            if stamp(snapshot['generated_at']) != observed:
+                continue
+            validate(snapshot, now=observed)
+            prices = {item['id']: item['price'] for item in snapshot['rows']}
+            if set(prices) == set(SPEC):
+                eligible.append((abs(age - hours), observed.isoformat(), prices))
+        except (GoldError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
     return min(eligible, key=lambda x: (x[0], x[1]))[2] if eligible else {}
 
 
@@ -138,7 +160,7 @@ def add_metals_changes(con, snapshot):
 
 def check_metals(con, snapshot):
     metal = snapshot.get('global_metals', {})
-    if metal.get('status') != 'verified':
+    if metal.get('status') not in {'verified', 'gold_only'}:
         return False
     global_metals.validate(metal)
     expected = json.loads(json.dumps(metal))
@@ -238,7 +260,7 @@ def publish(con, snapshot, manifest, assets, *, authorized_day=None, template_te
             if not template_test:
                 con.execute('INSERT INTO gold_history VALUES (?,?,?,?)',
                             (day, snapshot['generated_at'], json.dumps({r['id']: r['price'] for r in snapshot['rows']}), media))
-                if has_metals:
+                if has_metals and snapshot['global_metals']['status'] == 'verified':
                     metal = snapshot['global_metals']
                     con.execute('INSERT INTO global_metals_history VALUES (?,?,?,?)',
                         (day,metal['generated_at'],json.dumps({r['id']:r['price'] for r in metal['rows']}),media))
@@ -307,6 +329,10 @@ def main():
             manifest = {}
             if snapshot['status'] == 'verified':
                 validate(snapshot, baseline=last_prices(con))
+                if args.publish:
+                    with con:
+                        con.execute('INSERT OR IGNORE INTO gold_observations VALUES (?,?)',
+                            (snapshot['generated_at'], json.dumps(snapshot, ensure_ascii=False)))
                 add_changes(con, snapshot)
                 segment = 'iran-gold' if publishing else 'iran-gold-preview'
                 output = PUBLIC / segment
@@ -314,7 +340,7 @@ def main():
                 images = render(snapshot, output, args.asset_root, preview=not publishing)
                 text = caption(snapshot, args.asset_root)
                 metal = snapshot['global_metals']
-                if metal.get('status') == 'verified':
+                if metal.get('status') in {'verified', 'gold_only'}:
                     global_metals.validate(metal)
                     add_metals_changes(con,metal)
                     images += metals_renderer.render(metal,output,args.asset_root,preview=not publishing)
@@ -334,7 +360,7 @@ def main():
             print('Gold source checks:', json.dumps(snapshot['health'], ensure_ascii=False), flush=True)
             metal = snapshot['global_metals']
             print('Global-metals source checks:',json.dumps(metal.get('health',{}),ensure_ascii=False),flush=True)
-            if metal.get('status') == 'verified':
+            if metal.get('status') in {'verified', 'gold_only'}:
                 print('Global-metals consensus:',json.dumps(metal['rows'],ensure_ascii=False),flush=True)
             else:
                 print('Global-metals slide omitted:',metal.get('reason','Verification unavailable.'),flush=True)
@@ -377,7 +403,14 @@ if __name__ == '__main__':
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print('ERROR:', str(exc) if isinstance(exc, GoldError) else type(exc).__name__, file=sys.stderr)
+        if isinstance(exc, sqlite3.OperationalError):
+            code = getattr(exc, 'sqlite_errorname', '')
+            known = {'SQLITE_FULL', 'SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_READONLY',
+                     'SQLITE_CANTOPEN', 'SQLITE_IOERR', 'SQLITE_CORRUPT', 'SQLITE_NOMEM'}
+            print('ERROR: OperationalError', code if code in known else 'unclassified', file=sys.stderr)
+        else:
+            print('ERROR:', str(exc) if isinstance(exc, GoldError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
+
 
 
