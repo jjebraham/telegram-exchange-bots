@@ -19,7 +19,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 UTC = timezone.utc
-KINDS = ('rates', 'economy', 'crypto', 'top50', 'iran_gold', 'calendar', 'crypto_calendar')
+KINDS = ('rates', 'economy', 'crypto', 'top50', 'iran_gold', 'calendar', 'crypto_calendar', 'weekly_markets')
 METRICS = ('views', 'reach', 'likes', 'comments', 'saved', 'shares',
            'total_interactions', 'profile_visits', 'follows')
 STATE = Path.home() / '.local/state/kiani-instagram-insights'
@@ -401,3 +401,4 @@ def register(con, registry, owned, exposure='unknown'):
                 (media_id, kind, row['media_type'], when, title, safe_link(row.get('permalink')), now, now, exposure))
         matched += 1
     return matched
+

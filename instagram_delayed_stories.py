@@ -19,7 +19,7 @@ import sys
 import time
 from urllib.parse import unquote, urlsplit
 
-KINDS = ('rates', 'economy', 'top50', 'crypto', 'calendar', 'crypto_calendar', 'iran_gold')
+KINDS = ('rates', 'economy', 'top50', 'crypto', 'calendar', 'crypto_calendar', 'iran_gold', 'weekly_markets')
 DELAY = 1800
 MAX_LATENESS = 6 * 3600
 
@@ -81,7 +81,7 @@ def local_image(config, value, kind):
 def published_records(config, cutoff):
     """Read-only adapters for the already-installed publishers and their schemas."""
     for kind in KINDS:
-        if kind in {'calendar', 'crypto_calendar', 'iran_gold'} and kind not in config['sources']:
+        if kind in {'calendar', 'crypto_calendar', 'iran_gold', 'weekly_markets'} and kind not in config['sources']:
             continue  # Existing configurations remain compatible with optional calendars.
         source = Path(config['sources'][kind])
         if not source.is_file():
@@ -308,3 +308,4 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: Story worker could not finish ({type(exc).__name__}). No credentials logged.', file=sys.stderr)
         raise SystemExit(1)
+
