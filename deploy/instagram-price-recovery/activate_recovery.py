@@ -21,7 +21,7 @@ import uuid
 
 from run_recovery import GOLD_FILES
 
-BASE_GOLD = '9b9f77fcf42d22d229e5aac295734396f99c464e'
+BASE_GOLD = 'de109eb462a986c249d04664ebd472dffaadc865'
 RATES_HASHES = {
     'instagram_daily_rates.py': '592a28df4e47a2007da72166a7d882e0c17a75eb7926722e026a3ae3b2161d89',
     'instagram_carousel.py': '13e7d47dfaba6cee6594dba9dd4d9c67fb4dff3c621eff9a14bc07f7d2cb0d91',
@@ -297,4 +297,5 @@ if __name__ == '__main__':
     except Exception as exc:
         print('Recovery stopped:', str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
+
 
