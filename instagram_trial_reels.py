@@ -589,7 +589,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 raise TrialReelError('Reel caption with image disclosure is too long.')
             _update(con, trial_id, caption=caption, updated_at=time.time())
         from instagram_trial_music import select_order, retrieve_track, caption_credit
-        previous = con.execute("SELECT music_json FROM trial_reels WHERE status IN ('published','container_processing','publishing','needs_review') AND music_json IS NOT NULL ORDER BY COALESCE(published_at,created_at) DESC LIMIT 10").fetchall()
+        previous = con.execute("SELECT music_json FROM trial_reels WHERE status IN ('published','container_processing','publishing','needs_review') AND music_json IS NOT NULL ORDER BY COALESCE(published_at,created_at) DESC LIMIT 50").fetchall()
         recent_titles = []
         for previous_row in previous:
             try:
@@ -599,7 +599,10 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             except (ValueError, TypeError, AttributeError):
                 continue
         music = None
-        for candidate in select_order(normalized, recent_titles):
+        music_deadline = time.monotonic() + 75
+        for candidate in select_order(normalized, recent_titles)[:10]:
+            if time.monotonic() >= music_deadline:
+                break
             try:
                 music = retrieve_track(candidate, music_path)
                 break
