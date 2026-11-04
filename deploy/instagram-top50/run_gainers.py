@@ -16,7 +16,7 @@ import sys
 RUNTIME = ('instagram_top50_prices.py', 'crypto_top50_data.py', 'instagram_top50_renderer.py', 'crypto_akamai_rate.py')
 FILES = RUNTIME + ('deploy/instagram-top50/upgrade_gainers.py',
     'deploy/instagram-top50/run_gainers.py', 'deploy/instagram-top50/activate_top50_cron.py',
-    'deploy/instagram-top50/NOTICE', 'deploy/instagram-top50/README.md')
+    'deploy/instagram-top50/NOTICE', 'deploy/instagram-top50/README.md', 'test_market_pulse.py')
 
 
 def main():
@@ -61,8 +61,8 @@ def main():
         command = [str(python), '-u', str(root / 'instagram_top50_prices.py'),
                    '--publisher-root', str(home / 'kiani-instagram-publisher'), '--output', str(output)]
     print(f'Extracted/verified {len(FILES)} files ({total/1024:.1f} KiB); no repository checkout.', flush=True)
-    print('Activating the gainers cover.' if args.activate else
-          'Preview only: 24-hour gainers from the top 100, followed by 50 prices. No Meta API contact.', flush=True)
+    print('Activating the seven-slide market carousel.' if args.activate else
+          'Preview only: market pulse, decliners and 50 prices. No Meta API contact.', flush=True)
     result = subprocess.run(command, cwd=root, env=dict(os.environ, PYTHONIOENCODING='utf-8', TZ='Europe/Istanbul'))
     if result.returncode or args.activate:
         return result.returncode

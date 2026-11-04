@@ -392,6 +392,33 @@ def select_gainers(candidates, stable_ids, wrapped_ids, rate, now, *, sample=Fal
     return chosen, omitted, eligible_count
 
 
+def select_decliners(candidates, stable_ids, wrapped_ids, now, *, sample=False):
+    """Largest visible losses in the same eligible top-100 universe as gainers."""
+    chosen = []
+    for position, coin in enumerate(market_top100(candidates), 1):
+        if excluded(coin, stable_ids, wrapped_ids):
+            continue
+        try:
+            quote = coin['quotes']['USD']
+            number(quote.get('price'), 'USD price', positive=True)
+            volume = number(quote.get('volume_24h'), 'volume', positive=True)
+            change = number(quote.get('percent_change_24h'), '24-hour change')
+            cap = number(quote.get('market_cap'), 'market cap', positive=True)
+            updated = coin.get('last_updated')
+            timestamp(updated)
+            if not sample:
+                fresh(updated, now, PRICE_MAX_AGE, coin['symbol'] + ' decliner quote')
+            shown = change.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            if volume > Decimal(GAINERS_POLICY['minimum_volume_usd']) and shown < Decimal('-2'):
+                chosen.append(dict(id=coin['id'], name=coin['name'].strip(), symbol=coin['symbol'],
+                                   market_position=position, change_24h=str(change),
+                                   market_cap_usd=str(cap), updated_at=updated))
+        except (PricesError, KeyError, InvalidOperation):
+            continue
+    chosen.sort(key=lambda coin: (Decimal(coin['change_24h']), -Decimal(coin['market_cap_usd']), coin['id']))
+    return chosen[:5]
+
+
 def build_snapshot(tickers, stable_tag, wrapped_tag, market=None, *, sample=False, market_quote=None):
     now = datetime.now(timezone.utc)
     for tag, label in ((stable_tag, 'stablecoin'), (wrapped_tag, 'wrapped-token')):
@@ -499,6 +526,9 @@ def validate_snapshot(snapshot, *, publishing=False):
         if publishing:
             for coin in expected:
                 fresh(coin['updated_at'], now, PRICE_MAX_AGE, coin['symbol'] + ' gainers price')
+            for coin in select_decliners(snapshot['gainers_candidates'], set(classifications['stablecoin']),
+                                         set(classifications['wrapped_token']), timestamp(snapshot['generated_at'])):
+                fresh(coin['updated_at'], now, PRICE_MAX_AGE, coin['symbol'] + ' decliner price')
 
 
 if __name__ == '__main__':

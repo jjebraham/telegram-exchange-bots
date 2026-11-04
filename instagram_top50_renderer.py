@@ -16,7 +16,7 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 from PIL import Image, ImageDraw, ImageFont
 
-from crypto_top50_data import PricesError, validate_snapshot
+from crypto_top50_data import PricesError, validate_snapshot, select_decliners, timestamp
 
 INK, MUTED, GREEN, RED = '#173D32', '#70857D', '#1C8C67', '#D9362C'
 BACKGROUND, STRIPE = '#EDF4EF', '#E5EFE8'
@@ -106,6 +106,92 @@ def coin_icon(identity, cache):
         return None
 
 
+def significant_gainers(snapshot):
+    return [c for c in snapshot['gainers']
+            if Decimal(c['change_24h']).quantize(Decimal('.01'), rounding=ROUND_HALF_UP) > 2][:5]
+
+
+def summary_slides(snapshot, mode, draw, text):
+    """Draw overview and losses directly from the validated market snapshot."""
+    def t(value, xy, size, **kw):
+        text(draw, value, xy, size, **kw)
+    def box(rect, fill, radius=26):
+        draw.rounded_rectangle(rect, radius=radius, fill=fill)
+    def move(value):
+        if value is None:
+            return '—', MUTED
+        value = Decimal(value).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
+        return (f'{value:+.2f}%' if value else '0.00%'), GREEN if value > 0 else RED if value < 0 else MUTED
+    def names(coin):
+        return NAMES.get(coin['id'], coin['name'])
+    if mode == 'pulse':
+        t('نبض امروز کریپتو', (1010, 225), 59, fa=True, bold=True, anchor='rm', width=940)
+        t('بازار سبزه یا قرمز؟', (1010, 292), 47, fa=True, bold=True, anchor='rm', width=940)
+        t('نگاهی به تغییرات ۲۴ ساعت گذشته', (1010, 344), 26, fa=True, fill=MUTED, anchor='rm')
+        changes = [Decimal(c['change_24h']) for c in snapshot['coins'] if c.get('change_24h') is not None]
+        up = sum(x > 0 for x in changes)
+        down = sum(x < 0 for x in changes)
+        flat = len(changes) - up - down
+        box((58, 379, 1022, 616), INK)
+        if changes:
+            t(f'از {len(changes)} ارز بررسی‌شده، {up} ارز رشد کردند', (979, 427), 33,
+              fa=True, bold=True, fill='white', anchor='rm', width=870)
+            t(f'{(Decimal(up)*100/len(changes)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)}٪',
+              (978, 503), 68, fa=True, bold=True, fill='#A9E8C5', anchor='rm')
+            t('از ارزهای دارای داده', (760, 503), 26, fa=True, fill='white', anchor='rm')
+            box((104, 548, 976, 566), '#D8E7DE', 9)
+            width = round(872*up/len(changes))
+            if width:
+                draw.rectangle((976-width, 548, 976, 566), fill='#84D7A6')
+            width2 = round(872*down/len(changes))
+            if width2:
+                draw.rectangle((976-width-width2, 548, 976-width, 566), fill='#E58F80')
+            t(f'{up} صعودی', (974, 590), 22, fa=True, bold=True, fill='#B2E8C8', anchor='rm')
+            t(f'{down} نزولی', (500, 590), 22, fa=True, bold=True, fill='#F4C4B9')
+            t(f'{flat} بدون تغییر', (106, 590), 22, fa=True, bold=True, fill='white', anchor='lm')
+        else:
+            t('تغییرات ۲۴ ساعته در دسترس نیست', (540, 495), 34, fa=True, fill='white', width=820)
+        for x, identity, label, symbol in ((550, 'btc-bitcoin', 'بیت‌کوین', 'BTC'), (58, 'eth-ethereum', 'اتریوم', 'ETH')):
+            coin = next((c for c in snapshot['coins'] if c['id'] == identity), None)
+            val, color = move(coin.get('change_24h') if coin else None)
+            box((x, 637, x+472, 763), 'white')
+            t(label, (x+442, 674), 28, fa=True, bold=True, anchor='rm')
+            t(symbol, (x+442, 724), 22, fill=MUTED, anchor='rm')
+            t(val, (x+30, 706), 36, bold=True, fill=color, anchor='lm', width=235)
+        box((58, 784, 1022, 1165), 'white')
+        t('پیشتازهای امروز', (978, 823), 38, fa=True, bold=True, anchor='rm')
+        t('بیش از ۲٪ رشد · از میان ۱۰۰ ارز برتر', (978, 865), 23, fa=True, fill=MUTED, anchor='rm')
+        rows = significant_gainers(snapshot)
+        color = GREEN
+        start, step = 914, 47
+    else:
+        t('سمت دیگر بازار', (1010, 225), 59, fa=True, bold=True, anchor='rm', width=940)
+        t('کدام ارزها بیشتر افت کردند؟', (1010, 292), 42, fa=True, bold=True, anchor='rm', width=940)
+        t('تغییرات قیمت دلاری در ۲۴ ساعت گذشته', (1010, 348), 26, fa=True, fill=MUTED, anchor='rm')
+        box((58, 400, 1022, 1060), 'white')
+        t('بیشترین افت‌های امروز', (978, 461), 42, fa=True, bold=True, anchor='rm')
+        t('بیش از ۲٪ کاهش · از میان ۱۰۰ ارز برتر', (978, 515), 25, fa=True, fill=MUTED, anchor='rm')
+        classes = snapshot['gainers_classifications']
+        rows = select_decliners(snapshot['gainers_candidates'], set(classes['stablecoin']),
+                                set(classes['wrapped_token']), timestamp(snapshot['generated_at']),
+                                sample=bool(snapshot.get('sample')))
+        color = RED
+        start, step = 610, 79
+    for i, coin in enumerate(rows):
+        y = start + i*step
+        if i:
+            draw.line((100, y-step//2, 978, y-step//2), fill='#E5EEE8', width=1)
+        t(coin['symbol'], (965, y), 24, bold=True, fill=MUTED, anchor='rm', width=135)
+        t(names(coin), (805, y), 25, fa=coin['id'] in NAMES, bold=True, anchor='rm', width=430)
+        t(move(coin['change_24h'])[0], (116, y), 29, bold=True, fill=color, anchor='lm', width=200)
+    if len(rows) < 5:
+        message = 'ارز دیگری با این شرایط یافت نشد' if rows else 'ارز واجد شرایطی با این میزان تغییر یافت نشد'
+        y = min((1140 if mode == 'pulse' else 1020), start + len(rows)*step + 22)
+        t(message, (540, y), 25, fa=True, fill=MUTED, width=850)
+    t('برای ادامه ورق بزنید', (540, 1220), 30, fa=True, bold=True, fill=GREEN)
+    t('CoinPaprika · تغییرات ۲۴ ساعته', (540, 1265), 23, fa=True, fill=MUTED)
+
+
 def render(snapshot, output, asset_root):
     validate_snapshot(snapshot)
     output, asset_root = Path(output).resolve(), Path(asset_root).resolve()
@@ -147,11 +233,12 @@ def render(snapshot, output, asset_root):
     stamp = f'{local:%Y/%m/%d · %H:%M} استانبول'
     prefix = f"kiani-top50-{local:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:10]}"
     paths = []
-    sections = [(False, page, snapshot['coins'][(page-1)*10:page*10]) for page in range(1, 6)]
+    sections = [('prices', page, snapshot['coins'][(page-1)*10:page*10]) for page in range(1, 6)]
     if snapshot.get('schema') == 3:
-        sections.insert(0, (True, 0, snapshot['gainers']))
+        sections[0:0] = [('pulse', 0, []), ('declines', 0, [])]
     total = len(sections)
-    for page, (is_gainers, price_page, rows) in enumerate(sections, 1):
+    for page, (mode, price_page, rows) in enumerate(sections, 1):
+        is_gainers = False
         image = Image.new('RGB', (1080, 1350), BACKGROUND)
         draw = ImageDraw.Draw(image)
         if snapshot.get('sample'):
@@ -163,6 +250,14 @@ def render(snapshot, output, asset_root):
         image.paste(logo, (976, 119), logo)
         text(draw, 'صرافی کیانی', (964, 142), 31, fa=True, bold=True, anchor='rm', width=230)
         text(draw, 'kiani.exchange', (64, 142), 33, bold=True, anchor='lm')
+        if mode in {'pulse', 'declines'}:
+            summary_slides(snapshot, mode, draw, text)
+            text(draw, stamp, (540, 1307), 22, fa=True, fill=MUTED, width=850)
+            text(draw, f'{page} / {total}', (64, 1307), 25, anchor='lm', fill=MUTED)
+            path = output / f'{prefix}-{page:02}.jpg'
+            image.save(path, 'JPEG', quality=95, subsampling=0, optimize=True)
+            paths.append(path)
+            continue
         title = ('۱۰ ارز با بیشترین رشد' if len(rows) == 10 else f'{len(rows)} ارز با رشد مثبت') if is_gainers else '۵۰ ارز دیجیتال برتر'
         if is_gainers and not rows:
             title = 'رشد ارزها در ۲۴ ساعت'
@@ -248,11 +343,12 @@ def render(snapshot, output, asset_root):
 
 def caption(snapshot):
     local = datetime.fromisoformat(snapshot['generated_at']).astimezone(ZoneInfo('Europe/Istanbul'))
-    intro = ('صرافی کیانی | برترین رشدهای ۲۴ ساعت + قیمت ۵۰ ارز دیجیتال\n\n'
-             '۶ اسلاید: ابتدا حداکثر ۱۰ ارز با رشد مثبت، سپس قیمت ۵۰ ارز در ۵ اسلاید.\n'
-             'رشدها بر اساس درصد تغییر قیمت دلاری در ۲۴ ساعت گذشته، میان ۱۰۰ ارز اول از نظر ارزش بازار پیش از حذف استیبل‌کوین‌ها.\n'
+    intro = ('صرافی کیانی | نبض بازار و قیمت ۵۰ ارز دیجیتال\n\n'
+             '۷ اسلاید: نمای بازار، بیشترین افت‌ها و سپس قیمت ۵۰ ارز در ۵ اسلاید.\n'
+             'نمای بازار بر اساس ارزهای دارای تغییر ۲۴ ساعته در فهرست ۵۰ ارز است.\n'
+             'حداکثر ۵ رشد و ۵ افت بیش از ۲٪ بر اساس تغییر قیمت دلاری ۲۴ ساعت، میان ۱۰۰ ارز اول از نظر ارزش بازار پیش از حذف استیبل‌کوین‌ها.\n'
              'فقط داده تازه و حجم معاملات ۲۴ساعته بالاتر از ۵۰ هزار دلار؛ بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n'
-             'اگر تعداد رشدهای مثبت کمتر از ۱۰ باشد، فقط همان‌ها نمایش داده می‌شوند.\n\n'
+             'اگر تعداد ارزهای واجد شرایط کمتر از ۵ باشد، فقط همان‌ها نمایش داده می‌شوند.\n\n'
              if snapshot.get('schema') == 3 else 'صرافی کیانی | قیمت ۵۰ ارز دیجیتال برتر\n\n۵ اسلاید؛ قیمت به دلار و تومان و تغییر ۲۴ ساعته قیمت دلاری.\n')
     return (intro +
             'فهرست ۵۰ ارز بر اساس ارزش بازار، بدون استیبل‌کوین و نسخه‌های رپد و استیک‌شده.\n\n'
