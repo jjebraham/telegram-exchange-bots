@@ -73,6 +73,19 @@ class IntakeMenuTest(unittest.TestCase):
             intake.translate_admin_news(types.SimpleNamespace(translate=translate), None, {})
         self.assertEqual(len(calls), 1)
 
+    def test_scheduled_translation_uses_the_same_bounded_validation_retry(self):
+        import instagram_trial_reels as reels
+        from instagram_crypto_news import NewsError
+        calls = []
+        def translate(con, row):
+            calls.append(1)
+            if len(calls) == 1:
+                raise NewsError('Persian translation length is outside the card limits.')
+            return ('عنوان فارسی', 'خلاصه فارسی معتبر')
+        self.assertEqual(reels.translate_scheduled_news(types.SimpleNamespace(translate=translate), None, {}),
+                         ('عنوان فارسی', 'خلاصه فارسی معتبر'))
+        self.assertEqual(len(calls), 2)
+
     def test_manual_error_classification_never_includes_arbitrary_message(self):
         from instagram_crypto_news import NewsError
         code, message = intake.manual_news_error(NewsError('Translation introduced a number absent from the source.'))
