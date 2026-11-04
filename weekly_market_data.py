@@ -123,8 +123,14 @@ def servix(catalog, current, catalog_hash, current_hash, now):
         if updated!=stamp(m.get('businessTime')):
             raise GoldError('Servix catalog/quote observation mismatch.')
         value,mid,bid,ask=[number(r.get(k)) for k in ('value','midPrice','buyPrice','sellPrice')]
-        if value!=mid or value!=number(m.get('latestValue')) or bid>ask or (bid+ask)/2!=mid:
-            raise GoldError('Servix weekly sides and midpoint disagree.')
+        if value != mid:
+            raise GoldError('Servix weekly value and midpoint differ: '+asset)
+        if value != number(m.get('latestValue')):
+            raise GoldError('Servix weekly value and catalog differ: '+asset)
+        if bid > ask:
+            raise GoldError('Servix weekly sides are inverted: '+asset)
+        if (bid+ask)/2 != mid:
+            raise GoldError('Servix weekly midpoint and sides differ: '+asset)
         if (ask-bid)/mid>Decimal('.01'):
             raise GoldError('Servix weekly spread exceeds one percent.')
         price=mid/10 if unit=='RLS' else mid
@@ -265,6 +271,33 @@ def compute(providers, moment, anchor=None):
     return rows
 
 
+def consistent_servix_pair(raw, key, now, anchor=None):
+    """Retry a changing pair once, without relaxing any source checks."""
+    catalog, ch = raw['servix_catalog']
+    current, ph = raw['servix_prices']
+    try:
+        return servix(decode(catalog), decode(current), ch, ph, now), now, False
+    except GoldError as exc:
+        detail = str(exc)
+        retryable = (detail == 'Servix catalog/quote observation mismatch.' or
+                     detail.startswith(('Servix weekly value and midpoint differ: ',
+                         'Servix weekly value and catalog differ: ',
+                         'Servix weekly sides are inverted: ',
+                         'Servix weekly midpoint and sides differ: ')))
+        # A fresh quote after the reviewed anchor window cannot establish the
+        # requested historical valuation; never retry outside that window.
+        if not retryable or (anchor is not None and datetime.now(UTC) >= anchor + timedelta(minutes=2)):
+            raise
+        print('Servix paired observations inconsistent; retrying once:', detail, flush=True)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            catalog_future = pool.submit(fetch, CATALOG, key)
+            current_future = pool.submit(fetch, CURRENT, key)
+            catalog, ch = catalog_future.result()
+            current, ph = current_future.result()
+        retry_now = datetime.now(UTC)
+        return servix(decode(catalog), decode(current), ch, ph, retry_now), retry_now, True
+
+
 def collect(anchor=None):
     key=load_key()
     jobs={'servix_catalog':(CATALOG,key),'servix_prices':(CURRENT,key),
@@ -285,8 +318,10 @@ def collect(anchor=None):
     try:
         for required in ('servix_catalog','servix_prices','dollar','btc','eth'):
             if required not in raw: raise GoldError('Required weekly source unavailable: '+required)
-        catalog,ch=raw['servix_catalog']; current,ph=raw['servix_prices']
-        providers['servix']=servix(decode(catalog),decode(current),ch,ph,now)
+        providers['servix'], now, retried = consistent_servix_pair(raw, key, now, anchor)
+        snapshot['generated_at'] = now.isoformat()
+        if retried:
+            health['servix_pair_retry'] = {'status':'ok'}
         providers['dolarchand']={'usd':dollar(*raw['dollar'],now)}
         for source,parser in [('alanchand',parse_alanchand),('dolarchand',parse_dolar)]:
             if source not in raw: continue
@@ -339,3 +374,4 @@ def compare(previous, current):
     return dict(version=VERSION,status='verified',timezone='Asia/Tehran',unit='toman',
                 window_start=start.isoformat(),window_end=end.isoformat(),
                 previous_hash=digest(previous),current_hash=digest(current),rows=rows)
+
