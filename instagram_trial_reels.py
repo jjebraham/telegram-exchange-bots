@@ -864,6 +864,16 @@ def scheduled_translation_error(exc):
     return 'other_news_error'
 
 
+def translate_scheduled_news(ranked, con, row):
+    """Retry known translation validation errors without relaxing verification."""
+    try:
+        from instagram_manual_news_intake import translate_admin_news
+        return translate_admin_news(ranked, con, row)
+    except Exception as exc:
+        print('Automatic Reel translation failure:', scheduled_translation_error(exc), flush=True)
+        raise
+
+
 def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
     """Choose and prepare the highest-ranked eligible story for one durable slot."""
     origin = 'daily_top_story' if reel_mode == 'trial' else 'daily_direct'
@@ -965,11 +975,7 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
         configure_engine(kind)
         import instagram_ranked_news as ranked
         with database(ranked.SOURCES[kind]) as con:
-            try:
-                title, summary = ranked.translate(con, row)
-            except Exception as exc:
-                print('Automatic Reel translation failure:', scheduled_translation_error(exc), flush=True)
-                raise
+            title, summary = translate_scheduled_news(ranked, con, row)
         story = dict(source_url=row['source_url'], source_name=row['source_name'],
             title_original=row['title_original'], title_fa=title, summary_fa=summary,
             image_url=row.get('image_url'), image_urls=row.get('image_urls', []),
