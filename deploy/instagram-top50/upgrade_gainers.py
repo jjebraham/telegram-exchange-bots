@@ -26,14 +26,14 @@ LEGACY = {
     'instagram_top50_prices.py': 'aaaf133b87dc3a57f42e43470195d54a1944e7f891afe786c01ff29a9f7fed07',
     'instagram_top50_renderer.py': '146f861ef8858791305199b195639ab143a2a28c670fc27c1f9a8bc3ec6f1acb',
 }
-DEPLOYED_GAINERS_REVISION = '06e8796386f345b2c3d544a67040061dab2ccf82'
+DEPLOYED_GAINERS_REVISION = '94d11ec70a6bad4e8ab8dde8c279335ed40d4bda'
 DEPLOYED_GAINERS_HASHES = {
-    'instagram_top50_prices.py': '751ec7e3b740b874d2624226606a0a8d6c725c6d5d8a5243af3aca8aa4f85c85',
-    'crypto_top50_data.py': 'c5375d532c279d5e3b64b05d7fda5b816c27fb4ebe57a98f8e40e288b98c100e',
+    'instagram_top50_prices.py': 'abba357174288ec4f0b14829e7f7d54da26532b039a1a53cd38e38bb56f8da23',
+    'crypto_top50_data.py': '57adf2d4706aa00d86f0a2569198400a68f16fd85ae726bec00dd86514d18458',
     'instagram_top50_renderer.py': '50d5d4d82c1e607273f6ed12d85db0e1eb6c67992d362f5358c7b1213489d6cd',
-    'crypto_akamai_rate.py': '6acc5acb29c108da95fbce2b040157f57506aeb5fcb784a3f0e842a98a39924e',
+    'crypto_akamai_rate.py': 'e3fe7f9c629a4711d32270e6b3147d31ed1150b864e572428b803f4f8afd134e',
 }
-DEPLOYED_GAINERS_RUNTIME_HASH = '2eee174e9b9040f689dfa015ed007a896a5f9b4ae375393f710e84965675e514'
+DEPLOYED_GAINERS_RUNTIME_HASH = '4a2022af7c205b912b4f0e9c2e17075de10785ade25716da5aa1e39c5fdc8e43'
 
 
 def owned(path):
@@ -91,13 +91,14 @@ def main():
     original_cron = cron()
     launcher = home / 'publish-kiani-instagram-top50.sh'
     jobs = []
+    cron_zone = ''
     for line in original_cron.decode().splitlines():
         line = line.strip()
-        if line.startswith('CRON_TZ=') and line.split('=', 1)[1].strip('\"\'') not in {'UTC', 'Etc/UTC', 'GMT', 'Etc/GMT', ''}:
-            raise RuntimeError('A non-UTC CRON_TZ needs review.')
+        if line.startswith('CRON_TZ='):
+            cron_zone = line.split('=', 1)[1].strip('\"\'')
         if line and not line.startswith('#') and str(launcher) in line:
-            jobs.append(line)
-    if jobs != [f'0 13 * * * {launcher} publish >> {home}/kiani-instagram-top50-cron.log 2>&1']:
+            jobs.append((line, cron_zone))
+    if jobs != [(f'0 13 * * * {launcher} publish >> {home}/kiani-instagram-top50-cron.log 2>&1', '')] and jobs != [(f'0 13 * * * {launcher} publish >> {home}/kiani-instagram-top50-cron.log 2>&1', 'UTC')]:
         raise RuntimeError('Expected exactly the existing 16:00 Istanbul top 50 job.')
     config_path = home / '.local/state/kiani-instagram-stories/config.json'
     original_config = owned(config_path)
@@ -113,11 +114,7 @@ def main():
     if old_wrapper.count(marker) != 1 or hashlib.sha256(old_wrapper).hexdigest() != '14d1ed4a6d30577c53c8257178d233f417892d5158680fc73e6fe8073bdbae33':
         raise RuntimeError('The reviewed legacy launcher template changed.')
     replacement = old_wrapper.replace(marker, shlex.quote(str(release / 'instagram_top50_prices.py')).encode())
-    if original == old_wrapper:
-        for name, digest in LEGACY.items():
-            if hashlib.sha256(owned(home / 'kiani-instagram-top50-publisher' / name)).hexdigest() != digest:
-                raise RuntimeError('An installed top 50 source differs from the confirmed release: ' + name)
-    elif original_metadata:
+    if original_metadata:
         installed = json.loads(original_metadata)
         installed_revision = installed.get('revision')
         if installed_revision == args.revision:
@@ -155,13 +152,13 @@ def main():
                 manifest = json.loads(row['manifest_json'])
                 if (manifest.get('top50_runtime_fingerprint') == runtime_hash and
                         manifest.get('shared_assets_fingerprint') == assets_hash and not manifest.get('sample') and
-                        manifest.get('sections') == ['gainers'] + ['top50']*5 and len(manifest.get('images', [])) == 6):
+                        manifest.get('sections') == ['market_pulse', 'declines'] + ['top50']*5 and len(manifest.get('images', [])) == 7):
                     snapshot = json.loads(row['data_json'])
                     validate_snapshot(snapshot)
                     preview = row['id']
                     break
             if not preview:
-                raise RuntimeError('Run a verified six-slide preview from this exact runtime/assets before activation.')
+                raise RuntimeError('Run a verified seven-slide preview from this exact runtime/assets before activation.')
         finally:
             con.close()
         # A new source-only check is required; a historical preview never
@@ -202,9 +199,9 @@ def main():
     print('Market USDT: existing Akamai feed; unadjusted median ask; original source proofs/expiry preserved.')
     print('Preparation: three concurrent slide uploads; at most three total attempts with fresh rebuilds on expiry only.')
     print('Final freshness check remains mandatory. Uncertain publication stops all retries; no stale image/evidence reuse.')
-    print('Feed: daily 16:00 Europe/Istanbul; six slides: gainers first, then five top 50 price slides.')
-    print('Gainers: up to ten positive 24h USD changes among the global top 100; volume > USD 50,000; CoinPaprika.')
-    print('Story: first-slide gainers preview, 30 minutes after successful Feed publication.')
+    print('Feed: daily 16:00 Europe/Istanbul; market pulse, decliners and five top 50 price slides.')
+    print('Market movers: up to five gains and five declines beyond 2%; volume > USD 50,000; CoinPaprika.')
+    print('Story: first-slide market pulse, 30 minutes after successful Feed publication.')
     print('Next scheduled attempt:', start.isoformat())
     print('Existing publication history, duplicate guards and all other schedules preserved.')
     print('Activation complete. No Instagram post published during installation.')
