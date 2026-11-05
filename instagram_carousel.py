@@ -265,8 +265,38 @@ def sample_bundle():
     return {key: Decimal(str(value)) for key, value in payload["customer_rates"].items()}, payload["sections"]
 
 
+def currency_board(sections):
+    """Return a complete verified FX board; never substitute remembered prices."""
+    matches = [section for section in sections if section.get('kind') == 'fx']
+    if len(matches) != 1:
+        raise CarouselError('The current currency board is unavailable; this carousel cannot be posted.')
+    section = matches[0]
+    rows = section.get('rows')
+    if not isinstance(rows, list) or len(rows) != len(FX_NAMES):
+        raise CarouselError('The current currency board is incomplete.')
+    by_code = {}
+    for row in rows:
+        code = row.get('code') if isinstance(row, dict) else None
+        if code not in FX_NAMES or code in by_code:
+            raise CarouselError('The current currency board has an invalid currency.')
+        price = _number(row.get('price'))
+        if price != price.to_integral_value():
+            raise CarouselError('A currency price is not a whole number of tomans.')
+        by_code[code] = row
+    if set(by_code) != set(FX_NAMES):
+        raise CarouselError('The current currency board is incomplete.')
+    try:
+        observed = datetime.fromisoformat(section['generated_at'])
+    except (KeyError, ValueError, TypeError):
+        raise CarouselError('The currency board has no valid observation time.') from None
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        raise CarouselError('The currency board observation time has no timezone.')
+    return [by_code[code] for code in FX_NAMES], observed
+
+
 def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
     """Render the approved RTL Feed design with bundled fonts and artwork."""
+    board_rows, board_time = currency_board(sections)
     from instagram_calendar import calendar_labels
     calendar = calendar_labels(moment)
     from PIL import ImageFilter
@@ -588,6 +618,45 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
         latin(draw, value, (left+46+width1, y), 36, green, anchor="lm", bold=True)
     frames.append(image)
 
+    # Put the verified market board ahead of the existing customer cover.
+    board = Image.new('RGB', (1080, 1350), background)
+    draw = ImageDraw.Draw(board)
+    latin(draw, 'kiani.exchange', (43, 137), 29, green, anchor='lm', bold=True)
+    fa(draw, 'صرافی کیانی', (979, 137), 29, anchor='rm', bold=True)
+    logo(board, (1012, 138), 42)
+    fa(draw, 'نرخ ارز آزاد ایران', (1032, 218), 58, anchor='rm', bold=True)
+    draw.rounded_rectangle((40, 190, 231, 238), radius=24, fill='#D8EDE0')
+    fa(draw, 'واحد: تومان', (136, 214), 24, green, bold=True)
+    fa(draw, 'نرخ‌های بازار آزاد · صرفاً اطلاع‌رسانی', (1032, 267), 23, muted, anchor='rm')
+    for index, row in enumerate(board_rows):
+        column = 0 if index < 13 else 1
+        line = index if column == 0 else index-13
+        x, y = (549 if column == 0 else 35), 294+line*72
+        draw.rounded_rectangle((x, y, x+496, y+67), radius=13,
+                               fill='#FFFFFF' if line % 2 == 0 else '#E3EEE6')
+        code = row['code']
+        icon(board, code, (x+461, y+34), 47)
+        name = FX_NAMES[code]
+        size = 23
+        while size > 15 and draw.textlength(ig._rtl(name), font=font(size, True)) > 185:
+            size -= 1
+        if draw.textlength(ig._rtl(name), font=font(size, True)) > 185:
+            raise CarouselError('Currency name cannot be displayed safely.')
+        fa(draw, name, (x+426, y+22), size, anchor='rm', bold=True)
+        latin(draw, code, (x+425, y+49), 18, muted, anchor='rm', bold=True)
+        value = ig._persian_number(_number(row['price']))
+        size = 51
+        while size > 18 and draw.textlength(value, font=font(size, True)) > 205:
+            size -= 1
+        if draw.textlength(value, font=font(size, True)) > 205:
+            raise CarouselError('Currency price cannot be displayed safely.')
+        latin(draw, value, (x+20, y+34), size, anchor='lm', bold=True)
+    observed = board_time.astimezone(TEHRAN)
+    fa(draw, f'{observed:%Y/%m/%d · %H:%M} تهران', (540, 1252), 23, muted)
+    fa(draw, 'برای مشاهده نرخ مشتری و جزئیات ورق بزنید', (540, 1305), 27, green, bold=True)
+    frames.insert(0, board)
+    footer_positions = {position+1: y for position, y in footer_positions.items()}
+
     if not 2 <= len(frames) <= 10:
         raise CarouselError("Rendered carousel exceeds the supported item count")
     digest = hashlib.sha256(json.dumps({"rates": rates, "sections": sections}, default=str, sort_keys=True).encode()).hexdigest()[:10]
@@ -599,7 +668,7 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
         latin(draw, f"{index} / {len(frames)}", (64, 1282), 27, muted, anchor="lm")
         if index == len(frames):
             title(image, "صرافی کیانی", (540, 1305), 30, "handshake", green, False, 28)
-        elif index > 1:
+        elif index > 2:
             footer_y = footer_positions.get(index, 1282)
             title(image, "صرافی کیانی · ورق بزنید", (540, footer_y), 30, "next", green, False, 30)
         if sample:
@@ -609,7 +678,7 @@ def render_carousel(ig, rates, sections, moment, directory, *, sample=False):
         path = directory / name
         image.save(path, "JPEG", quality=94, optimize=True)
         paths.append(path)
-    caption = ig.build_caption(rates, moment) + "\n\nورق بزنید: نرخ مشتری لیر"
+    caption = ig.build_caption(rates, moment) + "\n\nاسلاید اول: نرخ ارز بازار آزاد ایران. ورق بزنید: نرخ مشتری لیر"
     if included:
         caption += "، " + "، ".join(included)
     caption += "\nنرخ بازار و صرافی‌های دیگر صرفاً جهت اطلاع‌رسانی است و با نرخ مشتری کیانی تفاوت دارد.\nلطفاً قبل از واریز هماهنگ کنید."
