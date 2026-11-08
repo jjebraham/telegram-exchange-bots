@@ -232,6 +232,8 @@ def select(con, job_id, override=None):
         if existing:
             if override is not None and override != existing['voice_id']:
                 raise RegistryError('The Reel already has a different reserved voice.')
+            if existing['status'] == 'failed':
+                raise RegistryError('This Reel voice reservation has already failed.')
             if existing['status'] == 'reserved':
                 still_eligible = con.execute('''SELECT 1 FROM voices WHERE voice_id=? AND available=1
                     AND verified=1 AND approved=1 AND enabled=1 AND serious_error=0 AND score>=80
@@ -248,9 +250,10 @@ def select(con, job_id, override=None):
         if override is not None:
             eligible = [row for row in eligible if row['voice_id'] == override]
         elif len(eligible) > 1:
-            last = con.execute('SELECT voice_id FROM selections ORDER BY sequence DESC LIMIT 1').fetchone()
-            if last:
-                eligible = [row for row in eligible if row['voice_id'] != last['voice_id']]
+            last_published = con.execute("SELECT voice_id FROM selections WHERE status='published' ORDER BY published_at DESC,sequence DESC LIMIT 1").fetchone()
+            last_pending = con.execute("SELECT voice_id FROM selections WHERE status='reserved' ORDER BY sequence DESC LIMIT 1").fetchone()
+            excluded = {row['voice_id'] for row in (last_published, last_pending) if row}
+            eligible = [row for row in eligible if row['voice_id'] not in excluded]
         if not eligible:
             raise RegistryError('No approved, enabled and available voice is eligible.')
         chosen = secrets.choice(eligible)
@@ -262,6 +265,11 @@ def select(con, job_id, override=None):
     except BaseException:
         con.rollback()
         raise
+
+
+def mark_failed(con, job_id):
+    """Release a reservation only after the Reel is confirmed failed."""
+    con.execute("UPDATE selections SET status='failed' WHERE job_id=? AND status='reserved'", (job_id,))
 
 
 def mark_published(con, job_id, media_id):
