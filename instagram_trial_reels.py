@@ -117,6 +117,51 @@ def _chunks(text, limit=170):
     return chunks
 
 
+def _narrated_chunks(text, asset_root, *, has_images, limit=170):
+    """Keep complete sentences together and validate the existing card layout."""
+    parts = [part.strip() for part in re.split(r'(?<=[.!?؟۔])\s+', text) if part.strip()]
+    if not parts:
+        raise TrialReelError('The narrated news summary is empty.')
+    sentences = []
+    abbreviation = re.compile(r'(?:\b(?:Mr|Mrs|Ms|Dr|Prof|St|vs|etc|e\.g|i\.e|U\.S|U\.K)\.|\b[A-Za-z]\.)$', re.IGNORECASE)
+    for part in parts:
+        part = ' '.join(part.split())
+        if sentences and abbreviation.search(sentences[-1]):
+            sentences[-1] += ' ' + part
+        else:
+            sentences.append(part)
+    draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+
+    def fits(value):
+        try:
+            font = _font(asset_root, 56)
+            rows = _wrap(draw, value, font, 780)
+            if len(rows) > 6:
+                font = _font(asset_root, 48)
+                rows = _wrap(draw, value, font, 780)
+            if len(rows) > 8:
+                return False
+            return not has_images or 940 + (len(rows) - 1) * int(font.size * 1.45) + int(font.size * 1.6) <= 1550
+        except TrialReelError:
+            return False
+
+    chunks, current = [], ''
+    for sentence in sentences:
+        candidate = (current + ' ' + sentence).strip()
+        if current and (len(candidate) > limit or not fits(candidate)):
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+        if not fits(current):
+            raise TrialReelError('A complete sentence does not fit the existing Reel card; a shorter verified summary is needed.')
+    if current:
+        chunks.append(current)
+    if len(chunks) > 16:
+        raise TrialReelError('Complete sentences need more than 16 Reel cards; a shorter verified summary is needed.')
+    return chunks
+
+
 def _brand_mark(asset_root):
     """Draw the first, original Kiani logo polygon without an SVG runtime."""
     import xml.etree.ElementTree as ET
@@ -241,7 +286,8 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
     summary = _safe_text(story.get('summary_fa'))
     source = _safe_text(story.get('source_name'), 180)
     story_type = story.get('story_type', 'hard_news')
-    chunks = _chunks(summary)
+    chunks = (_narrated_chunks(summary, asset_root, has_images=bool(media))
+              if narration is not None else _chunks(summary))
     if not chunks or len(chunks) > 16:
         raise TrialReelError('The complete verified summary exceeds the readable Reel card limit.')
     pages = len(chunks) + 2
@@ -412,7 +458,7 @@ def _load_voice_modules():
         sys.path.insert(0, str(path))
 
 
-def _prepare_narration(story, folder, voice_id):
+def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
     """Prepare aligned segments for the existing renderer when explicitly enabled."""
     import wave
     _load_voice_modules()
@@ -428,7 +474,8 @@ def _prepare_narration(story, folder, voice_id):
             raise ValueError('The selected voice has not been reviewed for these settings.')
         title = _safe_text(story.get('title_fa'), 500)
         summary = _safe_text(story.get('summary_fa'))
-        sections = [title] + _chunks(summary)
+        sections = [title] + _narrated_chunks(summary, asset_root, has_images=has_images)
+        max_seconds = {'short': 30, 'long': 90}.get(story.get('reel_length'), MAX_REEL_SECONDS)
         output = []
         for index, text in enumerate(sections):
             result = synthesize_segment(
@@ -443,6 +490,8 @@ def _prepare_narration(story, folder, voice_id):
             with wave.open(str(path), 'rb') as voice:
                 duration = voice.getnframes() / voice.getframerate()
             output.append({'path': path, 'duration': duration, 'word_starts': result['starts']})
+            if sum(item['duration'] for item in output) + 3.6 > max_seconds:
+                raise TrialReelError('Narration is too long for the selected Reel duration; no Reel was published.')
         return output
     except (VoiceError, ValueError, OSError, wave.Error):
         raise TrialReelError('Narration could not be prepared and verified; no Reel was published.') from None
@@ -712,7 +761,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             voice_temp = tempfile.TemporaryDirectory(prefix='voice-' + trial_id + '-', dir=STATE)
             selected_voice = _select_narrator(trial_id)
             print('Narration voice selected:', selected_voice['voice_name'], flush=True)
-            narration = _prepare_narration(normalized, Path(voice_temp.name), selected_voice['voice_id'])
+            narration = _prepare_narration(normalized, Path(voice_temp.name), selected_voice['voice_id'],
+                                           asset_root, has_images=bool(media))
         duration = render_video(normalized, kind, video_path, asset_root,
                                 music_path=music_path if music else None, media=media, narration=narration)
         if stock_used:
