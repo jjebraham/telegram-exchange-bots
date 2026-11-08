@@ -164,6 +164,14 @@ class RegistryTests(unittest.TestCase):
         sheets.apply_sheet(self.con, sheet)
         self.assertTrue(next(v for v in registry.list_voices(self.con) if v['name'] == 'Sahar')['enabled'])
 
+    def test_existing_review_sheet_is_backed_up_before_export(self):
+        sheet = self.root / 'review.json'
+        original = b'{"unsaved_human_notes": "keep"}'
+        sheet.write_bytes(original)
+        backup = sheets.export_sheet(self.con, sheet)
+        self.assertEqual(backup.read_bytes(), original)
+        self.assertNotEqual(sheet.read_bytes(), original)
+
     def test_review_sheet_rejects_changed_identity_and_rolls_back(self):
         self.verify_four()
         registry.save_sample(self.con, 'Sahar', self.sample)
