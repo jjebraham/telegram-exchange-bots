@@ -52,6 +52,7 @@ EXTRA_PUBLISHERS = {
     'aljazeera.com': 'Al Jazeera', 'cnn.com': 'CNN', 'axios.com': 'Axios',
     'marketwatch.com': 'MarketWatch', 'finance.yahoo.com': 'Yahoo Finance',
     'fortune.com': 'Fortune', 'businessinsider.com': 'Business Insider',
+    'cnbctv18.com': 'CNBC TV18',
     'euronews.com': 'Euronews', 'channelnewsasia.com': 'CNA',
     'abcnews.go.com': 'ABC News US', 'abcnews.com': 'ABC News US',
     'abc.net.au': 'ABC News Australia', 'scmp.com': 'South China Morning Post',
@@ -836,3 +837,4 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, NewsError) else f'ERROR: Ranked news stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
