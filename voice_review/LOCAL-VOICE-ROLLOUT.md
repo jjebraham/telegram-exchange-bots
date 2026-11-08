@@ -12,12 +12,16 @@ not alter its launchers or cron entries.
 
 1. Stage the exact reviewed revision with `run_trial_reels.py`, without `--install`.
 2. Run the offline tests in `voice_review`.
-3. Run `reel_voice_tool.py review`. Enter real human scores for pronunciation,
-   naturalness, news-presenter tone and 1.5x clarity. Approval is a separate
-   explicit decision. Scores below 80, serious pronunciation errors and
-   unavailable/unverified voices remain inactive. The four known voice IDs are
-   retained. The other nine candidates remain test-only until IDs and samples
-   are verified; no IDs or scores are invented.
+3. Run `reel_voice_tool.py enroll-evaluation Sahar Aylin Shahram Adrian` to
+   apply the user's permission to evaluate the four verified sampled voices on
+   Reels. Existing ratings are preserved and marked provisional. Evaluation
+   enrollment has no minimum score. New candidates need verified available IDs,
+   checked samples and explicit enrollment; unavailable voices stay inactive.
+   Run `review` to revise provisional opinions at any time. These opinions do
+   not change probabilities or remove an enrolled voice for scoring below 80.
+   Serious pronunciation errors disable the voice. Optional `review --final`
+   retains the earlier 80-point final-approval workflow. Human ratings and all
+   changes remain in a persistent review history.
 4. Run `check_local_voice.py`. It reads the existing registry, key presence,
    preview checksums and local usage. It makes no network calls.
 5. Existing `configure-secrets` safely stores ElevenLabs and private Telegram
@@ -45,16 +49,25 @@ and Reel caches have separate ledgers. Earlier account usage is unknown to the
 new ledger. Check the ElevenLabs dashboard for actual balance and charges.
 Use private file permissions (0600). RunPod settings are not accepted here.
 
-Before production activation, confirm human scores, cap/budget, current private
+Before production activation, confirm evaluation enrollment, cap/budget, current private
 preview and active-runtime checks. Use the existing pinned runtime activation
 workflow and retain its prior launchers/configuration for rollback. First test
 one explicitly requested Instagram canary, then inspect it before enabling
 scheduled narration. Do not change the posting schedule as part of this step.
 Production activation has not been performed by the preparation commands.
 
+After enrollment, `reel_voice_tool.py configure-local --enable` sets the
+persistent narration flag. Install the staged runtime with the existing pinned
+`run_trial_reels.py --install` workflow. This uses local rendering and keeps the
+same scheduled slots. For immediate narration rollback, run
+`reel_voice_tool.py configure-local --disable` using this pinned runtime.
+The activation backup also retains prior launchers, crontab and private admin
+configuration for a complete runtime rollback. No RunPod configuration is touched.
+
 ## Reliability and accounting
 
-Random selection is uniform among eligible voices after excluding the last
+Random selection is uniform among eligible final-approved or explicitly
+evaluation-enrolled voices after excluding the last
 published and currently reserved voice. Overrides still require approval.
 Reservations and confirmed publication history survive restarts. Narrator,
 model, speed, renderer, distinct image count, render duration, cache usage and
@@ -80,10 +93,13 @@ Verified audio is cached by text, voice, model, speed and display-token mapping.
 Adding `--collect` explicitly makes bounded GET-only Meta requests using the
 existing private analytics transport. It never publishes, deletes or changes
 voice probabilities. Run this in the 24–26-hour observation window for each
-published narrated Reel; observation scheduling is a later deployment step.
+published narrated Reel. Narrated-runtime activation installs a GET-only
+observation job every 30 minutes within the existing managed cron block.
+Posting slots are unchanged. A process lock and saved checkpoints prevent
+overlapping or duplicate observations.
 Previously collected observations are reused for the checkpoint.
 
-Reports show views, reach, follows, and engagement as
+Reports show provisional human opinions separately from views, reach, follows, and engagement as
 (likes + comments + saves + shares) / reach when all components are available.
 They group broad topic, mode, duration band, four-hour publication window and
 weekend status, and compare the same 24–26-hour age window. These are
