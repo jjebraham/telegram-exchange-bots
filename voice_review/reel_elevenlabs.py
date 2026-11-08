@@ -91,9 +91,11 @@ def synthesize_segment(display_text, cache_file, key, *, voice_id='TX3LPaxmHKxFd
         os.chmod(cache_file, 0o600)
     con = sqlite3.connect(str(cache_file), timeout=120, isolation_level=None)
     try:
+        import reel_narration_usage as usage
+        usage.schema(con)
         con.execute('CREATE TABLE IF NOT EXISTS narration (cache_key TEXT PRIMARY KEY, audio BLOB NOT NULL, timings TEXT NOT NULL, sha256 TEXT NOT NULL)')
-        # Serialize cache misses so concurrent workers do not generate the same
-        # voice twice. A crash after API success can still incur a retry charge.
+        # Commit a durable reservation before a billable call. A crash or lost
+        # response cannot silently request and charge for the same text again.
         con.execute('BEGIN IMMEDIATE')
         row = con.execute('SELECT audio,timings,sha256 FROM narration WHERE cache_key=?', (cache_key,)).fetchone()
         if row:
@@ -104,8 +106,21 @@ def synthesize_segment(display_text, cache_file, key, *, voice_id='TX3LPaxmHKxFd
             if not isinstance(starts, list) or len(starts) != len(tokens):
                 raise VoiceError('Cached narration timing is invalid.')
             con.commit()
-            return {'audio': audio, 'starts': starts, 'cached': True, 'script': script}
-        source, alignment = _generate(script, key, voice_id, model, timeout)
+            return {'audio': audio, 'starts': starts, 'cached': True, 'script': script,
+                    'submitted_characters': 0, 'cache_key': cache_key}
+        saved = usage.reserve(con, cache_key, voice_id, model, len(script))
+        con.commit()
+        newly_requested = saved is None
+        if newly_requested:
+            try:
+                source, alignment = _generate(script, key, voice_id, model, timeout)
+            except BaseException:
+                con.execute("UPDATE narration_requests SET status='uncertain' WHERE cache_key=?", (cache_key,))
+                raise
+            con.execute("UPDATE narration_requests SET status='received',response_audio=?,response_alignment=? WHERE cache_key=?",
+                        (source, json.dumps(alignment, ensure_ascii=False), cache_key))
+        else:
+            source, alignment = saved
         with tempfile.TemporaryDirectory(prefix='kiani-elevenlabs-') as temporary:
             root = Path(temporary)
             source_path, wav_path = root / 'source.audio', root / 'voice.wav'
@@ -129,12 +144,14 @@ def synthesize_segment(display_text, cache_file, key, *, voice_id='TX3LPaxmHKxFd
             audio = wav_path.read_bytes()
         timings_json = json.dumps(starts)
         checksum = hashlib.sha256(audio + timings_json.encode('utf-8')).hexdigest()
-        con.execute('INSERT INTO narration VALUES (?,?,?,?)', (cache_key, audio, timings_json, checksum))
+        con.execute('BEGIN IMMEDIATE')
+        con.execute('INSERT OR IGNORE INTO narration VALUES (?,?,?,?)', (cache_key, audio, timings_json, checksum))
+        con.execute("UPDATE narration_requests SET status='verified',response_audio=NULL,response_alignment=NULL WHERE cache_key=?", (cache_key,))
         con.commit()
-        return {'audio': audio, 'starts': starts, 'cached': False, 'script': script}
+        return {'audio': audio, 'starts': starts, 'cached': not newly_requested, 'script': script,
+                'submitted_characters': len(script) if newly_requested else 0, 'cache_key': cache_key}
     except BaseException:
         con.rollback()
         raise
     finally:
         con.close()
-
