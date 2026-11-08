@@ -15,6 +15,7 @@ import uuid
 
 import runpod_lease_store as leases
 import runpod_watchdog as watchdog
+from runpod_worker_lock import pod_lock
 
 POD = 'fake-pod'
 
@@ -31,13 +32,16 @@ def fake_worker(directory):
     directory = checked_directory(directory)
     created = time.time() - 1900
     started = datetime.fromtimestamp(created, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    with closing(leases.connect(directory / 'lease.sqlite3')) as con:
-        lease = leases.reserve(con, POD, .89, now=created)
-        leases.start_requested(con, lease)
-        leases.start_confirmed(con, lease, pod_id=POD, provider_status='RUNNING', provider_started_at=started)
-    (directory / 'lease-id').write_text(lease, encoding='ascii')
-    # Deliberately simulate a killed worker after its lease was persisted.
-    os._exit(17)
+    with pod_lock(directory, POD) as held:
+        if not held:
+            raise ValueError('Fake Pod lock is already held.')
+        with closing(leases.connect(directory / 'lease.sqlite3')) as con:
+            lease = leases.reserve(con, POD, .89, now=created)
+            leases.start_requested(con, lease)
+            leases.start_confirmed(con, lease, pod_id=POD, provider_status='RUNNING', provider_started_at=started)
+        (directory / 'lease-id').write_text(lease, encoding='ascii')
+        # Simulate an abrupt exit while holding the OS lock; the OS releases it.
+        os._exit(17)
 
 
 class FakePodAPI:
@@ -61,8 +65,8 @@ def fake_watchdog(directory):
     with closing(leases.connect(directory / 'lease.sqlite3')) as con:
         started = con.execute('SELECT provider_started_at FROM leases WHERE lease_id=?', (lease,)).fetchone()[0]
         api = FakePodAPI(started)
-        result = watchdog.tick(con, api, lease, expected_pod_id=POD, exclusive=True,
-                               worker_lock_held=True, worker_active=False, output_pending=False, job_done=False)
+        result = watchdog.locked_tick(con, api, lease, state_dir=directory, expected_pod_id=POD,
+                                      exclusive=True, output_pending=False, job_done=False)
         state = con.execute('SELECT state FROM leases WHERE lease_id=?', (lease,)).fetchone()['state']
     pending = directory / 'result.pending'
     pending.write_text(json.dumps({'result': result, 'lease_state': state,
