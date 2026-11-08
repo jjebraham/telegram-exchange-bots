@@ -16,6 +16,9 @@ class RunpodAPIError(RuntimeError):
 
 class ActionOutcomeUnknown(RunpodAPIError):
     """The provider may have processed the request; never blindly retry it."""
+    def __init__(self, message, *, http_status=None):
+        super().__init__(message)
+        self.http_status = http_status if isinstance(http_status, int) and 100 <= http_status <= 599 else None
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -55,7 +58,12 @@ class RunpodAPI:
             if not isinstance(result, dict) or result.get('id') != pod_id:
                 raise ValueError('unverified response')
             return result
-        except (HTTPError, URLError, OSError, TimeoutError, ValueError, TypeError):
+        except HTTPError as exc:
+            if action:
+                raise ActionOutcomeUnknown('Runpod action outcome is unknown; reconcile manually before retrying.',
+                                           http_status=exc.code) from None
+            raise RunpodAPIError('Runpod Pod status is unavailable.') from None
+        except (URLError, OSError, TimeoutError, ValueError, TypeError):
             if action:
                 raise ActionOutcomeUnknown('Runpod action outcome is unknown; reconcile manually before retrying.') from None
             raise RunpodAPIError('Runpod Pod status is unavailable.') from None
