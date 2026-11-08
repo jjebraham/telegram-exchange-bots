@@ -41,6 +41,10 @@ FILES = (
     'voice_review/test_reel_voice_credentials.py',
     'voice_review/test_music_match.py',
     'voice_review/preview_voice_reel.py',
+    'voice_review/reel_preview_images.py',
+    'voice_review/test_reel_preview_images.py',
+    'voice_review/runpod_audit.py',
+    'voice_review/test_runpod_audit.py',
     'voice_review/test_reel_narration_timing.py',
     'voice_review/test_reel_elevenlabs.py',
     'voice_review/test_reel_audio_mix.py',
@@ -137,7 +141,6 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
-
 
 
 
