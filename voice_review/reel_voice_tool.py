@@ -9,6 +9,7 @@ import sys
 import warnings
 
 import reel_voice_discovery as discovery
+import reel_voice_credentials as credentials
 import reel_voice_registry as registry
 import reel_voice_review as review
 import reel_voice_samples as samples
@@ -16,7 +17,7 @@ import reel_voice_telegram as telegram
 
 
 def secret(name, prompt):
-    value = os.environ.get(name, '').strip()
+    value = credentials.get_secret(name)
     if value:
         return value
     with warnings.catch_warnings():
@@ -42,6 +43,7 @@ def main():
                         default=Path.home() / '.local/state/kiani-instagram-voice-review')
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('discover', help='Read-only voice ID lookup; no synthesis.')
+    sub.add_parser('configure-secrets', help='Create or update a private credentials.env file.')
     sub.add_parser('samples', help='Generate available voices; ElevenLabs charges may apply.')
     sub.add_parser('compare', help='Check private channel, generate samples and send them.')
     sub.add_parser('send', help='Send prepared samples to the specified private channel.')
@@ -57,6 +59,20 @@ def main():
     remove = sub.add_parser('remove', help='Remove a candidate; selection history remains.')
     remove.add_argument('name')
     args = parser.parse_args()
+    if args.action == 'configure-secrets':
+        credentials.read()
+        updates = {}
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', getpass.GetPassWarning)
+            for name, label in (('ELEVENLABS_API_KEY', 'ElevenLabs API key'),
+                                ('KIANI_VOICE_TEST_BOT_TOKEN', 'Private test bot token')):
+                value = getpass.getpass(label + ' (hidden; Enter to keep or skip): ').strip()
+                if value:
+                    updates[name] = value
+        path = credentials.write(updates)
+        print('Private credentials file:', path)
+        print('Narration remains disabled in production; no network request was made.')
+        return
     if args.action == 'discover':
         key = secret('ELEVENLABS_API_KEY', 'ElevenLabs API key (hidden): ')
         print_discovery(discovery.inspect(key))
@@ -119,7 +135,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (registry.RegistryError, discovery.DiscoveryError, telegram.TelegramError) as exc:
+    except (registry.RegistryError, discovery.DiscoveryError, telegram.TelegramError, credentials.CredentialError) as exc:
         print('Voice utility stopped:', str(exc), file=sys.stderr)
         raise SystemExit(1)
     except (OSError, ValueError, getpass.GetPassWarning) as exc:
