@@ -2,7 +2,7 @@
 import math
 
 
-def mix_filter(duration, music_volume=0.50, ducking=True):
+def mix_filter(duration, music_volume=0.30, ducking=True):
     if (not isinstance(duration, (int, float)) or isinstance(duration, bool) or
             not math.isfinite(duration) or duration < 1 or duration > 300):
         raise ValueError('Invalid Reel audio duration.')
@@ -11,7 +11,7 @@ def mix_filter(duration, music_volume=0.50, ducking=True):
         raise ValueError('Invalid music volume.')
     if not isinstance(ducking, bool):
         raise ValueError('Invalid ducking setting.')
-    # Production's un-narrated base is .22. The default multiplier is .50.
+    # Production's un-narrated base is .22. The default multiplier is .30.
     level = .22 * music_volume
     end = max(0.0, duration - 1.0)
     music = (f'[1:a]aformat=sample_rates=48000:channel_layouts=stereo,'
