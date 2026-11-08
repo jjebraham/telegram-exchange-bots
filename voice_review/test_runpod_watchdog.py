@@ -1,9 +1,10 @@
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timezone
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from runpod_api_client import ActionOutcomeUnknown
 import runpod_lease_store as leases
@@ -51,6 +52,13 @@ class WatchdogTests(unittest.TestCase):
                                        **dict(self.options, worker_active=True)), 'wait')
         self.assertEqual(watchdog.tick(self.con, self.api, self.lease,
                                        **dict(self.options, output_pending=True)), 'manual_review')
+        self.assertEqual(self.api.actions, [])
+    def test_busy_interprocess_lock_blocks_watchdog(self):
+        with patch.object(watchdog, 'pod_lock', return_value=nullcontext(False)):
+            result = watchdog.locked_tick(self.con, self.api, self.lease, state_dir=self.temp.name,
+                                          expected_pod_id='pod-1', exclusive=True,
+                                          output_pending=False, job_done=True, now=self.now)
+        self.assertEqual(result, 'lock_busy')
         self.assertEqual(self.api.actions, [])
     def test_unowned_or_manually_restarted_pod_never_stops(self):
         self.assertEqual(watchdog.tick(self.con, self.api, self.lease,
