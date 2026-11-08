@@ -49,6 +49,8 @@ def generate(con, directory, cache_file, key, *, ffmpeg='ffmpeg', ffprobe='ffpro
                             'identity_confirmed': bool(row['verified'])})
         except (VoiceError, registry.RegistryError, OSError) as exc:
             # API/network failures can be billable; never retry automatically.
-            results.append({'name': row['name'], 'status': 'failed', 'error_type': type(exc).__name__})
+            detail = str(exc) if isinstance(exc, (VoiceError, registry.RegistryError)) else type(exc).__name__
+            results.append({'name': row['name'], 'status': 'failed', 'error_type': type(exc).__name__,
+                            'detail': detail})
     return results
 
