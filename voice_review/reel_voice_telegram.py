@@ -84,10 +84,17 @@ def verify_destination(token, request=_request):
     bot = request(token, 'getMe')
     if str(bot.get('username', '')).casefold() != BOT_NAME:
         raise TelegramError('Telegram bot identity does not match the requested bot.')
+    bot_id = bot.get('id')
+    if isinstance(bot_id, bool) or not isinstance(bot_id, int) or bot_id <= 0:
+        raise TelegramError('Telegram did not provide a valid bot ID.')
     chat = request(token, 'getChat', fields={'chat_id': CHAT_ID})
     if (chat.get('id') != CHAT_ID or chat.get('type') != 'channel' or
             str(chat.get('title', '')).strip().casefold() != CHAT_TITLE):
         raise TelegramError('Telegram channel identity does not match the requested destination.')
+    member = request(token, 'getChatMember', fields={'chat_id': CHAT_ID, 'user_id': bot_id})
+    if not (member.get('status') == 'creator' or
+            member.get('status') == 'administrator' and member.get('can_post_messages') is True):
+        raise TelegramError('The verified bot cannot post to the requested channel.')
 
 
 def deliver(con, token, *, request=_request):
