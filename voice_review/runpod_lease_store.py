@@ -41,7 +41,15 @@ def connect(path):
     con.execute('''CREATE TABLE IF NOT EXISTS leases (
         lease_id TEXT PRIMARY KEY, pod_id TEXT NOT NULL, state TEXT NOT NULL,
         created_at REAL NOT NULL, updated_at REAL NOT NULL, rate_usd REAL NOT NULL,
-        provider_started_at TEXT)''')
+        provider_started_at TEXT, output_pending INTEGER NOT NULL DEFAULT 1)''')
+    columns = {row[1] for row in con.execute('PRAGMA table_info(leases)')}
+    if 'output_pending' not in columns:
+        # Existing leases have unknown output status and must remain protected.
+        try:
+            con.execute('ALTER TABLE leases ADD COLUMN output_pending INTEGER NOT NULL DEFAULT 1')
+        except sqlite3.OperationalError:
+            if 'output_pending' not in {row[1] for row in con.execute('PRAGMA table_info(leases)')}:
+                raise
     con.execute('''CREATE UNIQUE INDEX IF NOT EXISTS one_active_pod ON leases(pod_id)
         WHERE state IN ('RESERVED', 'START_REQUESTED', 'START_CONFIRMED', 'ACTION_UNCERTAIN', 'STOP_REQUESTED')''')
     return con
@@ -55,7 +63,8 @@ def reserve(con, pod_id, rate, *, now=None):
     now = time.time() if now is None else now
     lease_id = uuid.uuid4().hex
     try:
-        con.execute('INSERT INTO leases VALUES(?,?,?,?,?,?,NULL)',
+        con.execute('''INSERT INTO leases(lease_id,pod_id,state,created_at,updated_at,rate_usd,provider_started_at)
+                       VALUES(?,?,?,?,?,?,NULL)''',
                     (lease_id, pod_id, 'RESERVED', now, now, rate))
     except sqlite3.IntegrityError:
         raise LeaseError('This Pod already has an unresolved lease.') from None
@@ -118,3 +127,14 @@ def close_confirmed(con, lease_id, *, pod_id, provider_status):
 
 def cancel_unused_reservation(con, lease_id):
     _change(con, lease_id, ('RESERVED',), 'CANCELLED')
+
+
+def set_output_pending(con, lease_id, *, pending):
+    """Worker records whether required remote output might not be retrieved."""
+    if not isinstance(pending, bool) or not re.fullmatch(r'[a-f0-9]{32}', str(lease_id)):
+        raise LeaseError('Invalid output state.')
+    result = con.execute('''UPDATE leases SET output_pending=?,updated_at=?
+                            WHERE lease_id=? AND state IN ('RESERVED','START_REQUESTED','START_CONFIRMED')''',
+                         (int(pending), time.time(), lease_id))
+    if result.rowcount != 1:
+        raise LeaseError('Lease cannot accept an output state update.')
