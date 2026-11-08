@@ -52,6 +52,13 @@ def main():
     sub.add_parser('review-apply', help='Apply explicit human decisions from review.json.')
     human = sub.add_parser('review', help='Score and approve voices interactively in this terminal.')
     human.add_argument('names', nargs='*', default=['Sahar', 'Aylin', 'Shahram', 'Adrian'])
+    human.add_argument('--final', action='store_true', help='Make a final review; the 80-point approval rule applies.')
+    enroll = sub.add_parser('enroll-evaluation', help='Explicitly permit verified sampled voices for equal-probability Reel evaluation.')
+    enroll.add_argument('names', nargs='+')
+    local = sub.add_parser('configure-local', help='Set the persistent local narration flag; no provider or scheduler requests.')
+    decision = local.add_mutually_exclusive_group(required=True)
+    decision.add_argument('--enable', action='store_true')
+    decision.add_argument('--disable', action='store_true')
     sub.add_parser('usage', help='Read local submitted-character accounting; no API requests.')
     confirm = sub.add_parser('confirm', help='Confirm an available account voice ID.')
     confirm.add_argument('name')
@@ -122,6 +129,7 @@ def main():
             for row in registry.list_voices(con):
                 print(row['name'], '| ID:', row['voice_id'] or 'unknown', '| account:', bool(row['available']),
                       '| verified:', bool(row['verified']), '| score:', row['score'],
+                      '| rating:', row['rating_status'], '| evaluation:', bool(row['evaluation_enabled']),
                       '| approved:', bool(row['approved']), '| enabled:', bool(row['enabled']))
         elif args.action == 'review-export':
             backup = review.export_sheet(con, state / 'review.json')
@@ -130,6 +138,27 @@ def main():
             print('Editable review sheet:', state / 'review.json')
         elif args.action == 'review-apply':
             print('Applied reviews:', review.apply_sheet(con, state / 'review.json'))
+        elif args.action == 'enroll-evaluation':
+            registry.enroll_evaluation(con, args.names)
+            for name in args.names:
+                print(name + ': enabled for evaluation; score retained as provisional.')
+            print('Selection is uniform among eligible voices, subject to no-repeat exclusions.')
+            print('Instagram launchers, narration flag and RunPod settings were not changed.')
+        elif args.action == 'configure-local':
+            import shutil
+            import reel_local_settings as local
+            if args.enable:
+                eligible = [r for r in registry.list_voices(con) if registry.eligible(r)]
+                if not eligible or not credentials.get_secret('ELEVENLABS_API_KEY'):
+                    raise registry.RegistryError('Local narration needs an eligible voice and a configured ElevenLabs key.')
+                if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+                    raise registry.RegistryError('Local rendering tools are missing.')
+            backup = local.configure(args.enable)
+            print('Persistent local narration flag:', args.enable)
+            print('Settings:', local.path())
+            if backup:
+                print('Settings backup:', backup)
+            print('The staged runtime uses these settings after installation. RunPod settings were not changed.')
         elif args.action == 'review':
             rows = {row['name'].casefold(): row for row in registry.list_voices(con)}
             for name in args.names:
@@ -159,11 +188,13 @@ def main():
                 total = registry.score(values)
                 print('Weighted score:', total, '/100')
                 approve = False
-                if total >= 80 and serious == 'no':
+                if args.final and total >= 80 and serious == 'no':
                     approve = input('Approve AND enable this voice for production? [yes/no]: ').strip().lower() == 'yes'
                 registry.review(con, row['name'], values, notes, serious_error=serious == 'yes',
-                                approved=approve, enabled=approve)
-                print(row['name'] + ': ' + ('approved and enabled' if approve else 'test only; inactive'))
+                                approved=approve, enabled=approve, final=args.final)
+                current = con.execute('SELECT * FROM voices WHERE name=?', (row['name'],)).fetchone()
+                print(row['name'] + ': ' + ('final review' if args.final else 'provisional opinion') +
+                      ' | eligible for selection: ' + str(registry.eligible(current)))
             print('Human voice reviews saved. Instagram publishing settings were not changed.')
         elif args.action == 'confirm':
             registry.confirm_voice_id(con, args.name, args.voice_id)
