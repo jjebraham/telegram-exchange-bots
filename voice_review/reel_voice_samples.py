@@ -8,7 +8,7 @@ import reel_voice_registry as registry
 from reel_elevenlabs import VoiceError, synthesize_segment
 
 
-def generate(con, directory, cache_file, key, *, ffmpeg='ffmpeg', ffprobe='ffprobe'):
+def generate(con, directory, cache_file, key, *, ffmpeg='ffmpeg', ffprobe='ffprobe', progress=None):
     directory = Path(directory)
     if directory.is_symlink():
         raise registry.RegistryError('Unsafe sample directory.')
@@ -21,6 +21,8 @@ def generate(con, directory, cache_file, key, *, ffmpeg='ffmpeg', ffprobe='ffpro
             results.append({'name': row['name'], 'status': 'unavailable'})
             continue
         try:
+            if progress:
+                progress(row['name'])
             output = synthesize_segment(registry.SAMPLE_TEXT, cache_file, key, voice_id=row['voice_id'],
                                         model=registry.MODEL, speed=registry.SPEED, ffmpeg=ffmpeg, ffprobe=ffprobe)
             digest = hashlib.sha256(output['audio']).hexdigest()
