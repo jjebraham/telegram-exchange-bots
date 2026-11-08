@@ -3,6 +3,8 @@ import hashlib
 import json
 from pathlib import Path
 import secrets
+import subprocess
+import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -37,7 +39,7 @@ def _request(token, method, *, fields=None, audio=None):
             chunks.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="' + key +
                            '"\r\n\r\n' + str(value) + '\r\n').encode('utf-8'))
         chunks.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="audio"; '
-                       'filename="sample.wav"\r\nContent-Type: audio/wav\r\n\r\n').encode('ascii'))
+                       'filename="sample.m4a"\r\nContent-Type: audio/mp4\r\n\r\n').encode('ascii'))
         chunks.append(audio)
         chunks.append(('\r\n--' + boundary + '--\r\n').encode('ascii'))
         body = b''.join(chunks)
@@ -58,6 +60,24 @@ def _request(token, method, *, fields=None, audio=None):
     if not isinstance(data, dict) or data.get('ok') is not True or not isinstance(data.get('result'), dict):
         raise TelegramError('Telegram did not confirm the request.')
     return data['result']
+
+
+def _to_m4a(path):
+    """Telegram sendAudio accepts M4A; keep the reviewed WAV unchanged."""
+    with tempfile.TemporaryDirectory(prefix='kiani-voice-m4a-') as tmp:
+        output = Path(tmp) / 'sample.m4a'
+        try:
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(path), '-vn',
+                            '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '1', str(output)],
+                           capture_output=True, check=True, timeout=60)
+            if not output.is_file() or not 100 <= output.stat().st_size <= 25_000_000:
+                raise TelegramError('Converted audio size is invalid.')
+            data = output.read_bytes()
+            if len(data) < 12 or data[4:8] != b'ftyp':
+                raise TelegramError('Converted audio format is invalid.')
+            return data
+        except (OSError, subprocess.SubprocessError):
+            raise TelegramError('Comparison audio conversion failed.') from None
 
 
 def verify_destination(token, request=_request):
@@ -84,9 +104,16 @@ def deliver(con, token, *, request=_request):
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 25_000_000:
             results.append({'name': row['name'], 'status': 'sample_unavailable'})
             continue
-        audio = path.read_bytes()
-        digest = hashlib.sha256(audio).hexdigest()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if digest != row['sample_sha256']:
+            results.append({'name': row['name'], 'status': 'sample_changed'})
+            continue
+        try:
+            audio = _to_m4a(path)
+        except TelegramError:
+            results.append({'name': row['name'], 'status': 'audio_conversion_failed'})
+            continue
+        if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             results.append({'name': row['name'], 'status': 'sample_changed'})
             continue
         identity = (row['voice_id'], digest, registry.MODEL, CHAT_ID)
