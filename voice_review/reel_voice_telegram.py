@@ -25,11 +25,13 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _request(token, method, *, fields=None, audio=None):
+def _request(token, method, *, fields=None, audio=None, video=None):
     if not isinstance(token, str) or not token or not all(c.isalnum() or c in ':-_' for c in token):
         raise TelegramError('Telegram bot configuration is invalid.')
     url = 'https://api.telegram.org/bot' + token + '/' + method
-    if audio is None:
+    if audio is not None and video is not None:
+        raise TelegramError('Only one private media file is supported per request.')
+    if audio is None and video is None:
         body = json.dumps(fields or {}).encode('utf-8')
         content_type = 'application/json'
     else:
@@ -38,9 +40,11 @@ def _request(token, method, *, fields=None, audio=None):
         for key, value in (fields or {}).items():
             chunks.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="' + key +
                            '"\r\n\r\n' + str(value) + '\r\n').encode('utf-8'))
-        chunks.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="audio"; '
-                       'filename="sample.m4a"\r\nContent-Type: audio/mp4\r\n\r\n').encode('ascii'))
-        chunks.append(audio)
+        media = ('audio', 'sample.m4a', 'audio/mp4', audio) if audio is not None else (
+                 'video', 'preview.mp4', 'video/mp4', video)
+        chunks.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="' + media[0] + '"; '
+                       'filename="' + media[1] + '"\r\nContent-Type: ' + media[2] + '\r\n\r\n').encode('ascii'))
+        chunks.append(media[3])
         chunks.append(('\r\n--' + boundary + '--\r\n').encode('ascii'))
         body = b''.join(chunks)
         content_type = 'multipart/form-data; boundary=' + boundary
@@ -156,4 +160,46 @@ def deliver(con, token, *, request=_request):
             (message_id, time.time()) + identity)
         results.append({'name': row['name'], 'status': 'sent'})
     return results
+
+
+def deliver_video(con, token, path, caption, *, request=_request):
+    """Send one private preview; never retry an uncertain Telegram result."""
+    verify_destination(token, request=request)
+    path = Path(path)
+    if (path.is_symlink() or not path.is_file() or not 100_000 <= path.stat().st_size <= 49_000_000 or
+            not isinstance(caption, str) or not 1 <= len(caption) <= 1024):
+        raise TelegramError('Private preview file or caption is invalid.')
+    video = path.read_bytes()
+    if video[4:8] != b'ftyp':
+        raise TelegramError('Private preview is not an MP4.')
+    digest = hashlib.sha256(video).hexdigest()
+    con.execute('''CREATE TABLE IF NOT EXISTS preview_deliveries (
+        sha256 TEXT NOT NULL, chat_id INTEGER NOT NULL, status TEXT NOT NULL,
+        message_id INTEGER, updated_at REAL NOT NULL, PRIMARY KEY(sha256,chat_id))''')
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        prior = con.execute('SELECT status FROM preview_deliveries WHERE sha256=? AND chat_id=?',
+                            (digest, CHAT_ID)).fetchone()
+        if prior:
+            con.commit()
+            return {'status': prior['status'], 'sha256': digest}
+        con.execute('INSERT INTO preview_deliveries VALUES(?,?,?,?,?)',
+                    (digest, CHAT_ID, 'sending', None, time.time()))
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    try:
+        result = request(token, 'sendVideo', fields={'chat_id': CHAT_ID, 'caption': caption,
+                                                     'supports_streaming': 'true'}, video=video)
+        message_id = result.get('message_id')
+        if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id <= 0:
+            raise TelegramError('Telegram did not confirm a message ID.')
+    except Exception:
+        con.execute("UPDATE preview_deliveries SET status='unknown',updated_at=? WHERE sha256=? AND chat_id=?",
+                    (time.time(), digest, CHAT_ID))
+        return {'status': 'unknown_needs_review', 'sha256': digest}
+    con.execute("UPDATE preview_deliveries SET status='sent',message_id=?,updated_at=? WHERE sha256=? AND chat_id=?",
+                (message_id, time.time(), digest, CHAT_ID))
+    return {'status': 'sent', 'sha256': digest, 'message_id': message_id}
 
