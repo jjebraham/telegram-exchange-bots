@@ -137,6 +137,21 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             registry.select(self.con, 'job')
 
+    def test_failed_job_does_not_allow_repeating_last_published_voice(self):
+        self.verify_four()
+        self.approve('Sahar')
+        self.approve('Aylin')
+        first = registry.select(self.con, 'published-job')
+        registry.mark_published(self.con, 'published-job', '123456789')
+        second = registry.select(self.con, 'failed-job')
+        self.assertNotEqual(first['voice_id'], second['voice_id'])
+        with self.assertRaises(registry.RegistryError):
+            registry.select(self.con, 'concurrent-job')
+        registry.mark_failed(self.con, 'failed-job')
+        third = registry.select(self.con, 'next-job')
+        self.assertEqual(second['voice_id'], third['voice_id'])
+        self.assertNotEqual(first['voice_id'], third['voice_id'])
+
     def test_published_media_id_requires_confirmation_and_is_idempotent(self):
         self.verify_four()
         self.approve('Sahar')
@@ -267,6 +282,24 @@ class RegistryTests(unittest.TestCase):
             self.fail('No sample should be sent')
         with self.assertRaises(telegram.TelegramError):
             telegram.deliver(self.con, 'private', request=request)
+
+    def test_private_video_delivery_is_idempotent(self):
+        path = self.root / 'preview.mp4'
+        path.write_bytes(b'\0\0\0\x18ftyp' + b'x' * 100_000)
+        sent = []
+        def request(token, method, *, fields=None, video=None):
+            if method == 'getMe':
+                return {'username': 'EnPevobot', 'id': 12345}
+            if method == 'getChat':
+                return {'id': telegram.CHAT_ID, 'type': 'channel', 'title': 'en movie test'}
+            if method == 'getChatMember':
+                return {'status': 'administrator', 'can_post_messages': True}
+            self.assertEqual(method, 'sendVideo')
+            sent.append(video)
+            return {'message_id': 123}
+        self.assertEqual(telegram.deliver_video(self.con, 'test-token', path, 'preview', request=request)['status'], 'sent')
+        self.assertEqual(telegram.deliver_video(self.con, 'test-token', path, 'preview', request=request)['status'], 'sent')
+        self.assertEqual(len(sent), 1)
 
 
 if __name__ == '__main__':
