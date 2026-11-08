@@ -63,8 +63,12 @@ class PreviewTests(unittest.TestCase):
             image.fetch = lambda engine, source, url, path, timeout: path.write_bytes(b'image')
             music = types.ModuleType('instagram_trial_music')
             music.select_order = lambda story, recent: ['licensed']
-            music.retrieve_track = lambda candidate, path: path.write_bytes(b'audio') or {'title': 'licensed'}
+            def retrieve(candidate, path):
+                path.write_bytes(b'audio')
+                return {'title': 'licensed'}
+            music.retrieve_track = retrieve
             music.caption_credit = lambda track: 'Licensed music attribution'
+            music.classify_story = lambda story: {'mood': 'energetic', 'source': 'headline', 'signals': ['growth']}
             telegram = types.ModuleType('reel_voice_telegram')
             telegram.verify_destination = lambda token: calls.append(('verified', True))
             def deliver(con, token, output, caption):
@@ -77,7 +81,7 @@ class PreviewTests(unittest.TestCase):
             args = ['preview', '--runtime', str(runtime), '--voice', 'Sahar', '--send']
             with patch.object(Path, 'home', return_value=home), patch.object(sys, 'argv', args), \
                     patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test',
-                                            'KIANI_VOICE_TEST_BOT_TOKEN': 'test'}), \
+                                            'KIANI_VOICE_TEST_BOT_TOKEN': '123456789:abcdefghijklmnopqrstuvwx'}), \
                     patch.dict(sys.modules, modules):
                 preview.main()
             self.assertEqual([c[0] for c in calls], ['configure', 'verified', 'render', 'telegram'])
