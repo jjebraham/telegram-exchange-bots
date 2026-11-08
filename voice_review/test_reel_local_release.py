@@ -63,7 +63,9 @@ class AccountingTests(unittest.TestCase):
 
 class SettingsTests(unittest.TestCase):
     def test_installer_keeps_posting_slots_and_scopes_analytics_to_its_cron_block(self):
-        file = Path(__file__).parent / 'deploy/instagram-trial-reels/activate_trial_reels.py'
+        test_dir = Path(__file__).resolve().parent
+        runtime = test_dir.parent if test_dir.name == 'voice_review' else test_dir
+        file = runtime / 'deploy/instagram-trial-reels/activate_trial_reels.py'
         spec = importlib.util.spec_from_file_location('voice_activation_test', file)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -154,3 +156,4 @@ class PerformanceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
