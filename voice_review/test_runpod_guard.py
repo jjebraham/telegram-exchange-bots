@@ -21,6 +21,17 @@ class RunpodGuardTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(GuardError):
                 may_start(self.pod, 'pod1', self.limits, **dict(self.flags, **{key: False}))
 
+    def test_api_only_probe_does_not_claim_ssh_or_bootstrap_ready(self):
+        flags = dict(self.flags, bootstrap_ready=False, identity_ready=False)
+        self.assertAlmostEqual(may_start(self.pod, 'pod1', self.limits,
+                                         purpose='api_probe', **flags)['reserved_compute_usd'], .445)
+        with self.assertRaises(GuardError):
+            may_start(self.pod, 'pod1', self.limits, purpose='unknown', **flags)
+        for key in ('exclusive', 'watchdog_ready', 'worker_lock_held'):
+            with self.subTest(key=key), self.assertRaises(GuardError):
+                may_start(self.pod, 'pod1', self.limits, purpose='api_probe',
+                          **dict(flags, **{key: False}))
+
     def test_existing_running_or_unknown_pod_is_never_adopted(self):
         for status in ('RUNNING', 'STARTING', 'ERROR', None):
             with self.subTest(status=status), self.assertRaises(GuardError):
