@@ -46,13 +46,15 @@ def unit_contents(home, runtime):
 
 
 def _call(command, *, runner=subprocess.run, timeout=20):
+    phase = next((word for word in command if word in
+                  ('daemon-reload', 'start', 'enable', 'is-active')), 'operation')
     try:
         result = runner(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL, timeout=timeout)
     except (OSError, subprocess.SubprocessError):
-        raise InstallError('The user service manager is unavailable.') from None
+        raise InstallError('The user service manager was unavailable during ' + phase + '.') from None
     if result.returncode:
-        raise InstallError('A watchdog service-manager operation failed.')
+        raise InstallError('The watchdog service-manager ' + phase + ' operation failed.')
 
 
 def install(home, runtime, *, runner=subprocess.run, now=time.time, sleep=time.sleep):
@@ -129,5 +131,5 @@ if __name__ == '__main__':
         print('Watchdog heartbeat:', result['heartbeat'])
         print('No Pod was started or stopped, and the Instagram schedule was not changed.')
     except Exception as exc:
-        print('Watchdog installation stopped:', type(exc).__name__, file=sys.stderr)
+        print('Watchdog installation stopped:', str(exc) if isinstance(exc, InstallError) else type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
