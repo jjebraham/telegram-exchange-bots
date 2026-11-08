@@ -11,10 +11,12 @@ from runpod_guard import GuardError, Limits, watchdog_decision
 import runpod_lease_store as leases
 
 
-def tick(con, api, lease_id, *, expected_pod_id, exclusive, worker_active,
+def tick(con, api, lease_id, *, expected_pod_id, exclusive, worker_lock_held, worker_active,
          output_pending, job_done, limits=Limits(), now=None):
     """Inspect one lease and conservatively stop its confirmed Pod if safe."""
-    if exclusive is not True:
+    # The integration must hold an actual shared worker lock for this entire
+    # call. A boolean alone is not evidence of an OS lock.
+    if exclusive is not True or worker_lock_held is not True:
         return 'manual_review'
     if any(not isinstance(v, bool) for v in (worker_active, output_pending, job_done)):
         raise GuardError('Watchdog inputs must be explicit booleans')
