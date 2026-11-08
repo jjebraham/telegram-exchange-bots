@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import stat
+import tempfile
 
 ALLOWED = {
     'REEL_ELEVENLABS_ENABLED', 'ELEVENLABS_MODEL', 'REEL_NARRATION_SPEED',
@@ -48,3 +49,40 @@ def read(location=None):
 def load():
     for name, value in read().items():
         os.environ.setdefault(name, value)
+
+
+def configure(enabled, location=None):
+    """Persist an explicit flag; retain any chosen character cap and backup."""
+    if not isinstance(enabled, bool):
+        raise ValueError('An explicit narration enable/disable decision is required.')
+    location = Path(location or path())
+    old = read(location)
+    location.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == 'posix' and (location.parent.stat().st_uid != os.getuid() or location.parent.stat().st_mode & 0o077):
+        raise ValueError('Local narration settings directory must be private.')
+    backup = None
+    if location.exists():
+        fd, name = tempfile.mkstemp(prefix='local-render-backup-', suffix='.env', dir=location.parent)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(location.read_bytes())
+            stream.flush()
+            os.fsync(stream.fileno())
+        backup = Path(name)
+    values = dict(old, REEL_ELEVENLABS_ENABLED='true' if enabled else 'false',
+                  ELEVENLABS_MODEL='eleven_v4', REEL_NARRATION_SPEED='1.5',
+                  REEL_MUSIC_VOLUME='0.20', REEL_AUDIO_DUCKING_ENABLED='true')
+    fd, temporary = tempfile.mkstemp(prefix='.local-render-', dir=location.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='ascii', newline='\n') as stream:
+            stream.write('# Private local narration settings, parsed as data.\n')
+            stream.write(''.join(name + '=' + value + '\n' for name, value in sorted(values.items())))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        if location.is_symlink():
+            raise ValueError('Unsafe narration settings destination.')
+        os.replace(temporary, location)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return backup
