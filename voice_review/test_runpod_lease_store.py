@@ -1,4 +1,5 @@
 from contextlib import closing
+from datetime import datetime, timezone
 import tempfile
 import threading
 import unittest
@@ -35,10 +36,19 @@ class LeaseTests(unittest.TestCase):
                 lease = leases.reserve(first, 'pod-1', .89)
                 with self.assertRaises(leases.LeaseError): leases.reserve(second, 'pod-1', .89)
                 leases.start_requested(first, lease)
+                timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
                 with self.assertRaises(leases.LeaseError): leases.cancel_unused_reservation(first, lease)
                 with self.assertRaises(leases.LeaseError):
-                    leases.start_confirmed(first, lease, pod_id='wrong', provider_status='RUNNING')
-                leases.start_confirmed(first, lease, pod_id='pod-1', provider_status='STARTING')
+                    leases.start_confirmed(first, lease, pod_id='wrong', provider_status='RUNNING',
+                                           provider_started_at=timestamp)
+                with self.assertRaises(leases.LeaseError):
+                    leases.start_confirmed(first, lease, pod_id='pod-1', provider_status='STARTING',
+                                           provider_started_at=timestamp)
+                with self.assertRaises(leases.LeaseError):
+                    leases.start_confirmed(first, lease, pod_id='pod-1', provider_status='RUNNING',
+                                           provider_started_at='2020-01-01T00:00:00Z')
+                leases.start_confirmed(first, lease, pod_id='pod-1', provider_status='RUNNING',
+                                       provider_started_at=timestamp)
                 leases.stop_requested(first, lease)
                 with self.assertRaises(leases.LeaseError):
                     leases.close_confirmed(first, lease, pod_id='pod-1', provider_status='RUNNING')
