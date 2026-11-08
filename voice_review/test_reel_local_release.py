@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import importlib.util
 import os
 import sqlite3
 import tempfile
@@ -61,6 +62,33 @@ class AccountingTests(unittest.TestCase):
 
 
 class SettingsTests(unittest.TestCase):
+    def test_installer_keeps_posting_slots_and_scopes_analytics_to_its_cron_block(self):
+        file = Path(__file__).parent / 'deploy/instagram-trial-reels/activate_trial_reels.py'
+        spec = importlib.util.spec_from_file_location('voice_activation_test', file)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original = b'5 7 * * * /home/example/another-post.sh\n'
+        commands = ['* * * * * /home/example/run-kiani-instagram-reel-schedule.sh',
+                    '*/30 * * * * /home/example/run-kiani-instagram-voice-insights.sh']
+        changed = module.replace_trial_cron(original, commands)
+        self.assertTrue(changed.startswith(original))
+        self.assertEqual(module.replace_trial_cron(changed, commands), changed)
+        with self.assertRaises(RuntimeError):
+            module.replace_trial_cron(changed + b'* * * * * /home/example/run-kiani-instagram-voice-insights.sh\n', commands)
+
+    def test_persistent_enable_and_disable_preserve_cap_and_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'local-render.env'
+            original = 'REEL_ELEVENLABS_ENABLED=false\nREEL_ELEVENLABS_MONTHLY_CHAR_LIMIT=10000\n'
+            path.write_text(original)
+            path.chmod(0o600)
+            backup = settings.configure(True, path)
+            self.assertEqual(backup.read_text(), original)
+            self.assertEqual(settings.read(path)['REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT'], '10000')
+            self.assertEqual(settings.read(path)['REEL_ELEVENLABS_ENABLED'], 'true')
+            settings.configure(False, path)
+            self.assertEqual(settings.read(path)['REEL_ELEVENLABS_ENABLED'], 'false')
+
     def test_missing_configuration_keeps_old_behavior(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(settings.read(Path(tmp) / 'absent.env'), {})
