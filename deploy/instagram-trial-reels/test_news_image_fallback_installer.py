@@ -68,8 +68,10 @@ class InstallerTests(unittest.TestCase):
             return real_atomic(path, data, mode)
 
         def source(repo, revision, name):
-            if revision == installer.BASE:
-                return self.originals['instagram_ranked_news.py' if name == installer.WORKER else name]
+            if revision in {installer.BASE, installer.ORIGINAL}:
+                installed_name = 'instagram_ranked_news.py' if name == installer.WORKER else name
+                self.assertEqual(installer.base_spec(installed_name), (revision, name))
+                return self.originals[installed_name]
             if name == installer.WORKER:
                 return (folder / 'automatic_ranked_news_images.py').read_bytes()
             if name == installer.TEST:
@@ -94,6 +96,16 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(meta['news_schedule']['per_slot'], 1)
         self.assertIn(self.revision, self.crypto.read_text())
         self.assertEqual(self.economy.read_text().count(self.revision), 2)
+
+    def test_baseline_uses_the_two_actual_source_revisions(self):
+        self.assertEqual(installer.base_spec('crypto_news_trial.py'),
+                         (installer.ORIGINAL, 'crypto_news_trial.py'))
+        self.assertEqual(installer.base_spec('instagram_ranked_news.py'),
+                         (installer.BASE, installer.WORKER))
+        self.assertEqual(installer.base_spec('instagram_reel_stock.py'),
+                         (installer.BASE, 'instagram_reel_stock.py'))
+        self.assertEqual(installer.base_spec('selector_trial_runtime/instagram_news_renderer.py'),
+                         (installer.BASE, 'selector_trial_runtime/instagram_news_renderer.py'))
 
     def test_failed_switch_rolls_back_both_wrappers_and_metadata(self):
         with self.assertRaises(OSError):
