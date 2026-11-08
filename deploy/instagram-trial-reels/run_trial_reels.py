@@ -45,6 +45,8 @@ FILES = (
     'voice_review/test_reel_preview_images.py',
     'voice_review/runpod_audit.py',
     'voice_review/test_runpod_audit.py',
+    'voice_review/runpod_inspect.py',
+    'voice_review/test_runpod_inspect.py',
     'voice_review/test_reel_narration_timing.py',
     'voice_review/test_reel_elevenlabs.py',
     'voice_review/test_reel_audio_mix.py',
