@@ -1,6 +1,6 @@
 import json
 import unittest
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 from runpod_api_client import ActionOutcomeUnknown, RunpodAPI, RunpodAPIError
 
@@ -52,6 +52,14 @@ class APITests(unittest.TestCase):
         for result in (b'not-json', b'{"id":"different"}', b'x' * 2000001):
             with self.subTest(length=len(result)), self.assertRaises(ActionOutcomeUnknown):
                 RunpodAPI('test', opener=Opener(result)).transition('pod-1', 'start')
+
+    def test_http_error_exposes_only_status_not_provider_message(self):
+        error = HTTPError('https://api.runpod.io', 403, 'secret body', {}, None)
+        with self.assertRaises(ActionOutcomeUnknown) as caught:
+            RunpodAPI('private-key', opener=Opener(error)).transition('pod-1', 'start')
+        self.assertEqual(caught.exception.http_status, 403)
+        self.assertNotIn('secret', str(caught.exception))
+        self.assertNotIn('private-key', str(caught.exception))
 
 
 if __name__ == '__main__': unittest.main()
