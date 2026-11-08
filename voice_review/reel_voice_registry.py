@@ -83,7 +83,16 @@ def connect(path):
             status TEXT NOT NULL, media_id TEXT UNIQUE,
             selected_at REAL NOT NULL, published_at REAL
         );
+        CREATE TABLE IF NOT EXISTS voice_reviews(
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, voice_id TEXT,
+            scores TEXT, score REAL, notes TEXT NOT NULL, serious_error INTEGER NOT NULL,
+            rating_status TEXT NOT NULL, event TEXT NOT NULL, recorded_at REAL NOT NULL);
     ''')
+    columns = {row['name'] for row in con.execute('PRAGMA table_info(voices)')}
+    if 'evaluation_enabled' not in columns:
+        con.execute('ALTER TABLE voices ADD COLUMN evaluation_enabled INTEGER NOT NULL DEFAULT 0')
+    if 'rating_status' not in columns:
+        con.execute("ALTER TABLE voices ADD COLUMN rating_status TEXT NOT NULL DEFAULT 'final'")
     return con
 
 
@@ -195,11 +204,55 @@ def save_sample(con, name, path, *, model=MODEL, speed=SPEED, text_hash=SAMPLE_H
                     (str(path.resolve()), time.time(), name))
         return
     con.execute('''UPDATE voices SET sample_path=?,sample_sha256=?,sample_text_hash=?,sample_model=?,
-        sample_speed=?,approved=0,enabled=0,scores=NULL,score=NULL,updated_at=? WHERE name=?''',
+        sample_speed=?,approved=0,enabled=0,evaluation_enabled=0,rating_status='provisional',scores=NULL,score=NULL,updated_at=? WHERE name=?''',
         (str(path.resolve()), digest, text_hash, model, speed, time.time(), name))
 
 
-def review(con, name, scores, notes, *, serious_error, approved, enabled):
+def _checked_sample(row):
+    path = Path(row['sample_path']) if row and row['sample_path'] else None
+    if (not path or path.is_symlink() or not path.is_file() or path.stat().st_size > 25_000_000 or
+            hashlib.sha256(path.read_bytes()).hexdigest() != row['sample_sha256'] or
+            row['sample_model'] != MODEL or row['sample_speed'] != SPEED or row['sample_text_hash'] != SAMPLE_HASH):
+        raise RegistryError('The reviewed comparison sample is missing or has changed.')
+
+
+def _review_event(con, name, event):
+    row = con.execute('SELECT * FROM voices WHERE name=?', (name,)).fetchone()
+    con.execute('''INSERT INTO voice_reviews(name,voice_id,scores,score,notes,serious_error,rating_status,event,recorded_at)
+        VALUES(?,?,?,?,?,?,?,?,?)''', (row['name'], row['voice_id'], row['scores'], row['score'], row['notes'],
+        row['serious_error'], row['rating_status'], event, time.time()))
+
+
+def enroll_evaluation(con, names):
+    """Explicit permission to test verified voices on Reels; scores stay provisional."""
+    if not names or len(set(n.casefold() for n in names)) != len(names):
+        raise RegistryError('Supply distinct evaluation voice names.')
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        for name in names:
+            row = con.execute('SELECT * FROM voices WHERE name=?', (name,)).fetchone()
+            if not row or not row['available'] or not row['verified'] or row['serious_error']:
+                raise RegistryError('Evaluation requires a verified available voice without serious pronunciation errors.')
+            _checked_sample(row)
+            _review_event(con, name, 'before_evaluation_enrollment')
+            con.execute("UPDATE voices SET evaluation_enabled=1,enabled=1,approved=0,rating_status='provisional',updated_at=? WHERE name=?",
+                        (time.time(), name))
+            _review_event(con, name, 'evaluation_enrollment')
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+
+
+def eligible(row):
+    row = dict(row)
+    return bool(row['available'] and row['verified'] and row['enabled'] and not row['serious_error']
+                and row['voice_id'] and row['sample_model'] == MODEL and row['sample_speed'] == SPEED
+                and row['sample_text_hash'] == SAMPLE_HASH
+                and (row.get('evaluation_enabled', 0) or row['approved'] and row['score'] is not None and row['score'] >= 80))
+
+
+def review(con, name, scores, notes, *, serious_error, approved, enabled, final=True):
     if not all(isinstance(value, bool) for value in (serious_error, approved, enabled)):
         raise RegistryError('Review decisions must be explicit booleans.')
     if not isinstance(notes, str) or len(notes) > 3000:
@@ -208,18 +261,28 @@ def review(con, name, scores, notes, *, serious_error, approved, enabled):
     row = con.execute('SELECT * FROM voices WHERE name=?', (name,)).fetchone()
     if not row:
         raise RegistryError('Voice was not found.')
-    path = Path(row['sample_path']) if row['sample_path'] else None
-    if (not path or path.is_symlink() or not path.is_file() or path.stat().st_size > 25_000_000 or
-            hashlib.sha256(path.read_bytes()).hexdigest() != row['sample_sha256'] or
-            row['sample_model'] != MODEL or row['sample_speed'] != SPEED or row['sample_text_hash'] != SAMPLE_HASH):
-        raise RegistryError('The reviewed comparison sample is missing or has changed.')
+    _checked_sample(row)
+    if not isinstance(final, bool) or not final and (approved or enabled):
+        raise RegistryError('Provisional ratings do not approve or enroll voices.')
     if approved and (value < 80 or serious_error or not row['available'] or not row['verified']):
         raise RegistryError('This voice does not meet the approval requirements.')
     if enabled and not approved:
         raise RegistryError('A voice must be explicitly approved before it is enabled.')
-    con.execute('''UPDATE voices SET scores=?,score=?,notes=?,serious_error=?,approved=?,enabled=?,
-        updated_at=? WHERE name=?''', (json.dumps(scores, sort_keys=True), value, notes,
-        int(serious_error), int(approved), int(enabled), time.time(), name))
+    con.execute('SAVEPOINT human_voice_rating')
+    try:
+        _review_event(con, name, 'before_rating')
+        evaluation = 0 if serious_error or final else row['evaluation_enabled']
+        use = enabled if final else bool(evaluation and row['enabled'])
+        con.execute('''UPDATE voices SET scores=?,score=?,notes=?,serious_error=?,approved=?,enabled=?,
+            evaluation_enabled=?,rating_status=?,updated_at=? WHERE name=?''',
+            (json.dumps(scores, sort_keys=True), value, notes, int(serious_error), int(approved), int(use),
+             evaluation, 'final' if final else 'provisional', time.time(), name))
+        _review_event(con, name, 'rating')
+        con.execute('RELEASE human_voice_rating')
+    except BaseException:
+        con.execute('ROLLBACK TO human_voice_rating')
+        con.execute('RELEASE human_voice_rating')
+        raise
     return value
 
 
@@ -236,15 +299,16 @@ def select(con, job_id, override=None):
                 raise RegistryError('This Reel voice reservation has already failed.')
             if existing['status'] == 'reserved':
                 still_eligible = con.execute('''SELECT 1 FROM voices WHERE voice_id=? AND available=1
-                    AND verified=1 AND approved=1 AND enabled=1 AND serious_error=0 AND score>=80
+                    AND verified=1 AND enabled=1 AND serious_error=0
+                    AND (evaluation_enabled=1 OR (approved=1 AND score>=80))
                     AND sample_model=? AND sample_speed=? AND sample_text_hash=?''',
                     (existing['voice_id'], MODEL, SPEED, SAMPLE_HASH)).fetchone()
                 if not still_eligible:
                     raise RegistryError('The reserved voice is no longer approved and available.')
             con.commit()
             return dict(existing)
-        eligible = con.execute('''SELECT * FROM voices WHERE available=1 AND verified=1 AND approved=1
-            AND enabled=1 AND serious_error=0 AND score>=80 AND sample_model=? AND sample_speed=?
+        eligible = con.execute('''SELECT * FROM voices WHERE available=1 AND verified=1
+            AND enabled=1 AND serious_error=0 AND (evaluation_enabled=1 OR (approved=1 AND score>=80)) AND sample_model=? AND sample_speed=?
             AND sample_text_hash=? AND voice_id IS NOT NULL ORDER BY voice_id''',
             (MODEL, SPEED, SAMPLE_HASH)).fetchall()
         if override is not None:
@@ -289,4 +353,3 @@ def mark_published(con, job_id, media_id):
     except BaseException:
         con.rollback()
         raise
-
