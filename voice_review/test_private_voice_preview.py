@@ -21,6 +21,9 @@ class PreviewTests(unittest.TestCase):
             runtime.mkdir(parents=True)
             state = home / '.local/state/kiani-instagram-voice-review'
             state.mkdir(parents=True)
+            previous = state / 'previews/previous'
+            previous.mkdir(parents=True)
+            (previous / 'preview.json').write_text(json.dumps({'source_url': 'https://example.com/old'}))
             db = voices.connect(state / 'voices.sqlite3')
             voices.seed(db)
             voices.refresh_access(db, [{'name': 'Sahar - voice', 'voice_id': 'lIfJn0EyB8lHm00xiGY8'}])
@@ -33,13 +36,17 @@ class PreviewTests(unittest.TestCase):
             con.execute('INSERT INTO trial_reels VALUES(?,?,?,?,?,?,?,?,?,?)',
                         ('published', now - 60, now - 30, 'crypto', 'https://example.com/news',
                          'Saved news', 'خبر آزمایشی', 'متن آزمایشی خبر.', None, now - 90))
+            con.execute('INSERT INTO trial_reels VALUES(?,?,?,?,?,?,?,?,?,?)',
+                        ('published', now - 60, now - 20, 'crypto', 'https://example.com/old',
+                         'Earlier news', 'خبر آزمایشی', 'متن آزمایشی خبر.', None, now - 80))
             con.commit()
             con.close()
             calls = []
             trial = types.ModuleType('instagram_trial_reels')
             trial.DB = reel_db
-            trial._chunks = lambda text: [text]
-            trial._prepare_narration = lambda story, folder, voice: [
+            trial._font = lambda assets, size: None
+            trial._narrated_chunks = lambda text, assets, has_images: [text]
+            trial._prepare_narration = lambda story, folder, voice, assets, has_images: [
                 {'path': folder / 'title.wav', 'duration': 2, 'word_starts': [0, .5]},
                 {'path': folder / 'body.wav', 'duration': 2, 'word_starts': [0, .5, 1]},
             ]
@@ -74,7 +81,7 @@ class PreviewTests(unittest.TestCase):
                     patch.dict(sys.modules, modules):
                 preview.main()
             self.assertEqual([c[0] for c in calls], ['configure', 'verified', 'render', 'telegram'])
-            metadata = list((state / 'previews').glob('*/preview.json'))
+            metadata = [p for p in (state / 'previews').glob('*/preview.json') if p.parent != previous]
             self.assertEqual(len(metadata), 1)
             data = json.loads(metadata[0].read_text(encoding='utf-8'))
             self.assertEqual(data['rendering'], 'local libx264; not RunPod')
