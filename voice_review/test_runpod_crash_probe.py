@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,7 +19,9 @@ class CrashProbeTests(unittest.TestCase):
             directory = home / '.local/state/kiani-instagram-voice-review/crash-probe-example'
             directory.mkdir(parents=True, mode=0o700)
             with patch.object(Path, 'home', return_value=home), \
-                    patch.object(probe.os, '_exit', side_effect=SimulatedCrash):
+                    patch.object(probe.os, '_exit', side_effect=SimulatedCrash), \
+                    patch.object(probe, 'pod_lock', return_value=nullcontext(True)), \
+                    patch.object(probe.watchdog, 'pod_lock', return_value=nullcontext(True)):
                 with self.assertRaises(SimulatedCrash):
                     probe.fake_worker(directory)
                 (directory / 'worker-exited').write_text('yes')
