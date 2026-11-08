@@ -1,5 +1,7 @@
 from pathlib import Path
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 import wave
@@ -66,6 +68,26 @@ class RegistryTests(unittest.TestCase):
         row = next(v for v in registry.list_voices(self.con) if v['name'] == 'Mahdi')
         self.assertFalse(row['available'])
         self.assertIsNone(row['voice_id'])
+
+    def test_user_supplied_ids_match_descriptive_account_names(self):
+        inventory = [
+            {'name': 'Sahar - Smooth and Natural', 'voice_id': 'lIfJn0EyB8lHm00xiGY8'},
+            {'name': 'Aylin - Warm Persian Narrator', 'voice_id': 'zagI4JNTfBvHyoNxaZWj'},
+            {'name': 'Shahram, documentary, storytelling or neutral tone.', 'voice_id': 'rNb3hdSf0n4ROIbYC8Bl'},
+            {'name': 'Adrian Mohammadi - Versatile Voice', 'voice_id': 'BognUUMX6W1qmZKB2TOw'},
+        ]
+        registry.refresh_access(self.con, inventory)
+        voices = {v['name']: v for v in registry.list_voices(self.con)}
+        for name in ('Sahar', 'Aylin', 'Shahram', 'Adrian'):
+            self.assertTrue(voices[name]['available'])
+            self.assertTrue(voices[name]['verified'])
+            self.assertFalse(voices[name]['approved'])
+            self.assertFalse(voices[name]['enabled'])
+
+    def test_descriptive_name_matching_requires_a_name_boundary(self):
+        self.assertTrue(registry.candidate_name_matches('Aran', 'Aran - Persian narrator'))
+        self.assertFalse(registry.candidate_name_matches('Aran', 'Aramofen'))
+        self.assertFalse(registry.candidate_name_matches('Mitra', 'Mitrabelle'))
 
     def test_score_does_not_auto_approve_and_serious_errors_block_approval(self):
         self.verify_four()
@@ -182,10 +204,20 @@ class RegistryTests(unittest.TestCase):
                 return {'id': telegram.CHAT_ID, 'type': 'channel', 'title': 'en movie test'}
             self.assertEqual(fields['chat_id'], telegram.CHAT_ID)
             self.assertIn('Sahar | eleven_v4', fields['caption'])
+            self.assertEqual(audio[4:8], b'ftyp')
             return {'message_id': 123}
         self.assertEqual(telegram.deliver(self.con, 'private', request=request)[0]['status'], 'sent')
         self.assertEqual(telegram.deliver(self.con, 'private', request=request)[0]['status'], 'sent')
         self.assertEqual(sum(1 for method, _ in calls if method == 'sendAudio'), 1)
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
+    def test_telegram_upload_uses_playable_m4a(self):
+        data = telegram._to_m4a(self.sample)
+        output = self.root / 'converted.m4a'
+        output.write_bytes(data)
+        result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_name',
+                                 '-of', 'default=nw=1', str(output)], capture_output=True, timeout=20, check=True)
+        self.assertIn(b'codec_name=aac', result.stdout)
 
     def test_telegram_unknown_outcome_is_not_retried(self):
         self.verify_four()
