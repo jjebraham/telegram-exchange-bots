@@ -21,9 +21,10 @@ def export_sheet(con, destination):
             'scores': json.loads(voice['scores']) if scored else {key: None for key in registry.CRITERIA},
             'notes': voice['notes'], 'serious_error': bool(voice['serious_error']) if scored else None,
             'approved': bool(voice['approved']), 'enabled': bool(voice['enabled']),
+            'rating_status': voice['rating_status'], 'evaluation_enabled': bool(voice['evaluation_enabled']),
         })
     result = {'model': registry.MODEL, 'speed': registry.SPEED, 'sample_text': registry.SAMPLE_TEXT,
-              'instructions': 'Score each criterion 0–10. Set serious_error, approved and enabled explicitly.',
+              'instructions': 'Scores are provisional by default. Final reviews require rating_status=final and explicit approval. Evaluation enrollment uses the separate enroll-evaluation command.',
               'voices': entries}
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     backup = None
@@ -77,16 +78,20 @@ def apply_sheet(con, source):
                 raise registry.RegistryError('Voice identity or sample changed since export.')
             scores = entry.get('scores')
             if isinstance(scores, dict) and set(scores) == set(registry.CRITERIA) and all(v is None for v in scores.values()):
-                if entry.get('approved') or entry.get('enabled'):
+                if entry.get('approved') or entry.get('rating_status', 'final') == 'final' and entry.get('enabled'):
                     raise registry.RegistryError('Unscored voices cannot be approved or enabled.')
                 continue
+            status = entry.get('rating_status', 'final')
+            if status not in ('final', 'provisional'):
+                raise registry.RegistryError('Invalid rating status.')
+            # Exported experimental enablement is informational, not permission
+            # to create or remove evaluation enrollment through the review sheet.
             registry.review(con, name, scores, entry.get('notes', ''),
                             serious_error=entry.get('serious_error'), approved=entry.get('approved'),
-                            enabled=entry.get('enabled'))
+                            enabled=entry.get('enabled') if status == 'final' else False, final=status == 'final')
             updated += 1
         con.commit()
         return updated
     except BaseException:
         con.rollback()
         raise
-
