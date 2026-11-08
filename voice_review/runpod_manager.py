@@ -4,6 +4,7 @@ The production adapter must independently verify the timer, subprocess time
 limit, bootstrap, SSH host key, and exclusive job ownership. This module has no
 CLI or installation side effects and is currently tested only with fake APIs.
 """
+import re
 import time
 
 from runpod_api_client import ActionOutcomeUnknown
@@ -15,6 +16,18 @@ from runpod_worker_lock import pod_lock
 
 class ManagerError(RuntimeError):
     pass
+
+
+def render_target(pod):
+    """Return only connection metadata; never pass provider env to the Pod."""
+    ssh = pod.get('ssh') if isinstance(pod.get('ssh'), dict) else {}
+    direct = ssh.get('direct') if isinstance(ssh.get('direct'), dict) else {}
+    host, port, username = direct.get('host'), direct.get('port'), direct.get('username')
+    if (not isinstance(host, str) or not re.fullmatch(r'[A-Za-z0-9.:-]{1,253}', host) or
+            isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 or
+            not isinstance(username, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,31}', username)):
+        raise ManagerError('Direct SSH connection details were not verified.')
+    return {'pod_id': pod['id'], 'ssh_host': host, 'ssh_port': port, 'ssh_user': username}
 
 
 def run_job(con, api, *, state_dir, pod_id, enabled=False, exclusive=False,
@@ -70,9 +83,10 @@ def run_job(con, api, *, state_dir, pod_id, enabled=False, exclusive=False,
             except leases.LeaseError:
                 leases.action_uncertain(con, lease)
                 raise ManagerError('Pod generation was not verified; reconciliation is required.') from None
+            target = render_target(pod)
             # From this point a renderer might leave required output remotely.
             leases.set_output_pending(con, lease, pending=True)
-            output = work(pod, lease)
+            output = work(target, lease)
             if verify(output) is not True:
                 raise ManagerError('Retrieved output was not verified; manual recovery is required.')
             leases.set_output_pending(con, lease, pending=False)
