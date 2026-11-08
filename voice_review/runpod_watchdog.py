@@ -26,8 +26,6 @@ def tick(con, api, lease_id, *, expected_pod_id, exclusive, worker_lock_held, wo
         return 'manual_review'
     if row['state'] == 'CLOSED':
         return 'closed'
-    if row['state'] not in ('START_CONFIRMED', 'STOP_REQUESTED') or not row['provider_started_at']:
-        return 'manual_review'
     now = time.time() if now is None else now
     if not isinstance(now, (int, float)) or now < row['created_at']:
         return 'manual_review'
@@ -35,12 +33,37 @@ def tick(con, api, lease_id, *, expected_pod_id, exclusive, worker_lock_held, wo
         return 'wait'
     if output_pending:
         return 'manual_review'
+    if row['state'] == 'RESERVED':
+        # Under the shared lock, a RESERVED lease cannot yet have sent start.
+        try:
+            leases.cancel_unused_reservation(con, lease_id)
+            return 'closed'
+        except leases.LeaseError:
+            return 'busy'
+    start_pending = (row['state'] == 'START_REQUESTED' or
+                     row['state'] == 'ACTION_UNCERTAIN' and row['uncertain_from'] == 'START_REQUESTED')
+    stop_pending = (row['state'] == 'STOP_REQUESTED' or
+                    row['state'] == 'ACTION_UNCERTAIN' and row['uncertain_from'] == 'STOP_REQUESTED')
+    if not start_pending and not stop_pending and row['state'] != 'START_CONFIRMED':
+        return 'manual_review'
     try:
         pod = api.status(expected_pod_id)
     except RunpodAPIError:
         return 'status_unavailable'
     if not isinstance(pod, dict) or pod.get('id') != expected_pod_id:
         return 'manual_review'
+    if start_pending:
+        if pod.get('status') != 'RUNNING':
+            # Never close an ambiguous start just because the Pod is stopped:
+            # the original request might still arrive later.
+            return 'wait' if now - row['created_at'] < limits.max_uptime_seconds else 'manual_review'
+        try:
+            leases.start_confirmed(con, lease_id, pod_id=expected_pod_id, provider_status='RUNNING',
+                                   provider_started_at=pod.get('startedAt'),
+                                   max_start_delay_seconds=limits.max_uptime_seconds)
+            row = con.execute('SELECT * FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
+        except leases.LeaseError:
+            return 'manual_review'
     if pod.get('status') == 'EXITED':
         try:
             if row['state'] == 'START_CONFIRMED':
@@ -51,7 +74,7 @@ def tick(con, api, lease_id, *, expected_pod_id, exclusive, worker_lock_held, wo
             return 'busy'
     # Never stop a later externally restarted Pod or retry an uncertain stop.
     if (pod.get('status') != 'RUNNING' or pod.get('startedAt') != row['provider_started_at'] or
-            row['state'] == 'STOP_REQUESTED'):
+            stop_pending):
         return 'manual_review'
     decision = watchdog_decision(owned=True, ownership_certain=True, worker_active=False,
                                  job_done=job_done, output_pending=False,
