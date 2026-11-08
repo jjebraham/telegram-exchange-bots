@@ -142,7 +142,10 @@ def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
         try:
             try:
                 pod = api.transition(pod_id, 'start')
-            except ActionOutcomeUnknown:
+            except ActionOutcomeUnknown as exc:
+                print('Start request response:',
+                      'HTTP ' + str(exc.http_status) if exc.http_status is not None else 'no verified response',
+                      flush=True)
                 leases.action_uncertain(con, lease_id)
                 raise ProbeError('Start response is uncertain; the watchdog remains enabled.') from None
             deadline = monotonic() + limits.startup_timeout_seconds
