@@ -41,7 +41,8 @@ def connect(path):
     con.execute('''CREATE TABLE IF NOT EXISTS leases (
         lease_id TEXT PRIMARY KEY, pod_id TEXT NOT NULL, state TEXT NOT NULL,
         created_at REAL NOT NULL, updated_at REAL NOT NULL, rate_usd REAL NOT NULL,
-        provider_started_at TEXT, output_pending INTEGER NOT NULL DEFAULT 1)''')
+        provider_started_at TEXT, output_pending INTEGER NOT NULL DEFAULT 1,
+        uncertain_from TEXT)''')
     columns = {row[1] for row in con.execute('PRAGMA table_info(leases)')}
     if 'output_pending' not in columns:
         # Existing leases have unknown output status and must remain protected.
@@ -49,6 +50,12 @@ def connect(path):
             con.execute('ALTER TABLE leases ADD COLUMN output_pending INTEGER NOT NULL DEFAULT 1')
         except sqlite3.OperationalError:
             if 'output_pending' not in {row[1] for row in con.execute('PRAGMA table_info(leases)')}:
+                raise
+    if 'uncertain_from' not in {row[1] for row in con.execute('PRAGMA table_info(leases)')}:
+        try:
+            con.execute('ALTER TABLE leases ADD COLUMN uncertain_from TEXT')
+        except sqlite3.OperationalError:
+            if 'uncertain_from' not in {row[1] for row in con.execute('PRAGMA table_info(leases)')}:
                 raise
     con.execute('''CREATE UNIQUE INDEX IF NOT EXISTS one_active_pod ON leases(pod_id)
         WHERE state IN ('RESERVED', 'START_REQUESTED', 'START_CONFIRMED', 'ACTION_UNCERTAIN', 'STOP_REQUESTED')''')
@@ -86,7 +93,8 @@ def start_requested(con, lease_id):
     _change(con, lease_id, ('RESERVED',), 'START_REQUESTED')
 
 
-def start_confirmed(con, lease_id, *, pod_id, provider_status, provider_started_at):
+def start_confirmed(con, lease_id, *, pod_id, provider_status, provider_started_at,
+                    max_start_delay_seconds=1800):
     row = con.execute('SELECT pod_id,created_at FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
     if (not row or row['pod_id'] != pod_id or provider_status != 'RUNNING' or
             not isinstance(provider_started_at, str) or
@@ -97,19 +105,28 @@ def start_confirmed(con, lease_id, *, pod_id, provider_status, provider_started_
         if started.tzinfo is None or started.utcoffset() != timezone.utc.utcoffset(started):
             raise ValueError()
         stamp = started.timestamp()
-        if stamp < row['created_at'] - 60 or stamp > time.time() + 60:
+        if (not isinstance(max_start_delay_seconds, int) or isinstance(max_start_delay_seconds, bool) or
+                not 1 <= max_start_delay_seconds <= 86400 or stamp < row['created_at'] - 60 or
+                stamp > row['created_at'] + max_start_delay_seconds + 60 or stamp > time.time() + 60):
             raise ValueError()
     except (ValueError, OverflowError, OSError):
         raise LeaseError('Provider start time is inconsistent with this lease.') from None
-    result = con.execute('''UPDATE leases SET state='START_CONFIRMED',updated_at=?,provider_started_at=?
-                            WHERE lease_id=? AND state='START_REQUESTED' ''',
+    result = con.execute('''UPDATE leases SET state='START_CONFIRMED',updated_at=?,provider_started_at=?,uncertain_from=NULL
+                            WHERE lease_id=? AND (state='START_REQUESTED' OR
+                            (state='ACTION_UNCERTAIN' AND uncertain_from='START_REQUESTED'))''',
                          (time.time(), provider_started_at, lease_id))
     if result.rowcount != 1:
         raise LeaseError('Lease state changed or the transition is unsafe.')
 
 
 def action_uncertain(con, lease_id):
-    _change(con, lease_id, ('START_REQUESTED', 'STOP_REQUESTED'), 'ACTION_UNCERTAIN')
+    if not isinstance(lease_id, str) or not re.fullmatch(r'[a-f0-9]{32}', lease_id):
+        raise LeaseError('Invalid lease identity.')
+    result = con.execute('''UPDATE leases SET uncertain_from=state,state='ACTION_UNCERTAIN',updated_at=?
+                            WHERE lease_id=? AND state IN ('START_REQUESTED','STOP_REQUESTED')''',
+                         (time.time(), lease_id))
+    if result.rowcount != 1:
+        raise LeaseError('Lease state changed or the transition is unsafe.')
 
 
 def stop_requested(con, lease_id):
@@ -120,9 +137,13 @@ def close_confirmed(con, lease_id, *, pod_id, provider_status):
     row = con.execute('SELECT pod_id FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
     if not row or row['pod_id'] != pod_id or provider_status != 'EXITED':
         raise LeaseError('Provider has not confirmed that the expected Pod is stopped.')
-    # An ambiguous start/stop response cannot be made safe merely by one
-    # observation: the original action might still arrive later.
-    _change(con, lease_id, ('STOP_REQUESTED',), 'CLOSED')
+    # Only an uncertain stop can be closed on EXITED: a delayed start may
+    # still arrive later, so uncertain starts remain unresolved.
+    result = con.execute('''UPDATE leases SET state='CLOSED',updated_at=? WHERE lease_id=? AND
+        (state='STOP_REQUESTED' OR (state='ACTION_UNCERTAIN' AND uncertain_from='STOP_REQUESTED'))''',
+                         (time.time(), lease_id))
+    if result.rowcount != 1:
+        raise LeaseError('Lease state changed or the transition is unsafe.')
 
 
 def cancel_unused_reservation(con, lease_id):
