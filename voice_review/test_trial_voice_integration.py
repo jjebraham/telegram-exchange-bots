@@ -59,8 +59,9 @@ class IntegrationTests(unittest.TestCase):
         story = {'title_fa': 'خبر آزمایشی', 'summary_fa': 'این یک خبر آزمایشی است.'}
         output = {'audio': self.wav.read_bytes(), 'starts': [0, .5], 'cached': False}
         with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key'}, clear=True), \
-                patch('reel_elevenlabs.synthesize_segment', return_value=output) as synth:
-            result = trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8')
+                patch('reel_elevenlabs.synthesize_segment', return_value=output) as synth, \
+                patch.object(trial, '_narrated_chunks', return_value=[story['summary_fa']]):
+            result = trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8', self.root, has_images=True)
         self.assertEqual(len(result), 2)
         self.assertTrue(all(call.kwargs['voice_id'] == 'lIfJn0EyB8lHm00xiGY8' for call in synth.call_args_list))
         self.assertTrue(all(call.kwargs['model'] == 'eleven_v4' for call in synth.call_args_list))
@@ -70,7 +71,46 @@ class IntegrationTests(unittest.TestCase):
         with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key', 'ELEVENLABS_MODEL': 'eleven_v3'}, clear=True), \
                 patch('reel_elevenlabs.synthesize_segment') as synth:
             with self.assertRaises(trial.TrialReelError):
-                trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8')
+                trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8', self.root, has_images=True)
+            synth.assert_not_called()
+
+    def test_sentence_chunks_are_complete_and_text_is_preserved(self):
+        local_assets = Path(__file__).resolve().parent.parent / 'telegram-exchange-bots-instagram'
+        assets = local_assets if (local_assets / 'fonts/Vazirmatn-Regular.ttf').is_file() else Path.home() / 'kiani-instagram-publisher'
+        if not (assets / 'fonts/Vazirmatn-Regular.ttf').is_file():
+            self.skipTest('Production fonts are unavailable')
+        sentences = [
+            'بیت کوین امروز پس از افزایش تقاضا رشد کرد.',
+            'معامله گران اکنون شرایط بازار را با دقت بیشتری بررسی می کنند.',
+            'ارزش معاملات در ساعات گذشته افزایش داشته است.',
+            'کارشناسان درباره نوسان قیمت در روزهای آینده هشدار داده اند.',
+            'بررسی اطلاعات در گزارش رسمی ادامه دارد.',
+        ]
+        text = ' '.join(sentences)
+        chunks = trial._narrated_chunks(text, assets, has_images=True, limit=100)
+        self.assertEqual(' '.join(chunks), text)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.endswith('.') for chunk in chunks))
+        self.assertTrue(all(sentence in chunks[next(i for i, c in enumerate(chunks) if sentence in c)]
+                            for sentence in sentences))
+        long_sentence = ('بازار ' * 30) + 'رشد کرد.'
+        self.assertGreater(len(long_sentence), 170)
+        self.assertEqual(trial._narrated_chunks(long_sentence, assets, has_images=True), [long_sentence])
+        abbreviation = 'Dr. Smith بازار را بررسی کرد. سپس گزارش ارائه شد.'
+        abbreviation_chunks = trial._narrated_chunks(abbreviation, assets, has_images=True, limit=25)
+        self.assertTrue(abbreviation_chunks[0].startswith('Dr. Smith'))
+        self.assertEqual(' '.join(abbreviation_chunks), abbreviation)
+
+    def test_overlong_sentence_fails_before_any_audio_request(self):
+        local_assets = Path(__file__).resolve().parent.parent / 'telegram-exchange-bots-instagram'
+        assets = local_assets if (local_assets / 'fonts/Vazirmatn-Regular.ttf').is_file() else Path.home() / 'kiani-instagram-publisher'
+        if not (assets / 'fonts/Vazirmatn-Regular.ttf').is_file():
+            self.skipTest('Production fonts are unavailable')
+        story = {'title_fa': 'خبر آزمایشی', 'summary_fa': ('بازار ' * 500).strip() + '.'}
+        with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key'}, clear=True), \
+                patch('reel_elevenlabs.synthesize_segment') as synth:
+            with self.assertRaises(trial.TrialReelError):
+                trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8', assets, has_images=True)
             synth.assert_not_called()
 
     def test_reconciliation_records_only_confirmed_published_media(self):
