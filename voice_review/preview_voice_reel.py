@@ -31,6 +31,24 @@ def secret(name, prompt):
     return value
 
 
+def article_key(url):
+    parts = urlsplit(str(url or ''))
+    return ((parts.hostname or '').lower(), parts.path.rstrip('/'))
+
+
+def preview_candidates(rows, previous, limit_per_group=5):
+    """Prefer different stories, then reuse earlier previews as a fallback."""
+    fresh, reused, seen = [], [], set()
+    for row in rows:
+        key = article_key(row.get('source_url'))
+        if not all(key) or key in seen:
+            continue
+        seen.add(key)
+        (reused if key in previous else fresh).append(row)
+    return [(row, False) for row in fresh[:limit_per_group]] + [
+        (row, True) for row in reused[:limit_per_group]]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
@@ -70,7 +88,7 @@ def main():
     with closing(sqlite3.connect(trial.DB.resolve().as_uri() + '?mode=ro', uri=True)) as con:
         con.row_factory = sqlite3.Row
         rows = [dict(row) for row in con.execute('''SELECT * FROM trial_reels WHERE status='published'
-            AND article_published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 50''', (now - 86400, now))]
+            AND article_published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 50''', (now - 7 * 86400, now))]
         history = con.execute("SELECT music_json FROM trial_reels WHERE music_json IS NOT NULL ORDER BY created_at DESC LIMIT 50").fetchall()
     recent = []
     for row in history:
@@ -82,9 +100,6 @@ def main():
             continue
     if not rows:
         raise RuntimeError('No recently published verified news Reel is available for this preview.')
-    def article_key(url):
-        parts = urlsplit(str(url or ''))
-        return ((parts.hostname or '').lower(), parts.path.rstrip('/'))
     previous = set()
     previews = state / 'previews'
     if previews.is_dir() and not previews.is_symlink():
@@ -102,18 +117,25 @@ def main():
     os.chmod(folder, 0o700)
     story, media = None, []
     attempted = 0
-    for row in rows:
+    reused_story = False
+    for row, reused in preview_candidates(rows, previous):
+        attempted += 1
+        stage = 'text layout'
         try:
-            if article_key(row['source_url']) in previous:
-                continue
-            attempted += 1
-            if attempted > 5:
-                break
+            if reused:
+                print('Trying a previously previewed article with a new image search.', flush=True)
             sections = [row['title_fa']] + trial._narrated_chunks(row['summary_fa'], assets, has_images=True)
             for text in sections:
                 timing.build_script(text)
+            stage = 'article retrieval'
             ranked.configure_engine(row['kind'])
-            material = engine.source_material(row, now, admin_override=False)
+            # This is a private preview of an already-published story, not
+            # permission to publish an old article or alter live freshness rules.
+            historical = now - row['article_published_at'] > 86400
+            material = engine.source_material(row, now, admin_override=historical)
+            if historical:
+                print('Using an older already-published story for this private test.', flush=True)
+            stage = 'image collection'
             candidate_media = preview_images.collect(
                 row, material, folder / ('images-' + str(attempted)), engine, source_image,
                 state=trial.STATE, stock_collector=stock.collect, commons_collector=commons.collect)
@@ -122,11 +144,13 @@ def main():
                 story = dict(row)
                 story['reel_length'] = 'long'
                 media = candidate_media
+                reused_story = reused
                 break
-        except Exception:
+        except Exception as exc:
+            print('Preview candidate unavailable:', stage, type(exc).__name__, flush=True)
             continue
     if story is None:
-        raise RuntimeError('No different recent article supplied two distinct relevant images and a complete-sentence layout; no narration was requested.')
+        raise RuntimeError('No eligible saved article supplied two distinct relevant images and a complete-sentence layout; no narration was requested.')
     for text in [story['title_fa']] + trial._narrated_chunks(story['summary_fa'], assets, has_images=bool(media)):
         timing.build_script(text)
     track, music_file = None, folder / 'music.ogg'
@@ -146,6 +170,7 @@ def main():
     def caption_for(items):
         image_credit = preview_images.image_credits(items)
         return ('Private local-rendered preview | ' + voice['name'] + ' | eleven_v4 | 1.5x\n' +
+                ('Older news, private test only\n' if historical else '') +
                 'Source: ' + story['source_url'] + '\n\n' + credit +
                 ('\n\nIllustrative images:\n' + image_credit if image_credit else ''))
     caption = caption_for(media)
@@ -178,6 +203,8 @@ def main():
                 'voice_name': voice['name'], 'voice_id': voice['voice_id'], 'model': voices.MODEL,
                 'speed': voices.SPEED, 'source_url': story['source_url'], 'title_fa': story['title_fa'],
                 'summary_fa': story['summary_fa'], 'music_credit': credit,
+                'reused_preview_article': reused_story,
+                'historical_preview_article': historical,
                 'music_match': match, 'music_track': track.get('title'),
                 'music_volume_multiplier': 0.20, 'music_ducking': True,
                 'images': [{'kind': item.get('kind'), 'provider': item.get('provider', 'publisher'),
