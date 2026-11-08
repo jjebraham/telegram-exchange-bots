@@ -19,7 +19,8 @@ from urllib.parse import urlsplit
 
 
 def secret(name, prompt):
-    value = os.environ.get(name, '').strip()
+    from reel_voice_credentials import get_secret
+    value = get_secret(name)
     if value:
         return value
     with warnings.catch_warnings():
@@ -134,6 +135,9 @@ def main():
                 music_file.unlink()
     if not track:
         raise RuntimeError('No verified licensed music track could be prepared.')
+    match = music.classify_story(story)
+    print('Music selection:', track.get('name', track.get('title', 'verified track')),
+          '| topic mood:', match.get('mood') or 'unclear', flush=True)
     credit = music.caption_credit(track)
     caption = ('Private local-rendered preview | ' + voice['name'] + ' | eleven_v4 | 1.5x\n' +
                'Source: ' + story['source_url'] + '\n\n' + credit)
@@ -147,7 +151,7 @@ def main():
     os.environ['ELEVENLABS_API_KEY'] = key
     os.environ['ELEVENLABS_MODEL'] = voices.MODEL
     os.environ['REEL_NARRATION_SPEED'] = str(voices.SPEED)
-    os.environ['REEL_MUSIC_VOLUME'] = '0.30'
+    os.environ['REEL_MUSIC_VOLUME'] = '0.20'
     os.environ['REEL_AUDIO_DUCKING_ENABLED'] = 'true'
     voice_dir = folder / 'narration'
     voice_dir.mkdir(mode=0o700)
@@ -163,6 +167,8 @@ def main():
                 'voice_name': voice['name'], 'voice_id': voice['voice_id'], 'model': voices.MODEL,
                 'speed': voices.SPEED, 'source_url': story['source_url'], 'title_fa': story['title_fa'],
                 'summary_fa': story['summary_fa'], 'music_credit': credit,
+                'music_match': match, 'music_track': track.get('title'),
+                'music_volume_multiplier': 0.20, 'music_ducking': True,
                 'sections': [{'path': str(s['path']), 'duration': s['duration'],
                               'word_starts': s['word_starts']} for s in segments],
                 'video_sha256': hashlib.sha256(output.read_bytes()).hexdigest()}
