@@ -14,6 +14,19 @@ import reel_voice_registry as voices
 
 
 class PreviewTests(unittest.TestCase):
+    def test_candidates_prefer_unseen_then_allow_previously_used_without_duplicates(self):
+        rows = [
+            {'source_url': 'https://example.com/old'},
+            {'source_url': 'https://example.com/new'},
+            {'source_url': 'https://example.com/new?utm_source=test'},
+        ]
+        chosen = preview.preview_candidates(rows, {('example.com', '/old')})
+        self.assertEqual([(r['source_url'], reused) for r, reused in chosen], [
+            ('https://example.com/new', False), ('https://example.com/old', True)])
+        fallback = preview.preview_candidates(rows[:1], {('example.com', '/old')})
+        self.assertEqual(len(fallback), 1)
+        self.assertTrue(fallback[0][1])
+
     def test_private_preview_uses_saved_story_and_never_contacts_instagram(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -110,6 +123,20 @@ class PreviewTests(unittest.TestCase):
             self.assertIn('Licensed music attribution', calls[-1][1])
             self.assertIn('Pixabay image credit', calls[-1][1])
             self.assertEqual(len(data['images']), 2)
+            self.assertFalse(data['reused_preview_article'])
+
+            # All available URLs are now in prior previews. Reuse one rather
+            # than stopping before image collection.
+            calls.clear()
+            with patch.object(Path, 'home', return_value=home), patch.object(sys, 'argv', args), \
+                    patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test',
+                                            'KIANI_VOICE_TEST_BOT_TOKEN': '123456789:abcdefghijklmnopqrstuvwx'}), \
+                    patch.dict(sys.modules, modules):
+                preview.main()
+            self.assertEqual([c[0] for c in calls], ['configure', 'verified', 'render', 'telegram'])
+            metadata = [p for p in (state / 'previews').glob('*/preview.json') if p.parent != previous]
+            self.assertEqual(len(metadata), 2)
+            self.assertTrue(any(json.loads(p.read_text(encoding='utf-8'))['reused_preview_article'] for p in metadata))
 
 
 if __name__ == '__main__':
