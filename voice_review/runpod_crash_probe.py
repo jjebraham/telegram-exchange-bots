@@ -182,8 +182,11 @@ def main():
             report_child_error(args.fake_watchdog, 'watchdog', exc)
             raise SystemExit(1)
     else:
-        print('Crash-recovery simulation:', probe(Path.home()), flush=True)
+        result = probe(Path.home())
+        print('Crash-recovery simulation:', result, flush=True)
         print('Only a fake Pod was used. No Runpod, Instagram, ElevenLabs or Telegram request was made.', flush=True)
+        if not result.startswith('passed:'):
+            raise SystemExit(1)
 
 
 if __name__ == '__main__':
