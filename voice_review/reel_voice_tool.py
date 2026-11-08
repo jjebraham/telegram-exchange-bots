@@ -50,6 +50,9 @@ def main():
     sub.add_parser('show', help='List voice availability and review status.')
     sub.add_parser('review-export', help='Write editable review.json.')
     sub.add_parser('review-apply', help='Apply explicit human decisions from review.json.')
+    human = sub.add_parser('review', help='Score and approve voices interactively in this terminal.')
+    human.add_argument('names', nargs='*', default=['Sahar', 'Aylin', 'Shahram', 'Adrian'])
+    sub.add_parser('usage', help='Read local submitted-character accounting; no API requests.')
     confirm = sub.add_parser('confirm', help='Confirm an available account voice ID.')
     confirm.add_argument('name')
     confirm.add_argument('voice_id')
@@ -77,6 +80,14 @@ def main():
         key = secret('ELEVENLABS_API_KEY', 'ElevenLabs API key (hidden): ')
         print_discovery(discovery.inspect(key))
         print('Read-only lookup complete. Name matches require human confirmation.')
+        return
+    if args.action == 'usage':
+        from reel_narration_usage import report
+        for label, path in (
+                ('Reels and previews', Path.home() / '.local/state/kiani-instagram-trial-reels/narration-cache.sqlite3'),
+                ('Comparison samples', args.state_dir / 'narration-cache.sqlite3')):
+            print(label + ':', json.dumps(report(path), ensure_ascii=False))
+        print('Earlier API use is not reconstructed. Actual credits and charges must be checked in ElevenLabs.')
         return
     state = args.state_dir.expanduser()
     con = registry.connect(state / 'voices.sqlite3')
@@ -119,6 +130,41 @@ def main():
             print('Editable review sheet:', state / 'review.json')
         elif args.action == 'review-apply':
             print('Applied reviews:', review.apply_sheet(con, state / 'review.json'))
+        elif args.action == 'review':
+            rows = {row['name'].casefold(): row for row in registry.list_voices(con)}
+            for name in args.names:
+                row = rows.get(name.casefold())
+                if not row or not row['available'] or not row['verified'] or not row['sample_path']:
+                    print(name + ': unavailable, unverified or no comparison sample; kept inactive.')
+                    continue
+                print('\n' + row['name'] + ' | ' + registry.MODEL + ' | 1.5x')
+                print('Comparison audio:', row['sample_path'])
+                values = {}
+                for criterion in registry.CRITERIA:
+                    while True:
+                        raw = input(criterion + ' score (0-10): ').strip()
+                        try:
+                            number = float(raw)
+                            import math
+                            if not math.isfinite(number) or not 0 <= number <= 10:
+                                raise ValueError()
+                            values[criterion] = number
+                            break
+                        except ValueError:
+                            print('Enter a number between 0 and 10.')
+                serious = input('Any serious Persian pronunciation error? [yes/no]: ').strip().lower()
+                if serious not in ('yes', 'no'):
+                    raise registry.RegistryError('An explicit yes/no pronunciation decision is required.')
+                notes = input('Pronunciation/review notes (Enter to leave empty): ').strip()
+                total = registry.score(values)
+                print('Weighted score:', total, '/100')
+                approve = False
+                if total >= 80 and serious == 'no':
+                    approve = input('Approve AND enable this voice for production? [yes/no]: ').strip().lower() == 'yes'
+                registry.review(con, row['name'], values, notes, serious_error=serious == 'yes',
+                                approved=approve, enabled=approve)
+                print(row['name'] + ': ' + ('approved and enabled' if approve else 'test only; inactive'))
+            print('Human voice reviews saved. Instagram publishing settings were not changed.')
         elif args.action == 'confirm':
             registry.confirm_voice_id(con, args.name, args.voice_id)
             print('Voice ID confirmed; production approval is still required.')
@@ -141,4 +187,3 @@ if __name__ == '__main__':
     except (OSError, ValueError, getpass.GetPassWarning) as exc:
         print('Voice utility stopped:', type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
-
