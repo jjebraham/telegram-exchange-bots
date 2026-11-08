@@ -115,11 +115,18 @@ def remove(con, name):
         raise RegistryError('Voice was not found.')
 
 
+def candidate_name_matches(candidate, actual):
+    """Accept a complete leading name while rejecting prefixes of other names."""
+    if not isinstance(candidate, str) or not isinstance(actual, str):
+        return False
+    return bool(re.match(r'^' + re.escape(candidate) + r'(?=$|[\s,\-–—:|])', actual.strip(), re.IGNORECASE))
+
+
 def refresh_access(con, account_voices):
     """Process a complete account inventory; new name matches require ID confirmation."""
     if not isinstance(account_voices, list):
         raise RegistryError('A complete account voice inventory is required.')
-    by_id, by_name = {}, {}
+    by_id = {}
     for entry in account_voices:
         if not isinstance(entry, dict):
             raise RegistryError('Invalid account voice inventory.')
@@ -129,16 +136,18 @@ def refresh_access(con, account_voices):
         if voice_id in by_id:
             raise RegistryError('Duplicate voice ID in account inventory.')
         by_id[voice_id] = name
-        by_name.setdefault(name.casefold(), []).append(voice_id)
     con.execute('BEGIN IMMEDIATE')
     try:
         for row in con.execute('SELECT * FROM voices').fetchall():
             if row['voice_id']:
-                matched = row['voice_id'] in by_id and by_id[row['voice_id']].casefold() == row['name'].casefold()
+                # The four user-supplied IDs are the identity. Provider display
+                # names often add descriptions and can change independently.
+                matched = row['voice_id'] in by_id
                 con.execute('UPDATE voices SET available=?,verified=?,updated_at=? WHERE name=?',
                             (int(matched), int(matched and row['id_confirmed']), time.time(), row['name']))
             else:
-                matches = by_name.get(row['name'].casefold(), [])
+                matches = [voice_id for voice_id, actual in by_id.items()
+                           if candidate_name_matches(row['name'], actual)]
                 if len(matches) == 1:
                     try:
                         con.execute('UPDATE voices SET voice_id=?,available=1,verified=0,updated_at=? WHERE name=?',
