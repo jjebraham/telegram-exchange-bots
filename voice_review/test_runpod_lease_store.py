@@ -74,5 +74,14 @@ class LeaseTests(unittest.TestCase):
             leases.cancel_unused_reservation(con, lease)
             self.assertTrue(leases.reserve(con, 'pod-1', .89))
 
+    def test_outputs_are_protected_until_worker_records_safe_state(self):
+        with tempfile.TemporaryDirectory() as root, closing(leases.connect(Path(root) / 'p' / 'lease.db')) as con:
+            lease = leases.reserve(con, 'pod-1', .89)
+            self.assertEqual(con.execute('SELECT output_pending FROM leases').fetchone()[0], 1)
+            leases.set_output_pending(con, lease, pending=False)
+            self.assertEqual(con.execute('SELECT output_pending FROM leases').fetchone()[0], 0)
+            leases.set_output_pending(con, lease, pending=True)
+            self.assertEqual(con.execute('SELECT output_pending FROM leases').fetchone()[0], 1)
+
 
 if __name__ == '__main__': unittest.main()
