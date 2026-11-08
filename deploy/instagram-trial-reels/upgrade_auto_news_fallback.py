@@ -16,6 +16,7 @@ import tempfile
 import time
 
 BASE = '15a56a5ad104332ca81af4c3f46a401a8b6afa3b'
+ORIGINAL = 'a22cb107c66c366a50127aee49d13cb6bb44f7f2'
 WORKER = 'deploy/instagram-trial-reels/automatic_ranked_news_images.py'
 TEST = 'deploy/instagram-trial-reels/test_news_image_fallback.py'
 FILES = ('instagram_ranked_news.py', 'crypto_news_trial.py', 'instagram_news_batch.py',
@@ -26,6 +27,16 @@ FILES = ('instagram_ranked_news.py', 'crypto_news_trial.py', 'instagram_news_bat
          'instagram_news_slide_images.py', 'instagram_reel_source_image.py',
          'instagram_reel_stock.py', 'instagram_reel_commons.py')
 RUNTIME = tuple(name for name in FILES if name != 'selector_trial_runtime/PINNED.md')
+REPLACED = {'selector_trial_runtime/instagram_news_renderer.py',
+            'instagram_news_slide_images.py', 'instagram_reel_source_image.py',
+            'instagram_reel_stock.py', 'instagram_reel_commons.py'}
+
+
+def base_spec(name):
+    # The previous installer assembled a release from two pinned revisions.
+    if name == 'instagram_ranked_news.py':
+        return BASE, WORKER
+    return (BASE if name in REPLACED else ORIGINAL), name
 
 
 def owned(path):
@@ -91,7 +102,8 @@ def main():
     files = {}
     for name in FILES:
         raw = owned(old_root / name)
-        pinned = git_file(repo, BASE, WORKER if name == 'instagram_ranked_news.py' else name)
+        revision, source_name = base_spec(name)
+        pinned = git_file(repo, revision, source_name)
         if raw != pinned or digest(raw) != old_hashes[name]:
             raise RuntimeError('Installed automatic news file differs: ' + name)
         files[name] = raw
