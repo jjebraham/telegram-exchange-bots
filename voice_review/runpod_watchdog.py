@@ -9,6 +9,7 @@ import time
 from runpod_api_client import ActionOutcomeUnknown, RunpodAPIError
 from runpod_guard import GuardError, Limits, watchdog_decision
 import runpod_lease_store as leases
+from runpod_worker_lock import pod_lock
 
 
 def tick(con, api, lease_id, *, expected_pod_id, exclusive, worker_lock_held, worker_active,
@@ -76,3 +77,14 @@ def tick(con, api, lease_id, *, expected_pod_id, exclusive, worker_lock_held, wo
         leases.close_confirmed(con, lease_id, pod_id=expected_pod_id, provider_status='EXITED')
         return 'closed'
     return 'stop_requested'
+
+
+def locked_tick(con, api, lease_id, *, state_dir, expected_pod_id, exclusive,
+                output_pending, job_done, limits=Limits(), now=None):
+    """Hold the Pod lock during the complete check and possible transition."""
+    with pod_lock(state_dir, expected_pod_id) as held:
+        if not held:
+            return 'lock_busy'
+        return tick(con, api, lease_id, expected_pod_id=expected_pod_id, exclusive=exclusive,
+                    worker_lock_held=True, worker_active=False, output_pending=output_pending,
+                    job_done=job_done, limits=limits, now=now)
