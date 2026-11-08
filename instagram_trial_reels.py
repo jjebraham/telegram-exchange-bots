@@ -464,7 +464,11 @@ def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
     _load_voice_modules()
     from reel_elevenlabs import VoiceError, synthesize_segment
     import reel_voice_registry as voices
-    key = os.environ.get('ELEVENLABS_API_KEY', '').strip()
+    from reel_voice_credentials import CredentialError, get_secret
+    try:
+        key = get_secret('ELEVENLABS_API_KEY')
+    except CredentialError:
+        raise TrialReelError('The private Reel credentials file is unavailable or unsafe.') from None
     if not key:
         raise TrialReelError('ElevenLabs narration is enabled but its API key is not configured.')
     try:
@@ -720,7 +724,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             if len(caption) > 2200:
                 raise TrialReelError('Reel caption with image disclosure is too long.')
             _update(con, trial_id, caption=caption, updated_at=time.time())
-        from instagram_trial_music import select_order, retrieve_track, caption_credit
+        from instagram_trial_music import select_order, retrieve_track, caption_credit, classify_story
         previous = con.execute("SELECT music_json FROM trial_reels WHERE status IN ('published','container_processing','publishing','needs_review') AND music_json IS NOT NULL ORDER BY COALESCE(published_at,created_at) DESC LIMIT 50").fetchall()
         recent_titles = []
         for previous_row in previous:
@@ -741,6 +745,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             except Exception as exc:
                 print('Music source unavailable or unverified:', type(exc).__name__, flush=True)
         if music:
+            music['content_mood'] = classify_story(normalized)
             caption += '\n\n' + caption_credit(music)
             if len(caption) > 2200:
                 raise TrialReelError('Trial Reel caption with music credit is too long.')
