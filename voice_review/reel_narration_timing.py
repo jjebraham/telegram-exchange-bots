@@ -26,7 +26,7 @@ _WORDS = {
 }
 _TOKEN = re.compile(r'^(?P<left>[\(\[«“"\u200c]*)(?P<body>.*?)(?P<right>[\)\]»”"،,؛;:!?؟.!]*)$')
 _NUMBER = re.compile(r'^(?P<sign>[+\-−]?)(?P<num>(?:\d{1,3}(?:[,٬]\d{3})+|\d+)(?:[.٫]\d+)?)(?P<pct>[%٪]?)$')
-_ISO_DATE = re.compile(r'^(\d{4})-(\d{2})-(\d{2})$')
+_ISO_DATE = re.compile(r'^(\d{4})([-/])(\d{2})\2(\d{2})$')
 _MONTHS = ('ژانویه', 'فوریه', 'مارس', 'آوریل', 'مه', 'ژوئن',
            'ژوئیه', 'اوت', 'سپتامبر', 'اکتبر', 'نوامبر', 'دسامبر')
 
@@ -77,7 +77,14 @@ def _spoken(token):
     ascii_body = body.translate(_DIGITS)
     iso_date = _ISO_DATE.fullmatch(ascii_body)
     if iso_date:
-        year, month, day = map(int, iso_date.groups())
+        year, month, day = (int(iso_date.group(i)) for i in (1, 3, 4))
+        if not 1 <= month <= 12 or not 1 <= day <= 31:
+            raise TimingError('Invalid numeric date')
+        if not 1900 <= year <= 2100:
+            # The calendar is not identified by the numeric date alone.
+            return ('سال ' + persian_integer(str(year)) + '، ماه ' +
+                    persian_integer(str(month)) + '، روز ' + persian_integer(str(day)) +
+                    match.group('right'))
         try:
             date(year, month, day)
         except ValueError:
