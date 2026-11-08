@@ -199,9 +199,11 @@ class RegistryTests(unittest.TestCase):
         def request(token, method, *, fields=None, audio=None):
             calls.append((method, fields))
             if method == 'getMe':
-                return {'username': 'EnPevobot'}
+                return {'username': 'EnPevobot', 'id': 12345}
             if method == 'getChat':
                 return {'id': telegram.CHAT_ID, 'type': 'channel', 'title': 'en movie test'}
+            if method == 'getChatMember':
+                return {'status': 'administrator', 'can_post_messages': True}
             self.assertEqual(fields['chat_id'], telegram.CHAT_ID)
             self.assertIn('Sahar | eleven_v4', fields['caption'])
             self.assertEqual(audio[4:8], b'ftyp')
@@ -226,9 +228,11 @@ class RegistryTests(unittest.TestCase):
         def request(token, method, *, fields=None, audio=None):
             calls.append(method)
             if method == 'getMe':
-                return {'username': 'EnPevobot'}
+                return {'username': 'EnPevobot', 'id': 12345}
             if method == 'getChat':
                 return {'id': telegram.CHAT_ID, 'type': 'channel', 'title': 'en movie test'}
+            if method == 'getChatMember':
+                return {'status': 'administrator', 'can_post_messages': True}
             raise telegram.TelegramError('uncertain')
         self.assertEqual(telegram.deliver(self.con, 'private', request=request)[0]['status'], 'unknown_needs_review')
         self.assertEqual(telegram.deliver(self.con, 'private', request=request)[0]['status'], 'unknown')
@@ -237,9 +241,21 @@ class RegistryTests(unittest.TestCase):
     def test_telegram_wrong_channel_never_sends(self):
         def request(token, method, *, fields=None, audio=None):
             if method == 'getMe':
-                return {'username': 'EnPevobot'}
+                return {'username': 'EnPevobot', 'id': 12345}
             if method == 'getChat':
                 return {'id': telegram.CHAT_ID, 'type': 'channel', 'title': 'wrong'}
+            self.fail('No sample should be sent')
+        with self.assertRaises(telegram.TelegramError):
+            telegram.deliver(self.con, 'private', request=request)
+
+    def test_telegram_bot_without_post_permission_never_sends(self):
+        def request(token, method, *, fields=None, audio=None):
+            if method == 'getMe':
+                return {'username': 'EnPevobot', 'id': 12345}
+            if method == 'getChat':
+                return {'id': telegram.CHAT_ID, 'type': 'channel', 'title': 'en movie test'}
+            if method == 'getChatMember':
+                return {'status': 'administrator', 'can_post_messages': False}
             self.fail('No sample should be sent')
         with self.assertRaises(telegram.TelegramError):
             telegram.deliver(self.con, 'private', request=request)
