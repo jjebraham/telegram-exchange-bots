@@ -17,7 +17,7 @@ class PronunciationTests(unittest.TestCase):
         self.assertEqual(persian_integer('1000000000000'), 'یک تریلیون')
 
     def test_ambiguous_dates_and_malformed_values_fail(self):
-        for text in ('2026/11/08', '1,23', '۴–۶', '$29%'):
+        for text in ('08/11/2026', '1,23', '۴–۶', '$29%'):
             with self.subTest(text=text), self.assertRaises(TimingError):
                 build_script(text)
 
@@ -28,6 +28,8 @@ class PronunciationTests(unittest.TestCase):
         script, tokens = build_script('تاریخ ۲۰۲۶-۱۱-۰۸')
         self.assertEqual(script, 'تاریخ هشت نوامبر دو هزار و بیست و شش')
         self.assertEqual(tokens[1].text, '۲۰۲۶-۱۱-۰۸')
+        self.assertEqual(build_script('2026/11/08')[0], 'هشت نوامبر دو هزار و بیست و شش')
+        self.assertEqual(build_script('۱۴۰۵/۰۸/۱۶')[0], 'سال یک هزار و چهارصد و پنج، ماه هشت، روز شانزده')
         for value in ('2026-02-30', '0012'):
             with self.subTest(value=value), self.assertRaises(TimingError):
                 build_script(value)
