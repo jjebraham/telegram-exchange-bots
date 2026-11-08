@@ -47,10 +47,13 @@ def main():
     import instagram_ranked_news as ranked
     import crypto_news_trial as engine
     import instagram_reel_source_image as source_image
+    import instagram_reel_stock as stock
+    import instagram_reel_commons as commons
     import instagram_trial_music as music
     import reel_narration_timing as timing
     import reel_voice_registry as voices
     import reel_voice_telegram as telegram
+    import reel_preview_images as preview_images
 
     state = home / '.local/state/kiani-instagram-voice-review'
     registry_path = state / 'voices.sqlite3'
@@ -98,31 +101,32 @@ def main():
     folder.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.chmod(folder, 0o700)
     story, media = None, []
+    attempted = 0
     for row in rows:
         try:
             if article_key(row['source_url']) in previous:
                 continue
+            attempted += 1
+            if attempted > 5:
+                break
             sections = [row['title_fa']] + trial._narrated_chunks(row['summary_fa'], assets, has_images=True)
             for text in sections:
                 timing.build_script(text)
             ranked.configure_engine(row['kind'])
             material = engine.source_material(row, now, admin_override=False)
-            image_urls = material.get('image_urls') or []
-            for image_url in image_urls[:8]:
-                image_path = folder / ('article-' + str(len(media)) + '.jpg')
-                try:
-                    source_image.fetch(engine, material['source_url'], image_url, image_path, timeout=8)
-                    media.append({'path': image_path, 'kind': 'publisher'})
-                except Exception:
-                    continue
-            if media:
+            candidate_media = preview_images.collect(
+                row, material, folder / ('images-' + str(attempted)), engine, source_image,
+                state=trial.STATE, stock_collector=stock.collect, commons_collector=commons.collect)
+            print('Verified distinct images for candidate:', len(candidate_media), flush=True)
+            if len(candidate_media) >= 2:
                 story = dict(row)
                 story['reel_length'] = 'long'
+                media = candidate_media
                 break
         except Exception:
             continue
     if story is None:
-        raise RuntimeError('No different recent published article with a complete-sentence layout and accessible source image was found.')
+        raise RuntimeError('No different recent article supplied two distinct relevant images and a complete-sentence layout; no narration was requested.')
     for text in [story['title_fa']] + trial._narrated_chunks(story['summary_fa'], assets, has_images=bool(media)):
         timing.build_script(text)
     track, music_file = None, folder / 'music.ogg'
@@ -139,8 +143,15 @@ def main():
     print('Music selection:', track.get('name', track.get('title', 'verified track')),
           '| topic mood:', match.get('mood') or 'unclear', flush=True)
     credit = music.caption_credit(track)
-    caption = ('Private local-rendered preview | ' + voice['name'] + ' | eleven_v4 | 1.5x\n' +
-               'Source: ' + story['source_url'] + '\n\n' + credit)
+    def caption_for(items):
+        image_credit = preview_images.image_credits(items)
+        return ('Private local-rendered preview | ' + voice['name'] + ' | eleven_v4 | 1.5x\n' +
+                'Source: ' + story['source_url'] + '\n\n' + credit +
+                ('\n\nIllustrative images:\n' + image_credit if image_credit else ''))
+    caption = caption_for(media)
+    while len(caption) > 1024 and len(media) > 2:
+        media.pop()
+        caption = caption_for(media)
     if len(caption) > 1024:
         raise RuntimeError('The private preview caption cannot contain the required music credit.')
     token = None
@@ -169,6 +180,10 @@ def main():
                 'summary_fa': story['summary_fa'], 'music_credit': credit,
                 'music_match': match, 'music_track': track.get('title'),
                 'music_volume_multiplier': 0.20, 'music_ducking': True,
+                'images': [{'kind': item.get('kind'), 'provider': item.get('provider', 'publisher'),
+                            'source_url': item.get('source_url'), 'path': str(item['path']),
+                            'sha256': hashlib.sha256(Path(item['path']).read_bytes()).hexdigest()}
+                           for item in media],
                 'sections': [{'path': str(s['path']), 'duration': s['duration'],
                               'word_starts': s['word_starts']} for s in segments],
                 'video_sha256': hashlib.sha256(output.read_bytes()).hexdigest()}
@@ -193,4 +208,3 @@ if __name__ == '__main__':
         else:
             print('Private preview stopped:', type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
-
