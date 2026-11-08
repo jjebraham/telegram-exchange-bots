@@ -67,7 +67,8 @@ def replace_trial_cron(original, commands):
         lines = lines[:starts[0]] + lines[ends[0] + 1:]
     if any(('run-kiani-instagram-trial-reels.sh' in line or
             'run-kiani-instagram-direct-reels.sh' in line or
-            'run-kiani-instagram-reel-schedule.sh' in line) and not line.lstrip().startswith('#') for line in lines):
+            'run-kiani-instagram-reel-schedule.sh' in line or
+            'run-kiani-instagram-voice-insights.sh' in line) and not line.lstrip().startswith('#') for line in lines):
         raise RuntimeError('A Trial Reel launcher is scheduled outside its managed cron block.')
     if lines and lines[-1].strip():
         lines.append('')
@@ -132,7 +133,27 @@ def main():
     # The manual intake loads its translation credentials via this pinned
     # runtime; make the runtime importable before calling its helpers.
     sys.path[:0] = [str(runtime), str(runtime / 'selector_trial_runtime')]
-    print('Reel narration disabled; music and typing sounds remain enabled.', flush=True)
+    sys.path.insert(0, str(runtime / 'voice_review'))
+    from reel_local_settings import load as load_local_voice_settings
+    load_local_voice_settings()
+    narration_enabled = os.environ.get('REEL_ELEVENLABS_ENABLED', 'false')
+    if narration_enabled not in ('true', 'false'):
+        raise RuntimeError('Invalid narration flag.')
+    if narration_enabled == 'true':
+        from contextlib import closing
+        import reel_voice_registry as voices
+        from reel_voice_credentials import get_secret
+        registry_path = home / '.local/state/kiani-instagram-voice-review/voices.sqlite3'
+        if not registry_path.is_file() or registry_path.is_symlink():
+            raise RuntimeError('The existing narration registry is unavailable.')
+        with closing(voices.connect(registry_path)) as voice_db:
+            eligible = [v['name'] for v in voices.list_voices(voice_db) if voices.eligible(v)]
+        if not eligible or not get_secret('ELEVENLABS_API_KEY'):
+            raise RuntimeError('Narration needs eligible voices and a configured private key.')
+        print('Local ElevenLabs narration enabled; equal-probability voice pool:', ', '.join(eligible), flush=True)
+        print('Music: 20% base multiplier with ducking. Existing RunPod control is not used.', flush=True)
+    else:
+        print('Reel narration disabled; music and typing sounds remain enabled.', flush=True)
     module_path = runtime / 'instagram_manual_news_intake.py'
     spec = importlib.util.spec_from_file_location('manual_news_intake', module_path)
     module = importlib.util.module_from_spec(spec)
@@ -191,7 +212,11 @@ def main():
         # Tick each minute and check Istanbul wall time in the launcher.
         tick_launcher = home / 'run-kiani-instagram-reel-schedule.sh'
         tick_log = home / 'kiani-instagram-reel-scheduler.log'
+        insights_launcher = home / 'run-kiani-instagram-voice-insights.sh'
+        insights_log = home / 'kiani-instagram-voice-insights.log'
         daily_commands = [f'* * * * * {shlex.quote(str(tick_launcher))} >> {shlex.quote(str(tick_log))} 2>&1']
+        if narration_enabled == 'true':
+            daily_commands.append(f'*/30 * * * * {shlex.quote(str(insights_launcher))} >> {shlex.quote(str(insights_log))} 2>&1')
         replacement = replace_trial_cron(original, daily_commands)
         if subprocess.run(['systemctl', 'is-active', '--quiet', 'cron'], timeout=15).returncode:
             raise RuntimeError('Cron stopped during setup; nothing was scheduled.')
@@ -207,6 +232,10 @@ def main():
             shlex.quote(str(runtime / 'instagram_trial_reels.py')) + ' --direct-daily --runtime ' + \
             shlex.quote(str(runtime)) + ' --assets ' + shlex.quote(str(publisher)) + ' "$@"\n'
 
+        insights_script = prefix + 'exec ' + shlex.quote(str(python)) + ' -u ' + \
+            shlex.quote(str(runtime / 'voice_review/reel_voice_performance.py')) + ' --runtime ' + \
+            shlex.quote(str(runtime)) + ' --collect\n'
+
         # One local-time tick dispatches at most one configured slot per minute.
         tick_script = prefix + 'slot=$(date +%H:%M)\n' + \
             'case "$slot" in\n' + \
@@ -216,7 +245,7 @@ def main():
             ' --slot "$slot" >> ' + shlex.quote(str(direct_log)) + ' 2>&1 ;;\n' + \
             'esac\n'
 
-        paths = (manual_launcher, daily_launcher, direct_launcher, tick_launcher)
+        paths = (manual_launcher, daily_launcher, direct_launcher, tick_launcher, insights_launcher)
         old_files = {}
         for path in paths:
             if path.exists():
@@ -228,6 +257,8 @@ def main():
         backup = Path(tempfile.mkdtemp(prefix='kiani-trial-reels-backup-', dir=home))
         (backup / 'crontab.txt').write_bytes(original)
         config_original = (bot_config.read_bytes(), bot_config.stat().st_mode & 0o777)
+        (backup / 'manual-news-config.json').write_bytes(config_original[0])
+        os.chmod(backup / 'manual-news-config.json', 0o600)
         for path, old in old_files.items():
             if old:
                 (backup / path.name).write_bytes(old[0])
@@ -239,6 +270,7 @@ def main():
             atomic(daily_launcher, daily_script.encode(), 0o700)
             atomic(direct_launcher, direct_script.encode(), 0o700)
             atomic(tick_launcher, tick_script.encode(), 0o700)
+            atomic(insights_launcher, insights_script.encode(), 0o700)
             if replacement != original:
                 subprocess.run(['crontab', '-'], input=replacement, check=True,
                                capture_output=True, timeout=15)
@@ -274,6 +306,8 @@ def main():
     print('Trial Reels are excluded from ordinary Feed deletion and delayed-Story workers.')
     print('Bounded status polling runs through the existing private Telegram worker.')
     print('No Reel was created or published during installation.')
+    if narration_enabled == 'true':
+        print('Read-only narrator insights: every 30 minutes; one 24–26h observation per narrated Reel.')
     print('Manual-news launcher:', manual_launcher)
     print('Trial Reel launcher:', daily_launcher)
     print('Direct Reel launcher:', direct_launcher)
@@ -290,6 +324,7 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel activation stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
 
 
 
