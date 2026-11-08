@@ -1,5 +1,6 @@
 """Confirm Google News outlet aliases do not weaken publisher verification."""
 import ast
+import os
 from pathlib import Path
 import sys
 import types
@@ -7,7 +8,7 @@ import unittest
 from urllib.parse import urlsplit
 
 root = Path(__file__).resolve().parents[1]
-selector = root / 'instagram-button-menu/selector_trial_runtime'
+selector = Path(os.environ['KIANI_TEST_SELECTOR']) if os.environ.get('KIANI_TEST_SELECTOR') else root / 'instagram-button-menu/selector_trial_runtime'
 if not selector.is_dir():
     selector = Path(__file__).resolve().parents[2] / 'selector_trial_runtime'
 sys.path.insert(0, str(selector))
@@ -21,7 +22,11 @@ nodes = [node for node in tree.body
 aliases = next(node for node in tree.body if isinstance(node, ast.Assign)
                and any(isinstance(target, ast.Name) and target.id == 'OUTLET_ALIASES'
                        for target in node.targets))
+extra = next(node for node in tree.body if isinstance(node, ast.Assign)
+             and any(isinstance(target, ast.Name) and target.id == 'EXTRA_PUBLISHERS'
+                     for target in node.targets))
 publishers = {'apnews.com': 'AP', 'reuters.com': 'Reuters', 'bbc.com': 'BBC'}
+publishers.update(ast.literal_eval(extra.value))
 def base_publisher(url):
     host = (urlsplit(url).hostname or '').lower()
     return next((name for domain, name in publishers.items()
@@ -48,6 +53,12 @@ class AliasTests(unittest.TestCase):
         self.assertIsNone(scope['reviewed_publisher']('https://unreviewed.example/article'))
         self.assertEqual(scope['reviewed_publisher']('https://apnews.com/article/example'), 'AP')
 
+    def test_cnbc_tv18_is_an_explicit_separate_publisher(self):
+        self.assertEqual(scope['reviewed_publisher']('https://www.cnbctv18.com/economy/story.htm'),
+                         'CNBC TV18')
+        self.assertIsNone(scope['reviewed_publisher']('https://cnbctv18.com.untrusted.example/story'))
+
 
 if __name__ == '__main__':
     unittest.main()
+
