@@ -399,7 +399,7 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
             cmd+=['-i',str(voice_path)]
             from reel_audio_mix import mix_filter
             try:
-                volume = float(os.environ.get('REEL_MUSIC_VOLUME', '0.30'))
+                volume = float(os.environ.get('REEL_MUSIC_VOLUME', '0.20'))
                 ducking = os.environ.get('REEL_AUDIO_DUCKING_ENABLED', 'true').lower()
                 if ducking not in ('true', 'false'):
                     raise ValueError('Invalid audio ducking configuration.')
