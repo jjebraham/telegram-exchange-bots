@@ -116,6 +116,10 @@ class SourceUnavailable(NewsError):
         super().__init__('No verified fresh source passage: ' + '; '.join(reasons))
 
 
+class NewsImageUnavailable(NewsError):
+    """A candidate cannot supply the required distinct slide images."""
+
+
 @contextmanager
 def locks(kind, *, preview=False, collection_only=False):
     import fcntl
@@ -568,7 +572,7 @@ def prepare(con, row, kind, output, asset_root):
                 try:
                     images = collect_slide_images(engine, image_context, Path(temp), origin='automatic', minimum=2)
                 except SlideImageError as exc:
-                    raise NewsError(str(exc)) from None
+                    raise NewsImageUnavailable(str(exc)) from None
                 paths, caption, manifest = renderer.render_news([saved], output, asset_root,
                     news_label='خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی',
                     caption_title='صرافی کیانی | ' + ('خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'),
@@ -590,6 +594,36 @@ def prepare(con, row, kind, output, asset_root):
     manifest['news_v2_ranking'] = {'score': row['trial_score'], 'components': row['components'],
                                   'outlets': row['coverage_outlets'], 'version': VERSION}
     return saved, paths, caption, manifest
+
+
+def prepare_first_with_images(con, ranked, kind, now, audit, checkpoint, output, asset_root, publish_mode, slot):
+    """Try at most three distinct eligible stories without re-ranking."""
+    candidates = ranked[:MAIN_STORY_CHECK_LIMIT]
+    cursor = 0
+    audit['image_selection_attempts'] = []
+    for _ in range(3):
+        if publish_mode and not slot_open(kind, slot, time.time()):
+            raise NewsError('Hourly slot expired during image selection; no Feed post.')
+        selected = select_main_stories(con, candidates[cursor:], kind, 1, now, audit, checkpoint)
+        if not selected:
+            break
+        row = selected[0]
+        position = next(i for i in range(cursor, len(candidates)) if candidates[i]['id'] == row['id'])
+        cursor = position + 1
+        attempt = {'id': row['id'], 'status': 'preparing'}
+        audit['image_selection_attempts'].append(attempt)
+        checkpoint()
+        try:
+            result = prepare(con, row, kind, output, asset_root)
+        except NewsImageUnavailable:
+            attempt['status'] = 'missing_required_images'
+            checkpoint()
+            print(f'{kind}: candidate lacked two suitable images; checking the next eligible story.', flush=True)
+            continue
+        attempt['status'] = 'prepared'
+        checkpoint()
+        return [row], [result]
+    return [], []
 
 
 def run(kind, slot, publish_mode, asset_root):
@@ -632,13 +666,17 @@ def run(kind, slot, publish_mode, asset_root):
             report.write_text(json.dumps(dict(audit, **(progress or {})), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         persist()
         print('Private ranking audit:', report, flush=True)
+        output = Path('/var/www/peerexo.com/public/instagram-rates') / ({'crypto': 'news', 'economy': 'economy'}[kind] if publish_mode else 'ranked-news-preview/' + kind)
+        public_base = 'https://peerexo.com/instagram-rates/' + ('news' if kind == 'crypto' else 'economy')
+        if not publish_mode:
+            public_base = 'https://peerexo.com/instagram-rates/ranked-news-preview/' + kind
         try:
             ranked, audit = rank_events(ranking, kind, now, checkpoint=persist)
             # Score order is preserved among stories with a different main lead.
             # Compare full source facts with today's posts and this run's picks.
             audit['selection_policy'] = 'one_best_remaining_distinct_rolling_24h_story_per_hour_ten_per_category_day'
-            chosen = select_main_stories(ranking, ranked, kind,
-                remaining if publish_mode else 1, now, audit, persist)
+            chosen, prepared = prepare_first_with_images(ranking, ranked, kind, now, audit,
+                persist, output, asset_root, publish_mode, slot)
         except Exception as exc:
             progress = json.loads(report.read_text(encoding='utf-8'))
             progress.update(status='failed', error_type=type(exc).__name__,
@@ -653,18 +691,13 @@ def run(kind, slot, publish_mode, asset_root):
             for key in ('impact', 'relevance', 'usefulness'):
                 print(' ', key + ':', row['assessment'][key]['reason'], flush=True)
         if not chosen:
-            audit['status'] = 'no_qualifying_story'
+            audit['status'] = 'no_usable_images' if audit.get('image_selection_attempts') else 'no_qualifying_story'
             persist()
-            print('No unpublished verified fresh hard-news event is available; nothing posted.')
+            print('No eligible story with two suitable images was prepared; nothing posted.')
             return
         requested = remaining if publish_mode else 1
         if len(chosen) < requested:
             print(f'Only {len(chosen)} eligible distinct events available for {requested} requested posts.', flush=True)
-        output = Path('/var/www/peerexo.com/public/instagram-rates') / ({'crypto': 'news', 'economy': 'economy'}[kind] if publish_mode else 'ranked-news-preview/' + kind)
-        public_base = 'https://peerexo.com/instagram-rates/' + ('news' if kind == 'crypto' else 'economy')
-        if not publish_mode:
-            public_base = 'https://peerexo.com/instagram-rates/ranked-news-preview/' + kind
-        prepared = [prepare(ranking, row, kind, output, asset_root) for row in chosen]
         audit['preview_urls'] = [public_base + '/' + p.name for _, paths, _, _ in prepared for p in paths]
         for url in audit['preview_urls']:
             print('Preview:', url, flush=True)
@@ -802,4 +835,3 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}' if isinstance(exc, NewsError) else f'ERROR: Ranked news stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
-
