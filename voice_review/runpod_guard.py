@@ -45,15 +45,19 @@ def estimated_compute_cost(rate, seconds):
 
 
 def may_start(pod, expected_id, limits, *, exclusive, watchdog_ready, bootstrap_ready,
-              identity_ready, worker_lock_held, budget_remaining):
+              identity_ready, worker_lock_held, budget_remaining, purpose='render'):
     """Validate startup prerequisites; this function never starts a Pod."""
     if not isinstance(pod, dict) or not isinstance(expected_id, str) or not expected_id:
         raise GuardError('Pod identity is missing')
     if pod.get('id') != expected_id:
         raise GuardError('Pod identity does not match')
-    for value, name in ((exclusive, 'exclusive ownership'), (watchdog_ready, 'watchdog'),
-                        (bootstrap_ready, 'bootstrap'), (identity_ready, 'SSH identity'),
-                        (worker_lock_held, 'worker lock')):
+    if purpose not in ('render', 'api_probe'):
+        raise GuardError('Unsupported managed purpose')
+    checks = [(exclusive, 'exclusive ownership'), (watchdog_ready, 'watchdog'),
+              (worker_lock_held, 'worker lock')]
+    if purpose == 'render':
+        checks.extend(((bootstrap_ready, 'bootstrap'), (identity_ready, 'SSH identity')))
+    for value, name in checks:
         if value is not True:
             raise GuardError(name + ' is not verified')
     if pod.get('status') != 'EXITED' or pod.get('locked') is not False:
