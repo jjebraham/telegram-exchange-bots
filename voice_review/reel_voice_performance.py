@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Read-only Instagram observations and descriptive narrator comparisons."""
 from collections import defaultdict
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -15,6 +16,19 @@ import time
 from zoneinfo import ZoneInfo
 
 METRICS = ('views', 'reach', 'likes', 'comments', 'saved', 'shares', 'follows')
+
+
+@contextmanager
+def collector_lock(directory):
+    import fcntl
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock = directory / 'performance.lock'
+    if lock.is_symlink():
+        raise ValueError('Unsafe insights lock path.')
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    with os.fdopen(fd, 'a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
 
 
 def read_db(path):
@@ -149,17 +163,25 @@ def main():
         from instagram_manual_news_intake import load_publish_env
         from instagram_insights_data import Graph
         load_publish_env()
-        graph = Graph()
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with closing(sqlite3.connect(path)) as con:
-            path.chmod(0o600)
-            print('Saved observations:', collect(rows, graph, con))
+        with collector_lock(path.parent):
+            graph = Graph()
+            with closing(sqlite3.connect(path)) as con:
+                path.chmod(0o600)
+                print('Saved observations:', collect(rows, graph, con))
     samples = []
     if path.exists():
         with closing(read_db(path)) as con:
             for row in con.execute('SELECT media_id,observed_at,metrics_json FROM voice_performance'):
                 samples.append({'media_id': row['media_id'], 'observed_at': row['observed_at'], 'metrics': json.loads(row['metrics_json'])})
     print(json.dumps(comparison(rows, samples), ensure_ascii=False, indent=2))
+    voices_path = root / 'kiani-instagram-voice-review/voices.sqlite3'
+    if voices_path.exists():
+        with closing(read_db(voices_path)) as con:
+            columns = {r['name'] for r in con.execute('PRAGMA table_info(voices)')}
+            status = 'rating_status' if 'rating_status' in columns else "'legacy' AS rating_status"
+            opinions = [dict(r) for r in con.execute('SELECT name,score,notes,' + status + ' FROM voices WHERE voice_id IS NOT NULL')]
+        print('Human opinions (separate from Instagram metrics; never selection weights):')
+        print(json.dumps(opinions, ensure_ascii=False, indent=2))
     print('No publishing or deletion request was made. Voice probabilities remain unchanged.')
 
 
