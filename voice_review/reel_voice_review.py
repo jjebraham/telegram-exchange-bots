@@ -26,6 +26,18 @@ def export_sheet(con, destination):
               'instructions': 'Score each criterion 0–10. Set serious_error, approved and enabled explicitly.',
               'voices': entries}
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    backup = None
+    if destination.exists():
+        if not destination.is_file() or destination.stat().st_size > 1_000_000:
+            raise registry.RegistryError('Existing review sheet cannot be backed up safely.')
+        old = destination.read_bytes()
+        backup_fd, backup_name = tempfile.mkstemp(prefix='review-backup-', suffix='.json', dir=str(destination.parent))
+        with os.fdopen(backup_fd, 'wb') as out:
+            out.write(old)
+            out.flush()
+            os.fsync(out.fileno())
+        os.chmod(backup_name, 0o600)
+        backup = Path(backup_name)
     fd, temporary = tempfile.mkstemp(prefix='.voice-review-', dir=str(destination.parent))
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as out:
@@ -38,6 +50,7 @@ def export_sheet(con, destination):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+    return backup
 
 
 def apply_sheet(con, source):
