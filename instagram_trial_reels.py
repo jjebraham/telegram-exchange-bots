@@ -404,6 +404,88 @@ def check_admin_daily_limit(reel_mode='trial'):
         _enforce_daily_limit(con, 'admin_direct' if reel_mode == 'direct' else 'admin_link',
                              istanbul_day(), reel_mode)
 
+
+def _load_voice_modules():
+    import sys
+    path = Path(__file__).resolve().parent / 'voice_review'
+    if path.is_dir() and str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+
+def _prepare_narration(story, folder, voice_id):
+    """Prepare aligned segments for the existing renderer when explicitly enabled."""
+    import wave
+    _load_voice_modules()
+    from reel_elevenlabs import VoiceError, synthesize_segment
+    import reel_voice_registry as voices
+    key = os.environ.get('ELEVENLABS_API_KEY', '').strip()
+    if not key:
+        raise TrialReelError('ElevenLabs narration is enabled but its API key is not configured.')
+    try:
+        speed = float(os.environ.get('REEL_NARRATION_SPEED', '1.5'))
+        model = os.environ.get('ELEVENLABS_MODEL', voices.MODEL)
+        if speed != voices.SPEED or model != voices.MODEL:
+            raise ValueError('The selected voice has not been reviewed for these settings.')
+        title = _safe_text(story.get('title_fa'), 500)
+        summary = _safe_text(story.get('summary_fa'))
+        sections = [title] + _chunks(summary)
+        output = []
+        for index, text in enumerate(sections):
+            result = synthesize_segment(
+                text, STATE / 'narration-cache.sqlite3', key, speed=speed,
+                voice_id=voice_id,
+                model=model,
+                ffmpeg=shutil.which('ffmpeg') or 'ffmpeg', ffprobe=shutil.which('ffprobe') or 'ffprobe')
+            path = Path(folder) / ('section-' + str(index) + '.wav')
+            with path.open('xb') as stream:
+                stream.write(result['audio'])
+            os.chmod(path, 0o600)
+            with wave.open(str(path), 'rb') as voice:
+                duration = voice.getnframes() / voice.getframerate()
+            output.append({'path': path, 'duration': duration, 'word_starts': result['starts']})
+        return output
+    except (VoiceError, ValueError, OSError, wave.Error):
+        raise TrialReelError('Narration could not be prepared and verified; no Reel was published.') from None
+
+
+def _voice_registry_path():
+    return Path.home() / '.local/state/kiani-instagram-voice-review/voices.sqlite3'
+
+
+def _select_narrator(trial_id):
+    from contextlib import closing
+    _load_voice_modules()
+    import reel_voice_registry as voices
+    path = _voice_registry_path()
+    if path.is_symlink() or not path.is_file():
+        raise TrialReelError('The approved voice pool is not configured.')
+    try:
+        with closing(voices.connect(path)) as registry:
+            override = os.environ.get('REEL_VOICE_OVERRIDE', '').strip() or None
+            selected = voices.select(registry, trial_id, override=override)
+        return selected
+    except (voices.RegistryError, OSError, sqlite3.Error):
+        raise TrialReelError('No approved and available narration voice could be selected.') from None
+
+
+def _reconcile_published_voice_history(con):
+    """Recover confirmed media IDs without making any Meta requests."""
+    from contextlib import closing
+    _load_voice_modules()
+    import reel_voice_registry as voices
+    path = _voice_registry_path()
+    if path.is_symlink() or not path.is_file():
+        return
+    with closing(voices.connect(path)) as registry:
+        pending = registry.execute("SELECT job_id FROM selections WHERE status='reserved'").fetchall()
+        for item in pending:
+            row = con.execute("SELECT status,media_id FROM trial_reels WHERE trial_id=?", (item['job_id'],)).fetchone()
+            if row and row['status'] == 'published' and row['media_id']:
+                voices.mark_published(registry, item['job_id'], str(row['media_id']))
+            elif row and row['status'] == 'failed':
+                voices.mark_failed(registry, item['job_id'])
+
+
 def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submission_id=None, scheduled_slot=None,
                 public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE, _validated_image=None):
     """Render a direct or Trial Reel and persist its Meta container before polling."""
@@ -473,6 +555,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     extra_image_paths = []
     commons_temp = None
     stock_temp = None
+    voice_temp = None
     stock_used = []
     try:
         _live_guard()
@@ -621,8 +704,17 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             if len(caption) + len(addition) <= 2200:
                 caption += addition
                 _update(con, trial_id, caption=caption, updated_at=time.time())
+        voice_setting = os.environ.get('REEL_ELEVENLABS_ENABLED', 'false').lower()
+        if voice_setting not in ('true', 'false'):
+            raise TrialReelError('Reel narration feature flag is invalid.')
+        narration = None
+        if voice_setting == 'true':
+            voice_temp = tempfile.TemporaryDirectory(prefix='voice-' + trial_id + '-', dir=STATE)
+            selected_voice = _select_narrator(trial_id)
+            print('Narration voice selected:', selected_voice['voice_name'], flush=True)
+            narration = _prepare_narration(normalized, Path(voice_temp.name), selected_voice['voice_id'])
         duration = render_video(normalized, kind, video_path, asset_root,
-                                music_path=music_path if music else None, media=media)
+                                music_path=music_path if music else None, media=media, narration=narration)
         if stock_used:
             try:
                 from instagram_reel_stock import mark_used
@@ -688,6 +780,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             commons_temp.cleanup()
         if stock_temp is not None:
             stock_temp.cleanup()
+        if voice_temp is not None:
+            voice_temp.cleanup()
 
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,
@@ -710,6 +804,11 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
     except Exception as exc:
         print('Direct Reel retention deferred safely:', type(exc).__name__, flush=True)
     with _connect() as con:
+        try:
+            _reconcile_published_voice_history(con)
+        except Exception as exc:
+            # A local reporting problem must never retry an uncertain Meta request.
+            print('Voice history reconciliation deferred:', type(exc).__name__, flush=True)
         interrupted = con.execute("SELECT trial_id,status,submission_id,title_fa,origin FROM trial_reels WHERE status IN ('creating_container','publishing')").fetchall()
         for row in interrupted:
             current = con.execute('SELECT updated_at FROM trial_reels WHERE trial_id=?', (row['trial_id'],)).fetchone()
@@ -1032,6 +1131,8 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
+
 
 
 
