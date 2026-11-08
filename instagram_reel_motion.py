@@ -1,13 +1,34 @@
 """Render Persian word reveals and locally generated typing sounds without AI calls."""
 from pathlib import Path
 from array import array
+from bisect import bisect_right
 import math
+import os
 import random
 import subprocess
 import sys
 import tempfile
 import wave
 from PIL import Image, ImageDraw, ImageOps
+
+
+def validated_word_starts(segment, expected_words):
+    """Return optional reviewed timings; never guess when timings are supplied."""
+    starts = segment.get('word_starts')
+    if starts is None:
+        raise ValueError('Narration word timing is required for synchronization.')
+    duration = segment.get('duration')
+    if (not isinstance(starts, list) or len(starts) != expected_words or
+            not isinstance(duration, (float, int)) or isinstance(duration, bool) or
+            not math.isfinite(duration) or duration <= 0):
+        raise ValueError('Narration word timing does not match the visible text.')
+    previous = 0.0
+    for value in starts:
+        if (not isinstance(value, (float, int)) or isinstance(value, bool) or
+                not math.isfinite(value) or value < previous or value > duration):
+            raise ValueError('Narration word timing is invalid.')
+        previous = value
+    return starts
 
 def grid_cover(t, title, kind, asset_root, media):
     """Make a complete-title first frame, with key content in the center square."""
@@ -106,8 +127,10 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         # After this brief frame, the existing animated title begins.
         add(grid_cover(t, title, kind, asset_root, media), .24)
         title_words = title.split()
-        hook_frames = 60
         hook_seconds = max(4.0, narration[0]['duration'] + .3) if narration else 4.0
+        title_starts = validated_word_starts(narration[0], len(title_words)) if narration else None
+        hook_frames = max(60, math.ceil(hook_seconds / .10)) if title_starts is not None else 60
+        photo_switch = round(hook_frames * .4) if title_starts is not None else 24
         voice_starts = [elapsed]
         previous_revealed = 0
 
@@ -137,10 +160,10 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
 
                 for index in range(hook_frames):
                     phase = index / max(hook_frames - 1, 1)
-                    photo_index = 1 if len(opening) > 1 and index >= 24 else 0
+                    photo_index = 1 if len(opening) > 1 and index >= photo_switch else 0
                     item, original = opening[photo_index]
-                    photo_phase = ((index - 24) / max(hook_frames - 25, 1)
-                                   if photo_index else index / (23 if len(opening) > 1 else hook_frames - 1))
+                    photo_phase = ((index - photo_switch) / max(hook_frames - photo_switch - 1, 1)
+                                   if photo_index else index / (max(photo_switch - 1, 1) if len(opening) > 1 else hook_frames - 1))
                     aspect = original.width / original.height
                     if aspect < 1.25 or aspect > 2.4:
                         # Preserve tall charts and wide diagrams without
@@ -172,6 +195,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
 
                     reveal_progress = max(0.0, min(1.0, phase / 0.72))
                     revealed = min(len(title_words), 1 + int(reveal_progress * max(0, len(title_words) - 1)))
+                    if title_starts is not None:
+                        revealed = bisect_right(title_starts, index * hook_seconds / hook_frames)
                     visible = ' '.join(title_words[:revealed])
                     if visible:
                         rows = t._wrap(d, visible, title_font, 740)
@@ -199,6 +224,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 d.text((863, 495), '!', font=t._font(asset_root, 54, True), fill=t.INK, anchor='mm')
                 reveal_progress = max(0.0, min(1.0, (phase - 0.04) / 0.72))
                 revealed = min(len(title_words), int(reveal_progress * len(title_words)) + (1 if reveal_progress else 0))
+                if title_starts is not None:
+                    revealed = bisect_right(title_starts, index * hook_seconds / hook_frames)
                 visible = ' '.join(title_words[:revealed])
                 if visible:
                     rows = t._wrap(d, visible, title_font, 820)
@@ -227,6 +254,10 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
             rows=t._wrap(draw,body,font,780)
             if len(rows)>6: font=t._font(asset_root,48); rows=t._wrap(draw,body,font,780)
             if len(rows)>8: raise t.TrialReelError('A story segment does not fit.')
+            row_words = [word for row in rows for word in row.split()]
+            body_starts = validated_word_starts(narration[page-1], len(row_words)) if narration else None
+            if body_starts is not None and row_words != body.split():
+                raise t.TrialReelError('Narration cannot be mapped safely to the existing line wrapping.')
             if body_photos:
                 # Spread all available pictures through the story while text
                 # stays on screen and is revealed word by word.
@@ -250,6 +281,8 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
                 for index in range(frames):
                     elapsed_on_card = index * seconds
                     revealed = min(total_words, max(1, int(elapsed_on_card / word_step) + 1))
+                    if body_starts is not None:
+                        revealed = bisect_right(body_starts, elapsed_on_card)
                     photo_index = min(len(photos) - 1, int(index * len(photos) / frames))
                     item, image = photos[photo_index]
                     segment_start = photo_index * frames / len(photos)
@@ -278,6 +311,22 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
             top=(1920-len(rows)*int(font.size*1.72))//2
             word_count=sum(len(row.split()) for row in rows)
             card_step = max(step, narration[page-1]['duration']/max(word_count,1)) if narration else step
+            if body_starts is not None:
+                # Use frame intervals instead of uniform word durations, so
+                # pauses and expanded numbers remain aligned to the same card.
+                duration = max(word_count * step + 2.0, narration[page-1]['duration'] + .3)
+                frames = max(word_count, math.ceil(duration / .10))
+                previous = 0
+                for frame in range(frames):
+                    revealed = bisect_right(body_starts, frame * duration / frames)
+                    img=blank.copy(); d=ImageDraw.Draw(img); remaining=revealed
+                    for index,row in enumerate(rows):
+                        part=row.split(); count=min(len(part),remaining)
+                        if count: d.text((930,top+index*int(font.size*1.72)),t._rtl(' '.join(part[:count])),font=font,fill=t.INK,anchor='rt')
+                        remaining-=count
+                    add(img,duration / frames,revealed > previous)
+                    previous = revealed
+                continue
             for revealed in range(1,word_count+1):
                 img=blank.copy(); d=ImageDraw.Draw(img); remaining=revealed
                 for index,row in enumerate(rows):
@@ -348,13 +397,23 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         cmd+=['-i',str(sound)]
         if voice_path:
             cmd+=['-i',str(voice_path)]
-            filters=f'[1:a]volume=0.10,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0,elapsed-1):.2f}:d=1[m];[2:a]volume=.25[k];[3:a]volume=1.0[v];[m][k][v]amix=inputs=3:duration=first:normalize=0[a]'
+            from reel_audio_mix import mix_filter
+            try:
+                volume = float(os.environ.get('REEL_MUSIC_VOLUME', '0.50'))
+                ducking = os.environ.get('REEL_AUDIO_DUCKING_ENABLED', 'true').lower()
+                if ducking not in ('true', 'false'):
+                    raise ValueError('Invalid audio ducking configuration.')
+                filters = mix_filter(elapsed, volume, ducking == 'true')
+            except ValueError:
+                raise t.TrialReelError('Narrated Reel audio configuration is invalid.') from None
         else:
             filters=f'[1:a]volume=0.22,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0,elapsed-1):.2f}:d=1[m];[2:a]volume=.7[k];[m][k]amix=inputs=2:duration=first:normalize=0[a]'
         cmd+=['-filter_complex',filters,
               '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p','-c:v','libx264','-preset','veryfast','-crf','25','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
         except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
+
+
 
 
 
