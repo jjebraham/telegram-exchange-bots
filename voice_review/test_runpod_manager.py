@@ -17,12 +17,17 @@ class FakeAPI:
                     'actions': ['start'], 'gpu': {'id': 'test', 'count': 1}}
         self.actions = []
         self.uncertain = False
+        self.bad_ssh = False
     def status(self, pod_id): return dict(self.pod)
     def transition(self, pod_id, action):
         self.actions.append(action)
         if action == 'start':
             if self.uncertain: raise ActionOutcomeUnknown('fake')
-            self.pod.update(status='RUNNING', startedAt=self.started, actions=['stop'])
+            self.pod.update(status='RUNNING', startedAt=self.started, actions=['stop'],
+                            ssh={'direct': {'host': 'example.test', 'port': 2222, 'username': 'root'}},
+                            env={'SECRET': 'do-not-transfer'})
+            if self.bad_ssh:
+                self.pod['ssh']['direct']['host'] = 'bad;command'
         elif action == 'stop':
             self.pod.update(status='EXITED', actions=['start'])
         return dict(self.pod)
@@ -45,7 +50,14 @@ class ManagerTests(unittest.TestCase):
         with patch.object(manager, 'pod_lock', return_value=nullcontext(True)):
             return manager.run_job(self.con, self.api, **dict(self.kw, **overrides))
     def test_verified_output_is_returned_only_after_confirmed_stop(self):
-        self.assertEqual(self.run_job(), 'local-result')
+        targets = []
+        def work(target, lease):
+            targets.append(target)
+            return 'local-result'
+        self.assertEqual(self.run_job(work=work), 'local-result')
+        self.assertNotIn('SECRET', repr(targets))
+        self.assertNotIn('do-not-transfer', repr(targets))
+        self.assertEqual(targets[0]['ssh_port'], 2222)
         self.assertEqual(self.api.actions, ['start', 'stop'])
         self.assertEqual(self.con.execute('SELECT state FROM leases').fetchone()[0], 'CLOSED')
     def test_missing_safeguards_prevent_start(self):
@@ -68,6 +80,12 @@ class ManagerTests(unittest.TestCase):
         self.api.pod['status'] = 'RUNNING'
         with self.assertRaises(manager.ManagerError): self.run_job()
         self.assertEqual(self.api.actions, [])
+
+    def test_unusable_ssh_stops_before_remote_work(self):
+        self.api.bad_ssh = True
+        with self.assertRaises(manager.ManagerError): self.run_job()
+        self.assertEqual(self.api.actions, ['start', 'stop'])
+        self.assertEqual(self.con.execute('SELECT state FROM leases').fetchone()[0], 'CLOSED')
 
 
 if __name__ == '__main__': unittest.main()
