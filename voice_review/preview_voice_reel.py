@@ -189,6 +189,10 @@ def main():
     os.environ['REEL_NARRATION_SPEED'] = str(voices.SPEED)
     os.environ['REEL_MUSIC_VOLUME'] = '0.20'
     os.environ['REEL_AUDIO_DUCKING_ENABLED'] = 'true'
+    from reel_local_settings import read as read_local_settings
+    local_settings = read_local_settings()
+    if 'REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT' in local_settings:
+        os.environ.setdefault('REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT', local_settings['REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT'])
     voice_dir = folder / 'narration'
     voice_dir.mkdir(mode=0o700)
     print('Generating narration for the private preview; ElevenLabs charges may apply.', flush=True)
