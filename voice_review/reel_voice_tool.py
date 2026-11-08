@@ -83,7 +83,9 @@ def main():
             print('Sample generation attempted; ElevenLabs may charge for API requests.')
             if args.action == 'compare':
                 print(json.dumps(telegram.deliver(con, token), ensure_ascii=False, indent=2))
-                review.export_sheet(con, state / 'review.json')
+                backup = review.export_sheet(con, state / 'review.json')
+                if backup:
+                    print('Previous review sheet backup:', backup)
                 print('Editable review sheet:', state / 'review.json')
         elif args.action == 'send':
             token = secret('KIANI_VOICE_TEST_BOT_TOKEN', 'Private test bot token (hidden): ')
@@ -95,7 +97,9 @@ def main():
                       '| verified:', bool(row['verified']), '| score:', row['score'],
                       '| approved:', bool(row['approved']), '| enabled:', bool(row['enabled']))
         elif args.action == 'review-export':
-            review.export_sheet(con, state / 'review.json')
+            backup = review.export_sheet(con, state / 'review.json')
+            if backup:
+                print('Previous review sheet backup:', backup)
             print('Editable review sheet:', state / 'review.json')
         elif args.action == 'review-apply':
             print('Applied reviews:', review.apply_sheet(con, state / 'review.json'))
