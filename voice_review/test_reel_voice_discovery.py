@@ -24,7 +24,7 @@ class DiscoveryTests(unittest.TestCase):
                                    {'name': 'Mahdi', 'voice_id': 'a' * 20}], 'has_more': False}
             if params['search'] == 'Mitra':
                 return {'voices': [{'name': 'Mitra', 'voice_id': 'b' * 20},
-                                   {'name': 'Mitra other', 'voice_id': 'c' * 20}], 'has_more': False}
+                                   {'name': 'Mitrabelle', 'voice_id': 'c' * 20}], 'has_more': False}
             return {'voices': [], 'has_more': False}
         result = {row['name']: row for row in discovery.inspect('key', get=get)}
         self.assertEqual(result['Sahar']['account_matches'][0]['voice_id'], 'lIfJn0EyB8lHm00xiGY8')
