@@ -36,7 +36,7 @@ class WatchdogTests(unittest.TestCase):
         leases.start_confirmed(self.con, self.lease, pod_id='pod-1', provider_status='RUNNING',
                                provider_started_at=started)
         self.api = FakeAPI(started)
-        self.options = dict(expected_pod_id='pod-1', exclusive=True, worker_active=False,
+        self.options = dict(expected_pod_id='pod-1', exclusive=True, worker_lock_held=True, worker_active=False,
                             output_pending=False, job_done=False, now=self.now)
     def tearDown(self):
         self.con.close()
@@ -55,6 +55,8 @@ class WatchdogTests(unittest.TestCase):
     def test_unowned_or_manually_restarted_pod_never_stops(self):
         self.assertEqual(watchdog.tick(self.con, self.api, self.lease,
                                        **dict(self.options, exclusive=False)), 'manual_review')
+        self.assertEqual(watchdog.tick(self.con, self.api, self.lease,
+                                       **dict(self.options, worker_lock_held=False)), 'manual_review')
         self.api.pod['startedAt'] = '2020-01-01T00:00:00Z'
         self.assertEqual(watchdog.tick(self.con, self.api, self.lease, **self.options), 'manual_review')
         self.assertEqual(self.api.actions, [])
