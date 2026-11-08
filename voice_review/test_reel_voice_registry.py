@@ -175,9 +175,82 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(next(v for v in registry.list_voices(self.con) if v['name'] == 'Sahar')['approved'])
         sahar['approved'] = True
         sahar['enabled'] = True
+        sahar['rating_status'] = 'final'
         sheet.write_text(json.dumps(data), encoding='utf-8')
         sheets.apply_sheet(self.con, sheet)
         self.assertTrue(next(v for v in registry.list_voices(self.con) if v['name'] == 'Sahar')['enabled'])
+
+    def test_provisional_seventy_point_rating_does_not_block_explicit_evaluation(self):
+        self.verify_four()
+        registry.save_sample(self.con, 'Sahar', self.sample)
+        ratings = dict(zip(registry.CRITERIA, (8, 7, 5, 8)))
+        registry.review(self.con, 'Sahar', ratings, 'initial opinion', serious_error=False,
+                        approved=False, enabled=False, final=False)
+        registry.enroll_evaluation(self.con, ['Sahar'])
+        row = self.con.execute("SELECT * FROM voices WHERE name='Sahar'").fetchone()
+        self.assertEqual(row['score'], 70)
+        self.assertEqual(row['rating_status'], 'provisional')
+        self.assertFalse(row['approved'])
+        self.assertTrue(row['evaluation_enabled'])
+        self.assertTrue(registry.eligible(row))
+        self.assertEqual(registry.select(self.con, 'evaluation-job')['voice_name'], 'Sahar')
+
+    def test_evaluation_allows_unscored_voice_and_never_uses_opinion_as_weight(self):
+        self.verify_four()
+        for name in ('Sahar', 'Aylin', 'Shahram', 'Adrian'):
+            registry.save_sample(self.con, name, self.sample)
+        registry.enroll_evaluation(self.con, ['Sahar', 'Aylin', 'Shahram', 'Adrian'])
+        with patch.object(registry.secrets, 'choice', side_effect=lambda rows: rows[0]) as choose:
+            first = registry.select(self.con, 'first-evaluation')
+            self.assertEqual(len(choose.call_args.args[0]), 4)
+            registry.mark_published(self.con, 'first-evaluation', '123456789')
+            second = registry.select(self.con, 'second-evaluation')
+            self.assertEqual(len(choose.call_args.args[0]), 3)
+            self.assertNotEqual(first['voice_id'], second['voice_id'])
+
+    def test_provisional_opinion_changes_are_recorded_without_disabling_evaluation(self):
+        self.verify_four()
+        registry.save_sample(self.con, 'Sahar', self.sample)
+        registry.enroll_evaluation(self.con, ['Sahar'])
+        for rating in (7, 6):
+            registry.review(self.con, 'Sahar', {k: rating for k in registry.CRITERIA}, 'not final',
+                            serious_error=False, approved=False, enabled=False, final=False)
+        row = self.con.execute("SELECT * FROM voices WHERE name='Sahar'").fetchone()
+        self.assertTrue(registry.eligible(row))
+        self.assertEqual(row['score'], 60)
+        history = self.con.execute("SELECT score FROM voice_reviews WHERE event='rating' ORDER BY id").fetchall()
+        self.assertEqual([r[0] for r in history], [70, 60])
+
+    def test_serious_error_or_new_sample_revokes_evaluation(self):
+        self.verify_four()
+        registry.save_sample(self.con, 'Sahar', self.sample)
+        registry.enroll_evaluation(self.con, ['Sahar'])
+        registry.review(self.con, 'Sahar', {k: 10 for k in registry.CRITERIA}, 'serious error',
+                        serious_error=True, approved=False, enabled=False, final=False)
+        with self.assertRaises(registry.RegistryError):
+            registry.select(self.con, 'blocked-evaluation')
+        with self.assertRaises(registry.RegistryError):
+            registry.enroll_evaluation(self.con, ['Sahar'])
+
+    def test_evaluation_cannot_enroll_an_unavailable_or_unsampled_voice(self):
+        self.verify_four()
+        with self.assertRaises(registry.RegistryError):
+            registry.enroll_evaluation(self.con, ['Mard'])
+        with self.assertRaises(registry.RegistryError):
+            registry.enroll_evaluation(self.con, ['Sahar'])
+        self.assertEqual(self.con.execute('SELECT SUM(evaluation_enabled) FROM voices').fetchone()[0], 0)
+
+    def test_evaluation_enrollment_is_atomic_and_review_sheet_round_trip_preserves_it(self):
+        self.verify_four()
+        registry.save_sample(self.con, 'Sahar', self.sample)
+        with self.assertRaises(registry.RegistryError):
+            registry.enroll_evaluation(self.con, ['Sahar', 'Mard'])
+        self.assertEqual(self.con.execute('SELECT SUM(evaluation_enabled) FROM voices').fetchone()[0], 0)
+        registry.enroll_evaluation(self.con, ['Sahar'])
+        sheet = self.root / 'provisional.json'
+        sheets.export_sheet(self.con, sheet)
+        sheets.apply_sheet(self.con, sheet)
+        self.assertTrue(registry.eligible(self.con.execute("SELECT * FROM voices WHERE name='Sahar'").fetchone()))
 
     def test_existing_review_sheet_is_backed_up_before_export(self):
         sheet = self.root / 'review.json'
@@ -304,4 +377,3 @@ class RegistryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
