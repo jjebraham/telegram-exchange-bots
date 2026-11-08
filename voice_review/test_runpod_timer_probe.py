@@ -11,7 +11,7 @@ class TimerProbeTests(unittest.TestCase):
     def test_only_stops_the_nonce_unit_created_by_the_probe(self):
         with tempfile.TemporaryDirectory() as root:
             home = Path(root)
-            (home / '.local/state/kiani-instagram-voice-review').mkdir(parents=True)
+            (home / '.local/state/kiani-instagram-voice-review').mkdir(parents=True, mode=0o700)
             calls = []
             def run(args, **kwargs):
                 calls.append(args)
