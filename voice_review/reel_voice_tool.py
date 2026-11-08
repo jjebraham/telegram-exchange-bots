@@ -24,6 +24,18 @@ def secret(name, prompt):
         return getpass.getpass(prompt).strip()
 
 
+def print_discovery(result):
+    for row in result:
+        print(row['name'])
+        print('  Configured ID:', row['configured_id'] or 'not yet established')
+        print('  Available in this account:', json.dumps(row['account_matches'], ensure_ascii=False))
+        print('  Shared-library name matches:', json.dumps(row['shared_matches'], ensure_ascii=False))
+        if row.get('shared_error'):
+            print('  Shared-library check:', row['shared_error'])
+        if row.get('shared_search_incomplete'):
+            print('  Shared-library search was incomplete.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir', type=Path,
@@ -31,6 +43,7 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('discover', help='Read-only voice ID lookup; no synthesis.')
     sub.add_parser('samples', help='Generate available voices; ElevenLabs charges may apply.')
+    sub.add_parser('compare', help='Check private channel, generate samples and send them.')
     sub.add_parser('send', help='Send prepared samples to the specified private channel.')
     sub.add_parser('show', help='List voice availability and review status.')
     sub.add_parser('review-export', help='Write editable review.json.')
@@ -46,29 +59,32 @@ def main():
     args = parser.parse_args()
     if args.action == 'discover':
         key = secret('ELEVENLABS_API_KEY', 'ElevenLabs API key (hidden): ')
-        result = discovery.inspect(key)
-        for row in result:
-            print(row['name'])
-            print('  Configured ID:', row['configured_id'] or 'not yet established')
-            print('  Available in this account:', json.dumps(row['account_matches'], ensure_ascii=False))
-            print('  Shared-library name matches:', json.dumps(row['shared_matches'], ensure_ascii=False))
-            if row.get('shared_error'):
-                print('  Shared-library check:', row['shared_error'])
-            if row.get('shared_search_incomplete'):
-                print('  Shared-library search was incomplete.')
+        print_discovery(discovery.inspect(key))
         print('Read-only lookup complete. Name matches require human confirmation.')
         return
     state = args.state_dir.expanduser()
     con = registry.connect(state / 'voices.sqlite3')
     try:
         registry.seed(con)
-        if args.action == 'samples':
+        if args.action in ('samples', 'compare'):
             key = secret('ELEVENLABS_API_KEY', 'ElevenLabs API key (hidden): ')
+            token = None
+            if args.action == 'compare':
+                token = secret('KIANI_VOICE_TEST_BOT_TOKEN', 'Private test bot token (hidden): ')
+                telegram.verify_destination(token)
+                print('Private Telegram bot and channel verified.', flush=True)
+                print('Checking account and shared-library voice IDs...', flush=True)
+                print_discovery(discovery.inspect(key))
             account = discovery.account_voices(key)
             registry.refresh_access(con, account)
-            results = samples.generate(con, state / 'samples', state / 'narration-cache.sqlite3', key)
+            results = samples.generate(con, state / 'samples', state / 'narration-cache.sqlite3', key,
+                                       progress=lambda name: print('Preparing:', name, flush=True))
             print(json.dumps(results, ensure_ascii=False, indent=2))
             print('Sample generation attempted; ElevenLabs may charge for API requests.')
+            if args.action == 'compare':
+                print(json.dumps(telegram.deliver(con, token), ensure_ascii=False, indent=2))
+                review.export_sheet(con, state / 'review.json')
+                print('Editable review sheet:', state / 'review.json')
         elif args.action == 'send':
             token = secret('KIANI_VOICE_TEST_BOT_TOKEN', 'Private test bot token (hidden): ')
             print(json.dumps(telegram.deliver(con, token), ensure_ascii=False, indent=2))
