@@ -59,6 +59,7 @@ EXTRA_PUBLISHERS = {
     'tradingview.com': 'TradingView',
 }
 OUTLET_ALIASES = {
+    'associated press': 'ap', 'ap news': 'ap',
     'yahoo': 'yahoo finance', 'yahoo! finance canada': 'yahoo finance',
     'wsj': 'wall street journal', 'marketscreener.com': 'marketscreener',
     'www.marketscreener.com': 'marketscreener', 'euronews.com': 'euronews',
