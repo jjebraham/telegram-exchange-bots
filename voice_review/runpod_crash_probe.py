@@ -62,7 +62,7 @@ def fake_watchdog(directory):
         started = con.execute('SELECT provider_started_at FROM leases WHERE lease_id=?', (lease,)).fetchone()[0]
         api = FakePodAPI(started)
         result = watchdog.tick(con, api, lease, expected_pod_id=POD, exclusive=True,
-                               worker_active=False, output_pending=False, job_done=False)
+                               worker_lock_held=True, worker_active=False, output_pending=False, job_done=False)
         state = con.execute('SELECT state FROM leases WHERE lease_id=?', (lease,)).fetchone()['state']
     pending = directory / 'result.pending'
     pending.write_text(json.dumps({'result': result, 'lease_state': state,
