@@ -64,7 +64,7 @@ def shared_matches(name, key, *, get=_get):
         page = get('/v1/shared-voices', {'search': name, 'page_size': 100, 'page': page_number}, key)
         for row in page['voices']:
             if (isinstance(row, dict) and isinstance(row.get('name'), str) and
-                    row['name'].strip().casefold() == name.casefold() and
+                    registry.candidate_name_matches(name, row['name']) and
                     isinstance(row.get('voice_id'), str) and re.fullmatch(r'[A-Za-z0-9]{20}', row['voice_id'])):
                 matches.append({'name': row['name'], 'voice_id': row['voice_id']})
         if page.get('has_more') is False:
@@ -82,7 +82,7 @@ def inspect(key, *, get=_get):
         matches = [{'name': str(row.get('name', ''))[:100], 'voice_id': row.get('voice_id')}
                    for row in account if isinstance(row, dict) and
                    (row.get('voice_id') == configured_id if configured_id else
-                    isinstance(row.get('name'), str) and row['name'].strip().casefold() == name.casefold())]
+                    registry.candidate_name_matches(name, row.get('name')))]
         matches = [row for row in matches if isinstance(row['voice_id'], str) and re.fullmatch(r'[A-Za-z0-9]{20}', row['voice_id'])]
         result = {'name': name, 'configured_id': configured_id, 'account_matches': matches,
                   'shared_matches': [], 'shared_search_incomplete': False}
