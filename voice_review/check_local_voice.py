@@ -34,15 +34,13 @@ def main():
         con.row_factory = sqlite3.Row
         eligible = []
         for row in registry.list_voices(con):
-            allowed = bool(row['available'] and row['verified'] and row['approved'] and row['enabled']
-                           and not row['serious_error'] and row['score'] is not None and row['score'] >= 80
-                           and row['sample_model'] == registry.MODEL and row['sample_speed'] == registry.SPEED
-                           and row['sample_text_hash'] == registry.SAMPLE_HASH)
+            allowed = registry.eligible(row)
             if allowed:
                 eligible.append(row['name'])
             if row['voice_id']:
-                print(row['name'], '| score:', row['score'], '| eligible:', allowed)
-    print('Approved production voices:', ', '.join(eligible) or 'none; human scores/approval required')
+                print(row['name'], '| score:', row['score'], '| rating:', row.get('rating_status', 'final'),
+                      '| evaluation:', bool(row.get('evaluation_enabled', 0)), '| eligible:', allowed)
+    print('Eligible voices (evaluation or final approval):', ', '.join(eligible) or 'none; enrollment required')
     previews = root / 'kiani-instagram-voice-review/previews'
     verified = 0
     for meta in sorted(previews.glob('*/preview.json'), reverse=True)[:50]:
