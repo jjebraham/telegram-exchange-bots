@@ -61,6 +61,8 @@ FILES = (
     'voice_review/test_runpod_watchdog.py',
     'voice_review/runpod_crash_probe.py',
     'voice_review/test_runpod_crash_probe.py',
+    'voice_review/runpod_worker_lock.py',
+    'voice_review/test_runpod_worker_lock.py',
     'voice_review/test_reel_narration_timing.py',
     'voice_review/test_reel_elevenlabs.py',
     'voice_review/test_reel_audio_mix.py',
