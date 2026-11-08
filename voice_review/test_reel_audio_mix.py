@@ -11,6 +11,10 @@ from reel_audio_mix import mix_filter
 
 
 class AudioMixTests(unittest.TestCase):
+    def test_default_music_is_thirty_percent_of_original_base(self):
+        self.assertIn('volume=0.066000', mix_filter(15))
+        self.assertIn('volume=0.110000', mix_filter(15, .50))
+
     def test_invalid_configuration_fails_closed(self):
         for args in ((0,), (2, -1), (2, float('nan')), (2, .5, 'true')):
             with self.subTest(args=args), self.assertRaises(ValueError):
