@@ -1,0 +1,103 @@
+import os
+from pathlib import Path
+import sqlite3
+import sys
+import tempfile
+import types
+import unittest
+from unittest.mock import patch
+import wave
+
+sys.modules.setdefault('fcntl', types.ModuleType('fcntl'))
+usage = types.ModuleType('instagram_reel_usage')
+usage.tracked = lambda *args, **kwargs: lambda function: function
+sys.modules.setdefault('instagram_reel_usage', usage)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'news-python-libs'))
+import instagram_trial_reels as trial
+import reel_voice_registry as voices
+
+
+class IntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.db = self.root / 'voices.sqlite3'
+        self.con = voices.connect(self.db)
+        voices.seed(self.con)
+        voices.refresh_access(self.con, [{'name': 'Sahar - Smooth and Natural',
+                                        'voice_id': 'lIfJn0EyB8lHm00xiGY8'}])
+        self.wav = self.root / 'sample.wav'
+        with wave.open(str(self.wav), 'wb') as out:
+            out.setparams((1, 2, 24000, 24000, 'NONE', 'not compressed'))
+            out.writeframes(b'\0\0' * 24000)
+
+    def tearDown(self):
+        self.con.close()
+        self.temp.cleanup()
+
+    def approve(self):
+        voices.save_sample(self.con, 'Sahar', self.wav)
+        voices.review(self.con, 'Sahar', {name: 8 for name in voices.CRITERIA}, 'test',
+                      serious_error=False, approved=True, enabled=True)
+
+    def test_new_jobs_require_an_approved_voice(self):
+        with patch.object(trial, '_voice_registry_path', return_value=self.db), patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(trial.TrialReelError):
+                trial._select_narrator('job-a')
+            self.approve()
+            selected = trial._select_narrator('job-a')
+            self.assertEqual(selected['voice_id'], 'lIfJn0EyB8lHm00xiGY8')
+            self.assertEqual(trial._select_narrator('job-a')['voice_id'], selected['voice_id'])
+
+    def test_manual_override_cannot_bypass_approval(self):
+        with patch.object(trial, '_voice_registry_path', return_value=self.db), \
+                patch.dict(os.environ, {'REEL_VOICE_OVERRIDE': 'lIfJn0EyB8lHm00xiGY8'}, clear=True):
+            with self.assertRaises(trial.TrialReelError):
+                trial._select_narrator('job-b')
+
+    def test_narration_uses_same_selected_voice_for_all_cards(self):
+        story = {'title_fa': 'خبر آزمایشی', 'summary_fa': 'این یک خبر آزمایشی است.'}
+        output = {'audio': self.wav.read_bytes(), 'starts': [0, .5], 'cached': False}
+        with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key'}, clear=True), \
+                patch('reel_elevenlabs.synthesize_segment', return_value=output) as synth:
+            result = trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8')
+        self.assertEqual(len(result), 2)
+        self.assertTrue(all(call.kwargs['voice_id'] == 'lIfJn0EyB8lHm00xiGY8' for call in synth.call_args_list))
+        self.assertTrue(all(call.kwargs['model'] == 'eleven_v4' for call in synth.call_args_list))
+
+    def test_unreviewed_model_or_speed_stops_before_synthesis(self):
+        story = {'title_fa': 'خبر آزمایشی', 'summary_fa': 'این یک خبر آزمایشی است.'}
+        with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key', 'ELEVENLABS_MODEL': 'eleven_v3'}, clear=True), \
+                patch('reel_elevenlabs.synthesize_segment') as synth:
+            with self.assertRaises(trial.TrialReelError):
+                trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8')
+            synth.assert_not_called()
+
+    def test_reconciliation_records_only_confirmed_published_media(self):
+        self.approve()
+        voices.select(self.con, 'job-confirmed')
+        voices.select(self.con, 'job-pending')
+        voices.select(self.con, 'job-failed')
+        main = sqlite3.connect(':memory:')
+        main.row_factory = sqlite3.Row
+        main.execute('CREATE TABLE trial_reels(trial_id TEXT,status TEXT,media_id TEXT)')
+        main.executemany('INSERT INTO trial_reels VALUES(?,?,?)', [
+            ('job-confirmed', 'published', '123456789'),
+            ('job-pending', 'container_processing', None),
+            ('job-failed', 'failed', None),
+        ])
+        try:
+            with patch.object(trial, '_voice_registry_path', return_value=self.db):
+                trial._reconcile_published_voice_history(main)
+            rows = {r['job_id']: dict(r) for r in self.con.execute('SELECT * FROM selections')}
+            self.assertEqual(rows['job-confirmed']['status'], 'published')
+            self.assertEqual(rows['job-confirmed']['media_id'], '123456789')
+            self.assertEqual(rows['job-pending']['status'], 'reserved')
+            self.assertEqual(rows['job-failed']['status'], 'failed')
+        finally:
+            main.close()
+
+
+if __name__ == '__main__':
+    unittest.main()
+
