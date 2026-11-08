@@ -15,6 +15,7 @@ import sys
 import time
 import uuid
 import warnings
+from urllib.parse import urlsplit
 
 
 def secret(name, prompt):
@@ -65,7 +66,7 @@ def main():
     with closing(sqlite3.connect(trial.DB.resolve().as_uri() + '?mode=ro', uri=True)) as con:
         con.row_factory = sqlite3.Row
         rows = [dict(row) for row in con.execute('''SELECT * FROM trial_reels WHERE status='published'
-            AND article_published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 15''', (now - 86400, now))]
+            AND article_published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 50''', (now - 86400, now))]
         history = con.execute("SELECT music_json FROM trial_reels WHERE music_json IS NOT NULL ORDER BY created_at DESC LIMIT 50").fetchall()
     recent = []
     for row in history:
@@ -77,12 +78,32 @@ def main():
             continue
     if not rows:
         raise RuntimeError('No recently published verified news Reel is available for this preview.')
+    def article_key(url):
+        parts = urlsplit(str(url or ''))
+        return ((parts.hostname or '').lower(), parts.path.rstrip('/'))
+    previous = set()
+    previews = state / 'previews'
+    if previews.is_dir() and not previews.is_symlink():
+        for metadata_path in list(previews.glob('*/preview.json'))[-200:]:
+            try:
+                if not metadata_path.is_symlink() and metadata_path.stat().st_size < 1_000_000:
+                    previous.add(article_key(json.loads(metadata_path.read_text(encoding='utf-8')).get('source_url')))
+            except (OSError, ValueError, AttributeError):
+                continue
+    assets = home / 'kiani-instagram-publisher'
+    trial._font(assets, 56)
+    trial._font(assets, 48)
     folder = state / 'previews' / uuid.uuid4().hex
     folder.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.chmod(folder, 0o700)
     story, media = None, []
     for row in rows:
         try:
+            if article_key(row['source_url']) in previous:
+                continue
+            sections = [row['title_fa']] + trial._narrated_chunks(row['summary_fa'], assets, has_images=True)
+            for text in sections:
+                timing.build_script(text)
             ranked.configure_engine(row['kind'])
             material = engine.source_material(row, now, admin_override=False)
             image_urls = material.get('image_urls') or []
@@ -100,8 +121,8 @@ def main():
         except Exception:
             continue
     if story is None:
-        raise RuntimeError('No recent published article with an accessible verified source image was found.')
-    for text in [story['title_fa']] + trial._chunks(story['summary_fa']):
+        raise RuntimeError('No different recent published article with a complete-sentence layout and accessible source image was found.')
+    for text in [story['title_fa']] + trial._narrated_chunks(story['summary_fa'], assets, has_images=bool(media)):
         timing.build_script(text)
     track, music_file = None, folder / 'music.ogg'
     for candidate in music.select_order(story, recent)[:10]:
@@ -126,15 +147,15 @@ def main():
     os.environ['ELEVENLABS_API_KEY'] = key
     os.environ['ELEVENLABS_MODEL'] = voices.MODEL
     os.environ['REEL_NARRATION_SPEED'] = str(voices.SPEED)
-    os.environ['REEL_MUSIC_VOLUME'] = '0.50'
+    os.environ['REEL_MUSIC_VOLUME'] = '0.30'
     os.environ['REEL_AUDIO_DUCKING_ENABLED'] = 'true'
     voice_dir = folder / 'narration'
     voice_dir.mkdir(mode=0o700)
     print('Generating narration for the private preview; ElevenLabs charges may apply.', flush=True)
     started = time.monotonic()
-    segments = trial._prepare_narration(story, voice_dir, voice['voice_id'])
+    segments = trial._prepare_narration(story, voice_dir, voice['voice_id'], assets, has_images=bool(media))
     output = folder / 'preview.mp4'
-    duration = trial.render_video(story, story['kind'], output, home / 'kiani-instagram-publisher',
+    duration = trial.render_video(story, story['kind'], output, assets,
                                   music_path=music_file, media=media, narration=segments)
     os.chmod(output, 0o600)
     metadata = {'rendering': 'local libx264; not RunPod', 'created_at': time.time(),
