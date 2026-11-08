@@ -92,7 +92,7 @@ def safe_summary(pod):
             'gpu_count': count, 'hourly_compute_usd': cost,
             'storage_kinds': [kind for kind in ('persistent', 'network', 'global') if mounts.get(kind)],
             'direct_ssh_host': host, 'direct_ssh_port': port,
-            'locked': pod.get('locked')}
+            'locked': pod.get('locked') if isinstance(pod.get('locked'), bool) else None}
 
 
 def main():
