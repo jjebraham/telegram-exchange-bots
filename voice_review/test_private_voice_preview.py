@@ -44,6 +44,7 @@ class PreviewTests(unittest.TestCase):
             calls = []
             trial = types.ModuleType('instagram_trial_reels')
             trial.DB = reel_db
+            trial.STATE = home
             trial._font = lambda assets, size: None
             trial._narrated_chunks = lambda text, assets, has_images: [text]
             trial._prepare_narration = lambda story, folder, voice, assets, has_images: [
@@ -61,6 +62,19 @@ class PreviewTests(unittest.TestCase):
             engine.source_material = lambda row, now, admin_override: dict(row, image_urls=['https://example.com/a.jpg'])
             image = types.ModuleType('instagram_reel_source_image')
             image.fetch = lambda engine, source, url, path, timeout: path.write_bytes(b'image')
+            stock = types.ModuleType('instagram_reel_stock')
+            stock.collect = lambda *args, **kwargs: []
+            commons = types.ModuleType('instagram_reel_commons')
+            commons.collect = lambda *args, **kwargs: []
+            preview_images = types.ModuleType('reel_preview_images')
+            def collect_images(story, material, folder, *args, **kwargs):
+                folder.mkdir(parents=True)
+                a, b = folder / 'a.jpg', folder / 'b.jpg'
+                a.write_bytes(b'first')
+                b.write_bytes(b'second')
+                return [{'path': a, 'kind': 'publisher'}, {'path': b, 'kind': 'illustrative', 'provider': 'pixabay'}]
+            preview_images.collect = collect_images
+            preview_images.image_credits = lambda media: 'Pixabay image credit'
             music = types.ModuleType('instagram_trial_music')
             music.select_order = lambda story, recent: ['licensed']
             def retrieve(candidate, path):
@@ -77,7 +91,9 @@ class PreviewTests(unittest.TestCase):
             telegram.deliver_video = deliver
             modules = {'instagram_trial_reels': trial, 'instagram_ranked_news': ranked,
                        'crypto_news_trial': engine, 'instagram_reel_source_image': image,
-                       'instagram_trial_music': music, 'reel_voice_telegram': telegram}
+                       'instagram_reel_stock': stock, 'instagram_reel_commons': commons,
+                       'instagram_trial_music': music, 'reel_voice_telegram': telegram,
+                       'reel_preview_images': preview_images}
             args = ['preview', '--runtime', str(runtime), '--voice', 'Sahar', '--send']
             with patch.object(Path, 'home', return_value=home), patch.object(sys, 'argv', args), \
                     patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test',
@@ -92,8 +108,9 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(data['model'], 'eleven_v4')
             self.assertEqual(data['source_url'], 'https://example.com/news')
             self.assertIn('Licensed music attribution', calls[-1][1])
+            self.assertIn('Pixabay image credit', calls[-1][1])
+            self.assertEqual(len(data['images']), 2)
 
 
 if __name__ == '__main__':
     unittest.main()
-
