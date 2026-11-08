@@ -337,6 +337,10 @@ def _connect():
         con.execute('ALTER TABLE trial_reels ADD COLUMN music_json TEXT')
     if 'reel_mode' not in columns:
         con.execute("ALTER TABLE trial_reels ADD COLUMN reel_mode TEXT NOT NULL DEFAULT 'trial'")
+    if 'voice_json' not in columns:
+        con.execute('ALTER TABLE trial_reels ADD COLUMN voice_json TEXT')
+    if 'duration_seconds' not in columns:
+        con.execute('ALTER TABLE trial_reels ADD COLUMN duration_seconds REAL')
     con.execute('CREATE INDEX IF NOT EXISTS trial_reels_day_status ON trial_reels(posted_day,status)')
     con.execute('CREATE INDEX IF NOT EXISTS trial_reels_source_status ON trial_reels(source_key,status)')
     con.execute('''CREATE TABLE IF NOT EXISTS daily_runs(
@@ -493,7 +497,9 @@ def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
             os.chmod(path, 0o600)
             with wave.open(str(path), 'rb') as voice:
                 duration = voice.getnframes() / voice.getframerate()
-            output.append({'path': path, 'duration': duration, 'word_starts': result['starts']})
+            output.append({'path': path, 'duration': duration, 'word_starts': result['starts'],
+                           'cached': result.get('cached', False),
+                           'submitted_characters': result.get('submitted_characters', 0)})
             if sum(item['duration'] for item in output) + 3.6 > max_seconds:
                 raise TrialReelError('Narration is too long for the selected Reel duration; no Reel was published.')
         return output
@@ -758,18 +764,36 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             if len(caption) + len(addition) <= 2200:
                 caption += addition
                 _update(con, trial_id, caption=caption, updated_at=time.time())
+        _load_voice_modules()
+        from reel_local_settings import load as load_local_voice_settings
+        load_local_voice_settings()
         voice_setting = os.environ.get('REEL_ELEVENLABS_ENABLED', 'false').lower()
         if voice_setting not in ('true', 'false'):
             raise TrialReelError('Reel narration feature flag is invalid.')
         narration = None
+        voice_metadata = None
         if voice_setting == 'true':
+            distinct = {hashlib.sha256(Path(item['path']).read_bytes()).hexdigest() for item in media}
+            if len(distinct) < 2:
+                raise TrialReelError('Narrated Reels require two distinct relevant images before any voice request.')
             voice_temp = tempfile.TemporaryDirectory(prefix='voice-' + trial_id + '-', dir=STATE)
             selected_voice = _select_narrator(trial_id)
+            voice_metadata = {'name': selected_voice['voice_name'], 'voice_id': selected_voice['voice_id'],
+                              'model': 'eleven_v4', 'speed': 1.5, 'renderer': 'local', 'distinct_images': len(distinct)}
+            _update(con, trial_id, voice_json=json.dumps(voice_metadata), updated_at=time.time())
             print('Narration voice selected:', selected_voice['voice_name'], flush=True)
             narration = _prepare_narration(normalized, Path(voice_temp.name), selected_voice['voice_id'],
                                            asset_root, has_images=bool(media))
+        render_started = time.monotonic()
         duration = render_video(normalized, kind, video_path, asset_root,
                                 music_path=music_path if music else None, media=media, narration=narration)
+        if voice_metadata is not None:
+            voice_metadata.update(render_seconds=round(time.monotonic() - render_started, 3),
+                                  music_volume=float(os.environ.get('REEL_MUSIC_VOLUME', '0.20')),
+                                  ducking=os.environ.get('REEL_AUDIO_DUCKING_ENABLED', 'true').lower() == 'true',
+                                  submitted_characters=sum(s['submitted_characters'] for s in narration),
+                                  cached_segments=sum(bool(s['cached']) for s in narration), segments=len(narration))
+            _update(con, trial_id, voice_json=json.dumps(voice_metadata), duration_seconds=duration, updated_at=time.time())
         if stock_used:
             try:
                 from instagram_reel_stock import mark_used
@@ -1186,7 +1210,6 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
 
 
 
