@@ -28,6 +28,23 @@ FILES = (
     'instagram_reel_stock.py',
     'instagram_reel_source_image.py',
     'instagram_reel_motion.py',
+    'voice_review/reel_narration_timing.py',
+    'voice_review/reel_elevenlabs.py',
+    'voice_review/reel_audio_mix.py',
+    'voice_review/reel_voice_registry.py',
+    'voice_review/reel_voice_discovery.py',
+    'voice_review/reel_voice_review.py',
+    'voice_review/reel_voice_samples.py',
+    'voice_review/reel_voice_telegram.py',
+    'voice_review/reel_voice_tool.py',
+    'voice_review/preview_voice_reel.py',
+    'voice_review/test_reel_narration_timing.py',
+    'voice_review/test_reel_elevenlabs.py',
+    'voice_review/test_reel_audio_mix.py',
+    'voice_review/test_reel_voice_registry.py',
+    'voice_review/test_reel_voice_discovery.py',
+    'voice_review/test_trial_voice_integration.py',
+    'voice_review/test_private_voice_preview.py',
     'instagram_ranked_news.py',
     'crypto_news_trial.py',
     'instagram_news_batch.py',
@@ -117,6 +134,8 @@ if __name__ == '__main__':
         print(f'ERROR: {exc}' if isinstance(exc, RuntimeError) else
               f'Instagram Reel setup stopped ({type(exc).__name__}).', file=sys.stderr)
         raise SystemExit(1)
+
+
 
 
 
