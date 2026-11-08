@@ -79,7 +79,8 @@ def run_job(con, api, *, state_dir, pod_id, enabled=False, exclusive=False,
                 raise ManagerError('A running Pod could not be verified; reconciliation is required.')
             try:
                 leases.start_confirmed(con, lease, pod_id=pod_id, provider_status='RUNNING',
-                                       provider_started_at=pod.get('startedAt'))
+                                       provider_started_at=pod.get('startedAt'),
+                                       max_start_delay_seconds=limits.max_uptime_seconds)
             except leases.LeaseError:
                 leases.action_uncertain(con, lease)
                 raise ManagerError('Pod generation was not verified; reconciliation is required.') from None
