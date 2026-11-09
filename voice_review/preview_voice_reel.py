@@ -54,6 +54,7 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--voice', default='Sahar')
     parser.add_argument('--send', action='store_true')
+    parser.add_argument('--latest', action='store_true', help='Use only the newest saved published Reel for this private preview.')
     args = parser.parse_args()
     home = Path.home()
     source_root = (home / '.local/state/kiani-instagram-manual-news/source').resolve()
@@ -100,6 +101,8 @@ def main():
             continue
     if not rows:
         raise RuntimeError('No recently published verified news Reel is available for this preview.')
+    if args.latest:
+        rows = rows[:1]
     previous = set()
     previews = state / 'previews'
     if previews.is_dir() and not previews.is_symlink():
@@ -191,8 +194,9 @@ def main():
     os.environ['REEL_AUDIO_DUCKING_ENABLED'] = 'true'
     from reel_local_settings import read as read_local_settings
     local_settings = read_local_settings()
-    if 'REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT' in local_settings:
-        os.environ.setdefault('REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT', local_settings['REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT'])
+    for name in ('REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT', 'REEL_PRONUNCIATION_ENABLED'):
+        if name in local_settings:
+            os.environ.setdefault(name, local_settings[name])
     voice_dir = folder / 'narration'
     voice_dir.mkdir(mode=0o700)
     print('Generating narration for the private preview; ElevenLabs charges may apply.', flush=True)
@@ -216,6 +220,8 @@ def main():
                             'sha256': hashlib.sha256(Path(item['path']).read_bytes()).hexdigest()}
                            for item in media],
                 'sections': [{'path': str(s['path']), 'duration': s['duration'],
+                              'spoken_script': s.get('spoken_script'),
+                              'pronunciation_status': s.get('pronunciation_status'),
                               'word_starts': s['word_starts']} for s in segments],
                 'video_sha256': hashlib.sha256(output.read_bytes()).hexdigest()}
     meta = folder / 'preview.json'
