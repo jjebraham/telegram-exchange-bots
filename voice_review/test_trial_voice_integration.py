@@ -104,6 +104,15 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result[0]['pronunciation_status'], 'fallback_no_key')
         request.assert_not_called()
 
+    def test_cache_only_preview_stops_before_audio_when_pronunciation_is_missing(self):
+        story = {'title_fa': 'خبر آزمایشی', 'summary_fa': 'این خبر تأیید شده است.'}
+        with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key', 'REEL_PRONUNCIATION_CACHE_ONLY': 'true'}, clear=True), \
+                patch('reel_elevenlabs.synthesize_segment') as synth, \
+                patch.object(trial, '_narrated_chunks', return_value=[story['summary_fa']]):
+            with self.assertRaises(trial.TrialReelError):
+                trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8', self.root, has_images=True)
+        synth.assert_not_called()
+
     def test_sentence_chunks_are_complete_and_text_is_preserved(self):
         local_assets = Path(__file__).resolve().parent.parent / 'telegram-exchange-bots-instagram'
         assets = local_assets if (local_assets / 'fonts/Vazirmatn-Regular.ttf').is_file() else Path.home() / 'kiani-instagram-publisher'
