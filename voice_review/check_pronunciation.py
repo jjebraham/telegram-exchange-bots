@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--audit', action='store_true', help='Read saved failure categories only; no requests or cache changes.')
     parser.add_argument('--retry-one', action='store_true', help='Explicitly allow one additional request for a failed cache entry; never more than two total.')
     parser.add_argument('--reel-id', help='Use this saved published trial ID or media ID instead of the latest Reel.')
+    parser.add_argument('--cached-only', action='store_true', help='Recover or reuse saved pronunciation marks without a model request.')
     args = parser.parse_args()
     if args.retry_one and not args.live:
         parser.error('--retry-one requires --live; it may incur one additional DeepSeek charge.')
@@ -40,7 +41,7 @@ def main():
         print('Saved pronunciation diagnostics:', json.dumps(audit(cache), ensure_ascii=False, indent=2))
         print('Read-only audit complete; no service was contacted.')
         return
-    if not args.live:
+    if not args.live and not args.cached_only:
         print('Offline mapping check passed; no service was contacted.')
         return
     import instagram_trial_reels as trial
@@ -49,7 +50,7 @@ def main():
     from economy_news_translation import load_translation_env
     settings.load()
     load_translation_env(Path.home() / 'sub/.env')
-    if not os.environ.get('DEEPSEEK_API_KEY', '').strip():
+    if not args.cached_only and not os.environ.get('DEEPSEEK_API_KEY', '').strip():
         raise RuntimeError('The existing DeepSeek translation key is not available.')
     if trial.DB.is_symlink() or not trial.DB.is_file():
         raise ValueError('Saved Reel history is unavailable.')
@@ -65,12 +66,17 @@ def main():
         raise ValueError('No saved published Reel was found.')
     story = dict(row)
     sections = [story['title_fa']] + trial._narrated_chunks(story['summary_fa'], Path.home() / 'kiani-instagram-publisher', has_images=True)
-    marked, status = prepare(sections, cache, context=story.get('title_original', ''), retry_failed_once=args.retry_one)
+    marked, status = prepare(sections, cache, context=story.get('title_original', ''), retry_failed_once=args.retry_one,
+                             word_updates=True, cache_only=args.cached_only)
     print('Saved Reel:', story['trial_id'])
     print('Pronunciation pass:', status)
-    if status not in ('prepared', 'cached'):
+    if status not in ('prepared', 'cached', 'recovered_cache'):
         print('Safe failure details:', json.dumps(audit(cache), ensure_ascii=False, indent=2))
         raise RuntimeError('No verified DeepSeek pronunciation result was prepared; keep the current production runtime.')
+    added = sum(len(speech) - len(build_script(text)[0]) for text, speech in zip(sections, marked))
+    print('Added pronunciation marks:', added)
+    if not added:
+        raise RuntimeError('No new pronunciation marks were usable; no audio was requested.')
     for index, (text, spoken) in enumerate(zip(sections, marked), 1):
         print('\nSection', index)
         print('Display:', text)
