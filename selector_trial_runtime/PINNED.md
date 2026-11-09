@@ -2,15 +2,20 @@
 
 ## Option B template update
 
-Only `instagram_news_renderer.py` is intentionally updated from the original
-helper listed below. It now renders a photo/headline cover and full, 64px
-summary pages for one story per carousel. Parsing, translation, source selection
-and the existing carousel publication helper remain byte-identical. The runtime
+`instagram_news_renderer.py` and `economy_news_translation.py` are intentionally
+updated from the original helpers listed below. The renderer makes a photo/headline
+cover and full, 64px summary pages for one story per carousel. Source selection
+and the existing carousel publication helper retain their
+reviewed behavior. The translation helper now requests natural, complete Iranian
+Persian news sentences, preserves financial meaning and uncertainty, and keeps
+pronunciation marks out of display text. New prompt-version cache keys avoid
+reusing older compressed wording; prior cache rows remain intact. Source-number,
+length, Persian-text and link checks are retained. The runtime
 fingerprint and manifests identify the new layout. Original source dates,
-caption attribution and all summary text are preserved. This does not change
+caption attribution and complete rendered summary text are preserved. This does not change
 hourly slots, daily limits, eligibility, Story timing or news retention.
 
-The table below records the original provenance, not the new renderer's hash.
+The table below records the original provenance, not the hashes of the updated renderer or translation helper.
 
 The original helpers were copied byte-for-byte (UTF-8/LF) from:
 `ed50327ee0bd0082be479606f26648a46e35c636` in
