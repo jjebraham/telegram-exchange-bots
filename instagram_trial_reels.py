@@ -484,14 +484,6 @@ def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
         summary = _safe_text(story.get('summary_fa'))
         sections = [title] + _narrated_chunks(summary, asset_root, has_images=has_images)
         from reel_persian_pronunciation import prepare as prepare_pronunciation
-        if not os.environ.get('DEEPSEEK_API_KEY'):
-            try:
-                translation_env = Path.home() / 'sub/.env'
-                if translation_env.is_file():
-                    from economy_news_translation import load_translation_env
-                    load_translation_env(translation_env)
-            except (ImportError, OSError, ValueError, RuntimeError):
-                pass
         spoken, pronunciation_status = prepare_pronunciation(
             sections, STATE / 'pronunciation-cache.sqlite3', context=story.get('title_original', ''))
         print('Persian pronunciation preparation:', pronunciation_status, flush=True)
