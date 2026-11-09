@@ -81,3 +81,26 @@ manual review.
 Trial Reels remain outside this direct-Reel deletion policy. Existing ordinary
 news-retention decisions and all protected rates, gold, calendars, price
 carousels and Stories remain governed by their own existing rules.
+
+## Rejected translation recovery
+
+Translation numbers are compared as exact decimal values after supported Persian/Arabic
+digits and decimal/thousands formats are normalized. Normalization does not round,
+rescale or convert units. A numeric rejection is retained in the private source
+cache's `translation_number_rejections` table, containing only parsed news fields,
+unsupported values and source-number inventory. Provider bodies, reasoning and keys
+are never recorded there. One targeted correction request explains the rejected
+values; rejected text never enters the successful translation cache. The outer
+admin retry cannot restart an exhausted numeric-repair chain.
+
+Scheduled Reels try at most three distinct, source-verified and main-story-checked
+candidates when translations fail validation. Existing category winners are tried
+first. Remaining already-ranked candidates receive additional main-story checks
+only if the initial winners fail; ranking and source collection are not repeated.
+Transport errors abort safely. No fallback is performed after Reel creation,
+container submission or publication starts. Existing slot reservations and
+past failures are not reset or backfilled.
+
+The private Reel database records per-slot translation attempts and sanitized
+rejection codes/values. The read-only schedule report includes those records.
+Older failed attempts cannot gain retroactive numeric details that were never saved.
