@@ -1,5 +1,5 @@
 from io import BytesIO
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 import json
 import os
 from pathlib import Path
@@ -23,9 +23,36 @@ class MappingTests(unittest.TestCase):
             {'section': 0, 'word': 4, 'text': 'پول'},
             {'section': 0, 'word': 5, 'text': 'توسّطِ'},
         ]})
-        self.assertEqual(result, ['احتمالِ در اختیار داشتن کلید توسّطِ سارق'])
-        self.assertEqual((accepted, ignored), (2, 1))
+        self.assertEqual(result, ['احتمالِ در اختیار داشتن کلید توسط سارق'])
+        self.assertEqual((accepted, ignored), (1, 2))
         pronunciation.validate(original, result)
+
+    def test_chip_headline_rejects_added_e_even_before_punctuation(self):
+        text = 'سهام سازندگان تراشه‌های هوش مصنوعی پس از ریزش شدید جهانی رشد کرد.'
+        words = text.split()
+        result, accepted, _ = pronunciation.apply_word_updates([build_script(text)], {'updates': [
+            {'section': 0, 'word': words.index('مصنوعی'), 'text': 'مصنوعیِ'},
+            {'section': 0, 'word': words.index('جهانی'), 'text': 'جهانیِ'},
+            {'section': 0, 'word': words.index('کرد.'), 'text': 'کردِ.'},
+        ]})
+        self.assertEqual(result, [text])
+        self.assertEqual(accepted, 0)
+
+    def test_contextual_exception_does_not_spread_to_other_possibility_phrases(self):
+        original = [build_script('احتمال در اختیار داشتن کلید توسط سارق'), build_script('احتمال رشد بازار')]
+        result, _, _ = pronunciation.apply_word_updates(original, {'updates': [
+            {'section': 1, 'word': 0, 'text': 'احتمالِ'},
+        ]})
+        self.assertEqual(result, ['احتمالِ در اختیار داشتن کلید توسط سارق', 'احتمال رشد بازار'])
+
+    def test_internal_lexical_vowel_survives_but_full_vocalization_is_bounded(self):
+        result, accepted, _ = pronunciation.apply_word_updates([build_script('کل بازار رشد کرد.')], {'updates': [
+            {'section': 0, 'word': 0, 'text': 'کُلِ'},
+            {'section': 0, 'word': 1, 'text': 'بازارِ'},
+            {'section': 0, 'word': 2, 'text': 'رُشد'},
+        ]})
+        self.assertEqual(result, ['کُل بازار رشد کرد.'])
+        self.assertEqual(accepted, 1)
 
     def test_duplicate_or_invalid_word_ids_cannot_choose_a_replacement(self):
         original = [build_script('خبر بازار')]
@@ -129,12 +156,31 @@ class PreparationTests(unittest.TestCase):
         def request(body):
             data = json.loads(body['messages'][1]['content'])
             seen.append(data)
-            self.assertEqual(data['sections'][0], {'id': 0, 'words': ['احتمال', 'رشد']})
-            return {'updates': [{'section': 0, 'word': 0, 'text': 'احتمالِ'}]}
-        result, status = pronunciation.prepare(['احتمال رشد'], self.path, request_fn=request, word_updates=True)
-        self.assertEqual((result, status), (['احتمالِ رشد'], 'prepared'))
-        self.assertEqual(pronunciation.prepare(['احتمال رشد'], self.path, request_fn=request, word_updates=True)[1], 'cached')
+            self.assertEqual(data['sections'][0], {'id': 0, 'words': ['کل', 'بازار']})
+            return {'updates': [{'section': 0, 'word': 0, 'text': 'کُلِ'}]}
+        result, status = pronunciation.prepare(['کل بازار'], self.path, request_fn=request, word_updates=True)
+        self.assertEqual((result, status), (['کُل بازار'], 'prepared'))
+        self.assertEqual(pronunciation.prepare(['کل بازار'], self.path, request_fn=request, word_updates=True)[1], 'cached')
         self.assertEqual(len(seen), 1)
+
+    def test_saved_v2_overmarked_title_is_cleaned_without_request_or_cache_overwrite(self):
+        import hashlib
+        text = 'سهام تراشه‌های هوش مصنوعی پس از ریزش جهانی رشد کرد.'
+        marked = text.replace('مصنوعی', 'مصنوعیِ').replace('جهانی', 'جهانیِ')
+        identity = json.dumps({'version': 2, 'prompt': pronunciation.WORD_PROMPT_V2,
+            'model': os.environ.get('DEEPSEEK_MODEL', 'deepseek-flash'), 'scripts': [text],
+            'context': ''}, ensure_ascii=False, sort_keys=True)
+        old_key = hashlib.sha256(identity.encode()).hexdigest()
+        with closing(sqlite3.connect(self.path)) as con:
+            con.execute('CREATE TABLE pronunciation(cache_key TEXT PRIMARY KEY,status TEXT,result_json TEXT,created_at REAL)')
+            con.execute('INSERT INTO pronunciation VALUES(?,?,?,?)', (old_key, 'ok', json.dumps([marked]), 100))
+            con.commit()
+        result, status = pronunciation.prepare([text], self.path, word_updates=True, cache_only=True,
+            request_fn=lambda body: self.fail('No model request for old marks'))
+        self.assertEqual((result, status), ([text], 'recovered_cache'))
+        with closing(sqlite3.connect(self.path)) as con:
+            self.assertEqual(json.loads(con.execute('SELECT result_json FROM pronunciation WHERE cache_key=?', (old_key,)).fetchone()[0]), [marked])
+            self.assertEqual(con.execute('SELECT SUM(attempts) FROM pronunciation').fetchone()[0], 1)
 
     def test_saved_rejected_response_can_be_recovered_without_a_model_call(self):
         text = 'احتمال در اختیار داشتن کلید توسط سارق'
