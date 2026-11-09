@@ -96,6 +96,8 @@ FILES = (
     'voice_review/test_runpod_systemd_guard.py',
     'voice_review/runpod_api_probe.py',
     'voice_review/runpod_reel_render.py',
+    'voice_review/runpod_ephemeral.py',
+    'voice_review/test_runpod_ephemeral.py',
     'voice_review/runpod_remote_render.py',
     'voice_review/test_runpod_reel_render.py',
     'voice_review/test_runpod_api_probe.py',

@@ -82,14 +82,32 @@ def spend_guard(con,now=None,*,monthly_cap=10.0,reserve=.5):
 
 def command(args,timeout=30):
     result=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,timeout=timeout)
-    if result.returncode: raise RenderError('Remote render command failed')
+    if result.returncode:
+        stderr=result.stderr.decode('utf-8',errors='replace').lower()
+        category='command_failed'
+        for needle,label in (('permission denied','ssh_authentication'),('connection refused','ssh_not_ready'),
+                             ('no such file','missing_render_file'),('unknown encoder','nvenc_not_installed'),
+                             ('libnvidia-encode','nvenc_driver_missing'),('cannot load libcuda','cuda_driver_missing'),
+                             ('no module named','render_dependency_missing'),('error reinitializing filters','video_filter_failed')):
+            if needle in stderr: category=label;break
+        raise RenderError('Render command failed: '+category)
     return result.stdout
 
 
 def remote_work(pod,lease,root,home):
     """Use only API-bound SSH metadata, a pinned host key, and this job's bundle."""
-    from runpod_manager import render_target
-    target=render_target(pod)
+    from runpod_manager import render_target, ManagerError
+    deadline=time.monotonic()+75
+    while True:
+        try:
+            target=render_target(pod);break
+        except ManagerError:
+            if time.monotonic()>=deadline: raise RenderError('Direct render connection did not become available') from None
+            time.sleep(3)
+            current=RunpodAPI(runpod_secrets.read(home/'.config/kiani-instagram-runpod/credentials.env')).status(pod['id'])
+            if current.get('status')!='RUNNING' or current.get('startedAt')!=pod.get('startedAt'):
+                raise RenderError('Render Pod generation changed before connection')
+            pod=current
     host,port,user=target['ssh_host'],target['ssh_port'],target['ssh_user']
     key=home/'.ssh/runpod_reels_ed25519'
     if key.is_symlink() or key.stat().st_mode&0o077: raise RenderError('Protected rendering SSH key unavailable')
@@ -115,15 +133,18 @@ def remote_work(pod,lease,root,home):
     check='import os,json;print(json.dumps({"pod":os.environ.get("RUNPOD_POD_ID")}))'
     identity=json.loads(command(ssh+['python3 -c '+shlex.quote(check)],timeout=15))
     if identity.get('pod')!=pod['id']: raise RenderError('SSH endpoint is not the expected Pod')
+    print('GPU render stage: SSH identity verified',flush=True)
     bootstrap="set -eu; command -v ffmpeg >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg); python3 -c 'import PIL,arabic_reshaper,bidi' 2>/dev/null || python3 -m pip install --disable-pip-version-check --quiet Pillow arabic-reshaper python-bidi"
     started=time.monotonic()
     command(ssh+[bootstrap],timeout=150)
+    print('GPU render stage: dependencies ready',flush=True)
     gpu=command(ssh+['nvidia-smi --query-gpu=name --format=csv,noheader'],timeout=15).decode().strip()
     if pod['gpu']['id'] not in gpu: raise RenderError('Allocated GPU was not verified')
     remote='/tmp/kiani-reel-'+lease
     if not re.fullmatch(r'/tmp/kiani-reel-[a-f0-9]{32}',remote): raise RenderError('Invalid render job identity')
     command(ssh+['mkdir -m 700 '+remote],timeout=15)
     command(['scp',*options,'-P',str(port),str(root/'bundle.tgz'),address+':'+remote+'/bundle.tgz'],timeout=60)
+    print('GPU render stage: encoding verified input bundle',flush=True)
     command(ssh+['tar -xzf '+remote+'/bundle.tgz -C '+remote+' && python3 '+remote+'/code/runpod_remote_render.py '+remote],timeout=240)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/output.mp4',str(root/'output.mp4')],timeout=60)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/result.json',str(root/'remote-result.json')],timeout=15)
@@ -132,66 +153,14 @@ def remote_work(pod,lease,root,home):
         raise RenderError('Retrieved video checksum mismatch')
     # Full local decode catches broken/truncated video or audio before publishing.
     command(['ffmpeg','-v','error','-xerror','-i',str(root/'output.mp4'),'-f','null','-'],timeout=90)
+    print('GPU render stage: video and audio decoded on Selenium',flush=True)
     result.update(gpu=gpu,ssh_host_key_fingerprint=fingerprint,remote_total_seconds=round(time.monotonic()-started,3))
     private_write(root/'result.json',result)
 
 
-def worker(home,lease,unit,root):
-    try:
-        return probe.run_worker(home,lease,unit,work=lambda pod,l:remote_work(pod,l,root,home))
-    except Exception as exc:
-        private_write(root/'error.json',{'category':type(exc).__name__})
-        raise
-
-
 def submit(root,*,home=None):
-    home=Path.home() if home is None else Path(home)
-    root=Path(root).resolve(); state=home/'.local/state/kiani-instagram-runpod'
-    if state not in root.parents: raise RenderError('Render bundle must be in private managed state',fallback_safe=True)
-    job_id=root.name
-    with closing(leases.connect(state/'leases.sqlite3')) as con:
-        # The preflight and spend reservation are serialized with the Pod lock.
-        from runpod_worker_lock import pod_lock
-        cfg=service.private_json(home/'.config/kiani-instagram-runpod/config.json')
-        with pod_lock(state,cfg['pod_id']) as held:
-            if not held or cfg.get('enabled'): raise RenderError('Another managed GPU session is active',fallback_safe=True)
-            month=spend_guard(con)
-            con.execute('INSERT INTO render_spend VALUES(?,?,?,?,?)',(job_id,month,None,.5,'RESERVED'))
-        lease=None
-        def runner(args,**kwargs):
-            args=list(args)
-            index=next(i for i,v in enumerate(args) if v.endswith('/runpod_api_probe.py'))
-            args[index]=str(Path(__file__).resolve())
-            args+=['--job',str(root)]
-            return subprocess.run(args,**kwargs)
-        try:
-            lease=probe.begin(home,runner=runner)
-            con.execute('UPDATE render_spend SET lease_id=? WHERE job_id=?',(lease,job_id))
-            print('Managed GPU render queued; independent watchdog and worker time limit active.',flush=True)
-            deadline=time.monotonic()+540
-            while time.monotonic()<deadline:
-                result=probe.finalize(home,lease)
-                if result in ('already disabled','stopped and watchdog returned to disabled mode') or result.startswith('start rejected;'):
-                    row=con.execute('SELECT state,created_at,updated_at,rate_usd FROM leases WHERE lease_id=?',(lease,)).fetchone()
-                    if not row or row['state'] not in ('CLOSED','START_REJECTED','CANCELLED'): break
-                    cost=0 if row['state']!='CLOSED' else (row['updated_at']-row['created_at'])*row['rate_usd']/3600
-                    con.execute('UPDATE render_spend SET estimate_usd=?,state=? WHERE job_id=?',(cost,row['state'],job_id))
-                    if not (root/'result.json').is_file(): raise RenderError('GPU render did not complete; Pod confirmed stopped',fallback_safe=True)
-                    info=json.loads((root/'result.json').read_text()); info.update(lease_id=lease,estimated_compute_usd=round(cost,6),shutdown_confirmed=True)
-                    private_write(root/'result.json',info)
-                    return info
-                time.sleep(3)
-            raise RenderError('Managed GPU outcome unresolved; watchdog retained')
-        except Exception as exc:
-            if lease is None:
-                active=con.execute("SELECT COUNT(*) FROM leases WHERE pod_id=? AND state IN ('RESERVED','START_REQUESTED','START_CONFIRMED','ACTION_UNCERTAIN','STOP_REQUESTED')",(cfg['pod_id'],)).fetchone()[0]
-                if active:
-                    raise RenderError('GPU launch could not be confirmed; budget reservation and watchdog retained') from None
-                con.execute('UPDATE render_spend SET estimate_usd=0,state=? WHERE job_id=?',('NOT_STARTED',job_id))
-                if isinstance(exc,RenderError): raise
-                raise RenderError('Managed GPU startup preflight failed',fallback_safe=True) from None
-            if isinstance(exc,RenderError): raise
-            raise RenderError('Managed GPU job requires recovery') from None
+    from runpod_ephemeral import submit as submit_disposable
+    return submit_disposable(Path.home() if home is None else Path(home),Path(root).resolve())
 
 
 def render(story,kind,destination,asset_root,*,media,narration,music_path):
@@ -209,11 +178,8 @@ def render(story,kind,destination,asset_root,*,media,narration,music_path):
 
 if __name__=='__main__':
     import argparse
-    p=argparse.ArgumentParser();p.add_argument('--worker');p.add_argument('--unit');p.add_argument('--job',required=True)
-    a=p.parse_args()
-    try:
-        root=Path(a.job).resolve(); state=Path.home()/'.local/state/kiani-instagram-runpod'
-        if state not in root.parents or root.is_symlink(): raise RenderError('Untrusted render job location')
-        print(worker(Path.home(),a.worker,a.unit,Path(a.job)) if a.worker else json.dumps(submit(Path(a.job))),flush=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--job',required=True)
+    args=parser.parse_args()
+    try: print(json.dumps(submit(Path(args.job))),flush=True)
     except Exception as exc:
         print('Managed GPU renderer stopped:',type(exc).__name__,flush=True);raise SystemExit(1)
