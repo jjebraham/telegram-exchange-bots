@@ -127,6 +127,7 @@ def cleanup(home,root,*,force=False):
         if running and not force:
             command(['systemctl','--user','stop',session['unit']],15)
         if session['state']=='PREPARING':
+            if time.time()-session['created_at']<30 and not force: return 'queued'
             return close_budget(home,root,session,'NO_CAPACITY')['state']
         pod=matching_pod(home,session)
         if pod is None:
@@ -161,7 +162,7 @@ def sweep(home):
         try:
             if service.private_json(path).get('state') in TERMINAL: continue
             result=cleanup(home,path.parent)
-            if result not in TERMINAL|{'watching','cleanup_busy','stop_requested'}: failures+=1
+            if result not in TERMINAL|{'watching','queued','cleanup_busy','stop_requested'}: failures+=1
         except Exception: failures+=1
     private_write(root/'render-watchdog-heartbeat.json',{'time':time.time(),'recovery_needed':failures})
     return failures
@@ -175,8 +176,12 @@ def candidates(home):
 
 def worker(home,root):
     session=service.private_json(root/'session.json');unit=session['unit']
-    properties=command(['systemctl','--user','show',unit,'-p','MainPID','-p','ActiveState','-p','RuntimeMaxUSec'],10).decode()
-    validate_properties(properties,os.getpid(),maximum_seconds=420)
+    for attempt in range(10):
+        properties=command(['systemctl','--user','show',unit,'-p','MainPID','-p','ActiveState','-p','RuntimeMaxUSec'],10).decode()
+        try: validate_properties(properties,os.getpid(),maximum_seconds=420);break
+        except Exception:
+            if attempt==9: raise
+            time.sleep(.3)
     verify_watchdog(home)
     command(['systemctl','--user','start',SERVICE],45)
     beat=service.private_json(root/'watchdog.json')
@@ -262,4 +267,4 @@ if __name__=='__main__':
             if root.parent!=paths(home) or not re.fullmatch(r'render-[a-z0-9-]+',root.name): raise RenderError('Invalid job path')
             print(worker(home,root) if args.worker else json.dumps(submit(home,root)),flush=True)
     except Exception as exc:
-        print('GPU session:',type(exc).__name__,flush=True);raise SystemExit(1)
+        print('GPU session:',str(exc) if isinstance(exc,RenderError) else type(exc).__name__,flush=True);raise SystemExit(1)

@@ -50,8 +50,11 @@ class DisposableTests(unittest.TestCase):
         http.assert_not_called()
         self.assertEqual(json.loads((self.root/'session.json').read_text())['state'],'CREATE_REQUESTED')
     def test_preparing_worker_crash_cancels_before_any_possible_create(self):
-        private_write(self.root/'session.json',dict(self.session,state='PREPARING'))
+        private_write(self.root/'session.json',dict(self.session,state='PREPARING',created_at=time.time()-60))
         lookup=Mock();self.assertEqual(self.cleanup(matching_pod=lookup),'NO_CAPACITY');lookup.assert_not_called()
+    def test_watchdog_cannot_cancel_a_worker_before_systemd_has_started_it(self):
+        private_write(self.root/'session.json',dict(self.session,state='PREPARING',created_at=time.time()))
+        lookup=Mock();self.assertEqual(self.cleanup(matching_pod=lookup),'queued');lookup.assert_not_called()
     def test_live_bounded_worker_is_watched_without_requesting_stop(self):
         from contextlib import nullcontext
         with patch('runpod_worker_lock.pod_lock',return_value=nullcontext(True)),patch.object(gpu,'active',return_value=True),patch.object(gpu,'matching_pod') as lookup:
