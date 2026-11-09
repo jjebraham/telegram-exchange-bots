@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 from html.parser import HTMLParser
 import json
@@ -167,8 +168,50 @@ def load_translation_env(path):
 
 def numbers(text):
     text = text.translate(str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫٬', '01234567890123456789.,'))
-    return {value.replace(',', '').lstrip('0') or '0'
-            for value in re.findall(r'\d+(?:[,\.]\d+)*', text)}
+    result = set()
+    for value in re.findall(r'\d+(?:[,\.]\d+)*|(?<!\w)\.\d+', text):
+        if ',' in value:
+            whole, _, fraction = value.partition('.')
+            grouped = re.fullmatch(r'\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})*,\d{3}', whole)
+            if not grouped or ',' in fraction:
+                # Do not mistake a decimal comma or malformed grouping for
+                # a larger integer by blindly deleting every comma.
+                result.add(value)
+                continue
+        value = value.replace(',', '')
+        try:
+            # Formatting Decimal is exact. normalize() would round long
+            # amounts according to the active decimal precision context.
+            canonical = format(Decimal(value), 'f')
+            if '.' in canonical:
+                canonical = canonical.rstrip('0').rstrip('.')
+            result.add(canonical)
+        except InvalidOperation:
+            result.add(value)
+    return result
+
+
+class TranslationNumberError(NewsError):
+    def __init__(self, unsupported, available):
+        super().__init__('Translation introduced a number absent from the source.')
+        self.unsupported_numbers = tuple(sorted(unsupported))
+        self.source_numbers = tuple(sorted(available))
+        self.translation_retry_exhausted = False
+
+
+def record_number_rejection(con, key, material, result, exc, attempt):
+    # Parsed news fields only: never save provider bodies, reasoning or keys.
+    with con:
+        con.execute('''CREATE TABLE IF NOT EXISTS translation_number_rejections(
+            id INTEGER PRIMARY KEY, input_hash TEXT NOT NULL, source_url TEXT,
+            headline_fa TEXT, summary_fa TEXT, unsupported_json TEXT NOT NULL,
+            source_numbers_json TEXT NOT NULL, request_attempt INTEGER NOT NULL,
+            created_at REAL NOT NULL)''')
+        con.execute('''INSERT INTO translation_number_rejections
+            (input_hash,source_url,headline_fa,summary_fa,unsupported_json,source_numbers_json,request_attempt,created_at)
+            VALUES (?,?,?,?,?,?,?,?)''', (key, material.get('source_url'),
+            display_text(result.get('headline_fa')), display_text(result.get('summary_fa')),
+            json.dumps(exc.unsupported_numbers), json.dumps(exc.source_numbers), attempt, time.time()))
 
 
 def validate_translation(result, source, *, min_summary=80):
@@ -181,8 +224,10 @@ def validate_translation(result, source, *, min_summary=80):
         raise NewsError('The selected news needs a Persian headline and summary.')
     if re.search(r'https?://|www\.|@|#', title + summary):
         raise NewsError('Translation must not contain model-added links or hashtags.')
-    if not numbers(title + ' ' + summary) <= numbers(source):
-        raise NewsError('Translation introduced a number absent from the source.')
+    available = numbers(source)
+    unsupported = numbers(title + ' ' + summary) - available
+    if unsupported:
+        raise TranslationNumberError(unsupported, available)
     return title, summary
 
 
@@ -298,12 +343,16 @@ def translate(con, material, request_fn=None):
                               ('title_original', 'source_text', 'source_name', 'article_date')}, ensure_ascii=False)}])
     request_fn = request_fn or (lambda body: request_completion(body, api_key))
     budgets = (4096, 8192, 8192)
+    numeric_feedback = None
+    numeric_repairs = 0
     for attempt, budget in enumerate(budgets, 1):
         messages = list(payload['messages'])
         if attempt > 1:
             messages.append({'role': 'user', 'content':
                 'Return one complete nonempty JSON object with headline_fa and summary_fa. '
                 'Use the original article above and all its factual constraints. No preamble or code fences.'})
+        if numeric_feedback:
+            messages.append({'role': 'user', 'content': numeric_feedback})
         body = dict(payload, max_tokens=budget, messages=messages)
         print(f'DeepSeek translation: attempt {attempt}/{len(budgets)} (JSON, thinking disabled, max_tokens={budget}).')
         value = request_fn(body)
@@ -322,9 +371,29 @@ def translate(con, material, request_fn=None):
             except json.JSONDecodeError:
                 failure = 'invalid_json'
             else:
-                # Valid JSON still must pass Persian, length and source-number checks.
-                # A failed factual check aborts; it is never cached or published.
-                title, summary = validate_translation(result, source, min_summary=20 if rss_summary else 80)
+                # Repair a known rejected response once; transport/uncertain
+                # failures are never retried through this numeric repair path.
+                try:
+                    title, summary = validate_translation(result, source, min_summary=20 if rss_summary else 80)
+                except TranslationNumberError as exc:
+                    record_number_rejection(con, key, material, result, exc, attempt)
+                    if numeric_repairs or attempt == len(budgets):
+                        exc.translation_retry_exhausted = True
+                        raise
+                    numeric_repairs += 1
+                    numeric_feedback = (
+                        'The previous translation failed source-number validation. Unsupported numeric values: ' +
+                        json.dumps(exc.unsupported_numbers) + '. Recheck the ORIGINAL source above and translate afresh. '
+                        'Use only source-supported numerical magnitudes, preserving their dates, units, scale and meaning. '
+                        'Do not round, convert units, calculate new figures, or invent a replacement number merely to pass. '
+                        'If an optional quantity cannot be verified from the source, omit that quantity without adding a new claim. '
+                        'Keep natural Persian wording, uncertainty and the required JSON fields.')
+                    print('Translation number repair: rejected values', json.dumps(exc.unsupported_numbers), '; one correction attempt.', flush=True)
+                    continue
+                except NewsError as exc:
+                    if numeric_repairs:
+                        exc.translation_retry_exhausted = True
+                    raise
                 with con:
                     con.execute('INSERT OR REPLACE INTO economy_translation_cache VALUES (?,?,?,?,?)',
                                 (key, model, title, summary, time.time()))
