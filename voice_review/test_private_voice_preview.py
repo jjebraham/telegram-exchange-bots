@@ -138,6 +138,29 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(len(metadata), 2)
             self.assertTrue(any(json.loads(p.read_text(encoding='utf-8'))['reused_preview_article'] for p in metadata))
 
+            # Exact source matching ignores tracking parameters and refreshes
+            # only the private preview. Published records remain unchanged.
+            calls.clear()
+            before_db = reel_db.read_bytes()
+            revised = dict(source_url='https://example.com/news', kind='crypto',
+                           title_fa='عنوان روشن و تازه', summary_fa='خلاصه روشن و تازه خبر.')
+            comparison = {'stored': {'title_fa': 'خبر آزمایشی', 'summary_fa': 'متن آزمایشی خبر.'},
+                          'title_original': 'Saved news', 'revised': {k: revised[k] for k in ('title_fa', 'summary_fa')}}
+            targeted = args + ['--source-url', 'https://example.com/news?utm_source=test', '--refresh-translation']
+            with patch.object(Path, 'home', return_value=home), patch.object(sys, 'argv', targeted), \
+                    patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test', 'KIANI_VOICE_TEST_BOT_TOKEN': '123456789:abcdefghijklmnopqrstuvwx'}, clear=True), \
+                    patch.dict(sys.modules, modules), \
+                    patch.object(preview, 'refresh_translation', return_value=(revised, comparison)) as refresh:
+                preview.main()
+            self.assertEqual(refresh.call_count, 1)
+            self.assertEqual(refresh.call_args.args[0]['source_url'], 'https://example.com/news')
+            self.assertEqual(reel_db.read_bytes(), before_db)
+            comparisons = list((state / 'previews').glob('*/language-comparison.json'))
+            self.assertEqual(len(comparisons), 1)
+            data = json.loads((comparisons[0].parent / 'preview.json').read_text(encoding='utf-8'))
+            self.assertEqual(data['title_fa'], 'عنوان روشن و تازه')
+            self.assertEqual(data['language_comparison']['stored']['title_fa'], 'خبر آزمایشی')
+
 
 if __name__ == '__main__':
     unittest.main()
