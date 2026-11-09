@@ -17,7 +17,7 @@ import tempfile
 import time
 import uuid
 
-from runpod_api_client import ActionOutcomeUnknown, RunpodAPI, RunpodAPIError
+from runpod_api_client import ActionOutcomeUnknown, ActionRejected, RunpodAPI, RunpodAPIError
 from runpod_guard import GuardError, may_start
 import install_runpod_watchdog as installer
 import runpod_lease_store as leases
@@ -142,6 +142,14 @@ def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
         try:
             try:
                 pod = api.transition(pod_id, 'start')
+            except ActionRejected as exc:
+                stopped = api.status(pod_id)
+                if stopped.get('id') != pod_id:
+                    raise ProbeError('Rejected start identity was not confirmed.')
+                leases.start_rejected(con, lease_id, pod_id=pod_id,
+                                      provider_status=stopped.get('status'), rejection=exc)
+                print('Start refused:', exc.category, '| HTTP', exc.http_status, flush=True)
+                return 'start_rejected'
             except ActionOutcomeUnknown as exc:
                 print('Start request response:',
                       'HTTP ' + str(exc.http_status) if exc.http_status is not None else 'no verified response',
@@ -253,11 +261,13 @@ def finalize(home, lease_id, *, api_factory=RunpodAPI):
             row = con.execute('SELECT pod_id,state FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
             active = con.execute("SELECT COUNT(*) FROM leases WHERE pod_id=? AND state IN "
                 "('RESERVED','START_REQUESTED','START_CONFIRMED','ACTION_UNCERTAIN','STOP_REQUESTED')", (cfg['pod_id'],)).fetchone()[0]
-            if not row or row['pod_id'] != cfg['pod_id'] or row['state'] not in ('CLOSED', 'CANCELLED') or active:
+            if not row or row['pod_id'] != cfg['pod_id'] or row['state'] not in ('CLOSED', 'CANCELLED', 'START_REJECTED') or active:
                 return 'lease unresolved'
             if api.status(cfg['pod_id']).get('status') != 'EXITED':
                 return 'Pod not confirmed stopped'
             set_enabled(config_path, expected=config, enabled=False)
+            if row['state'] == 'START_REJECTED':
+                return 'start rejected; Pod stopped and watchdog returned to disabled mode'
             return 'stopped and watchdog returned to disabled mode'
 
 
@@ -285,6 +295,8 @@ def main():
         if result == 'stopped and watchdog returned to disabled mode':
             print('Probe passed:', result, flush=True)
             return
+        if result.startswith('start rejected;'):
+            raise ProbeError(result)
         if time.monotonic() >= next_update:
             print('Probe status:', result, '| watchdog remains enabled', flush=True)
             next_update = time.monotonic() + 30

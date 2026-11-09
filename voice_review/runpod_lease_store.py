@@ -93,6 +93,16 @@ def start_requested(con, lease_id):
     _change(con, lease_id, ('RESERVED',), 'START_REQUESTED')
 
 
+def start_rejected(con, lease_id, *, pod_id, provider_status, rejection):
+    """Close a refused start only with the actual rejection and stopped state."""
+    from runpod_api_client import ActionRejected
+    row = con.execute('SELECT pod_id,output_pending FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
+    if (not isinstance(rejection, ActionRejected) or not row or row['pod_id'] != pod_id
+            or row['output_pending'] != 0 or provider_status != 'EXITED'):
+        raise LeaseError('A refused start and stopped Pod were not both confirmed.')
+    _change(con, lease_id, ('START_REQUESTED',), 'START_REJECTED')
+
+
 def start_confirmed(con, lease_id, *, pod_id, provider_status, provider_started_at,
                     max_start_delay_seconds=1800):
     row = con.execute('SELECT pod_id,created_at FROM leases WHERE lease_id=?', (lease_id,)).fetchone()

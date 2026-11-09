@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from runpod_api_client import ActionOutcomeUnknown
+from runpod_api_client import ActionOutcomeUnknown, ActionRejected
 import runpod_api_probe as probe
 import runpod_lease_store as leases
 import runpod_secrets
@@ -126,6 +126,20 @@ class APIProbeTests(unittest.TestCase):
             probe.verify_locked_watchdog(self.home)
         with patch.object(probe, 'check_watchdog'), patch.object(probe, '_systemctl', side_effect=disabled):
             with self.assertRaises(probe.ProbeError): probe.verify_locked_watchdog(self.home)
+
+    def test_rejected_capacity_closes_without_blind_retry(self):
+        lease, _ = self.begin()
+        cfg = runpod_supervisor.parse_config(service.private_json(self.path))
+        def rejected(*args):
+            raise ActionRejected(http_status=400, category='capacity_unavailable')
+        self.api.transition = rejected
+        self.assertEqual(probe._worker_locked(self.state, cfg, self.api, lease,
+                         wait=lambda n:None, monotonic=lambda:0), 'start_rejected')
+        with closing(leases.connect(self.state / 'leases.sqlite3')) as con:
+            self.assertEqual(con.execute('SELECT state FROM leases').fetchone()[0], 'START_REJECTED')
+        with patch.object(probe, 'pod_lock', return_value=nullcontext(True)):
+            self.assertTrue(probe.finalize(self.home, lease, api_factory=lambda key:self.api).startswith('start rejected;'))
+        self.assertFalse(service.private_json(self.path)['enabled'])
     def test_finalize_never_disables_watchdog_for_unresolved_lease(self):
         lease, _ = self.begin()
         with patch.object(probe, 'pod_lock', return_value=nullcontext(True)):
