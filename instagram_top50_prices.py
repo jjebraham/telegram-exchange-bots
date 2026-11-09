@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Daily gainers cover plus five top 50 price slides, once per Istanbul day."""
+"""Daily four-slide crypto highlights, once per Istanbul day."""
 from __future__ import annotations
 
 import argparse
@@ -19,11 +19,13 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from crypto_top50_data import PricesError, SnapshotExpiredError, collect, validate_snapshot
-from instagram_top50_renderer import caption, render
+from instagram_top50_renderer import caption, render, SECTIONS
 
 RUNTIME_FILES = ('instagram_top50_prices.py', 'crypto_top50_data.py', 'instagram_top50_renderer.py', 'crypto_akamai_rate.py')
 SHARED_FILES = ('instagram_daily_rates.py', 'assets/instagram/kiani-logo.svg',
-                'fonts/Vazirmatn-Regular.ttf', 'fonts/Vazirmatn-Bold.ttf')
+                'fonts/Vazirmatn-Regular.ttf', 'fonts/Vazirmatn-Bold.ttf',
+                'instagram_calendar_libs/jdatetime/__init__.py',
+                'instagram_calendar_libs/jalali_core/__init__.py')
 DEFAULT_DB = Path.home() / '.local/state/kiani-instagram-top50/top50.sqlite3'
 DEFAULT_OUTPUT = Path('/var/www/peerexo.com/public/instagram-rates/top50')
 DEFAULT_BASE = 'https://peerexo.com/instagram-rates/top50'
@@ -122,8 +124,8 @@ def publish(con, snapshot, manifest, asset_root, public_base):
     sys.modules[spec.name] = helper
     spec.loader.exec_module(helper)
     urls = [public_base.rstrip('/') + '/' + quote(Path(p).name) for p in manifest['images']]
-    if len(urls) != 12 or manifest.get('sections') != ['market_pulse', 'declines'] + ['top50'] * 10:
-        raise PricesError('Exactly twelve ordered slides are required: market pulse, declines, then ten price slides.')
+    if len(urls) != len(SECTIONS) or manifest.get('sections') != list(SECTIONS):
+        raise PricesError('Exactly four ordered slides are required: market pulse, gainers, declines and engagement.')
     with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
         list(pool.map(helper.verify_public_image, urls))
     log_stage('public_images_verified', started, snapshot)
@@ -148,7 +150,7 @@ def publish(con, snapshot, manifest, asset_root, public_base):
             validate_snapshot(snapshot, publishing=True)
             child = helper._create_container({'image_url': url, 'is_carousel_item': 'true'})
             helper._wait_for_container(child)
-            print(f'Top 50 child_ready={index}/12 elapsed={time.monotonic() - started:.1f}s', flush=True)
+            print(f'Top 50 child_ready={index}/{len(urls)} elapsed={time.monotonic() - started:.1f}s', flush=True)
             return child
 
         # SQLite and the parent/final publish remain on the main thread.
@@ -185,7 +187,7 @@ def publish(con, snapshot, manifest, asset_root, public_base):
         with con:
             con.execute("UPDATE top50_publications SET status='published',media_id=?,finished_at=? WHERE day=?",
                         (media_id, time.time(), day))
-        print(f'Published Kiani top 50 cryptocurrency carousel (12 slides, market pulse first, media id: {media_id})')
+        print(f'Published Kiani top 50 cryptocurrency carousel (4 slides, market pulse first, media id: {media_id})')
         log_stage('published', started, snapshot)
         return media_id
     except BaseException as exc:
@@ -208,7 +210,7 @@ def prepare_carousel(con, snapshot, output, root):
                     top50_runtime_fingerprint=fingerprint(Path(__file__).resolve().parent, RUNTIME_FILES),
                     shared_assets_fingerprint=fingerprint(root, SHARED_FILES))
     if snapshot.get('schema') == 3:
-        manifest['sections'] = ['market_pulse', 'declines'] + ['top50'] * 10
+        manifest['sections'] = list(SECTIONS)
     day = datetime.fromisoformat(snapshot['generated_at']).astimezone(ZoneInfo('Europe/Istanbul')).date().isoformat()
     with con:
         con.execute('INSERT INTO top50_snapshots VALUES (?,?,?,?,?)',
@@ -278,7 +280,7 @@ def main():
                 print(f'Top 50 freshness_expired attempt={attempt}/{attempts}: {exc}', flush=True)
                 if attempt == attempts:
                     raise
-                print('Recollecting all prices and rebuilding six new slides; no old evidence or containers reused.', flush=True)
+                print('Recollecting all prices and rebuilding four new slides; no old evidence or containers reused.', flush=True)
                 time.sleep(2)
         return 1
 

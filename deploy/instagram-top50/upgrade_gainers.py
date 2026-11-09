@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upgrade the existing top 50 publisher without changing jobs or posting immediately."""
+"""Activate reviewed four-slide crypto highlights, preserving the existing schedule."""
 from __future__ import annotations
 
 import argparse
@@ -26,14 +26,14 @@ LEGACY = {
     'instagram_top50_prices.py': 'aaaf133b87dc3a57f42e43470195d54a1944e7f891afe786c01ff29a9f7fed07',
     'instagram_top50_renderer.py': '146f861ef8858791305199b195639ab143a2a28c670fc27c1f9a8bc3ec6f1acb',
 }
-DEPLOYED_GAINERS_REVISION = '4ac7df62d40ab64f5310e6be402a622ffa5eb9d6'
+DEPLOYED_GAINERS_REVISION = '9bd51feda9f54e664f904e1ca171c62cd4f8bfc9'
 DEPLOYED_GAINERS_HASHES = {
-    'instagram_top50_prices.py': '6617dbf60487436a8a49c9637f1a6d6570a91cd11e7f5dd680dafbff84c298c0',
+    'instagram_top50_prices.py': '5a85f19b60710f4c629e4bde6a317c26d56d6871dfa7f7756f06dbb17e7f583d',
     'crypto_top50_data.py': '8ce69e40f8d05d732b1870070c82561fed34033b4a2d47af55fdfb6bb78e0d8f',
-    'instagram_top50_renderer.py': '91c7738208529214d9514e9dfce70ad165871655e8d5d1d6940399a73b5f1d0b',
+    'instagram_top50_renderer.py': '09f4df17fadf77a19a7c131defb84010b26b2f94fce6d3dfb42592554e3680dc',
     'crypto_akamai_rate.py': 'e3fe7f9c629a4711d32270e6b3147d31ed1150b864e572428b803f4f8afd134e',
 }
-DEPLOYED_GAINERS_RUNTIME_HASH = '8d21ec43f2a30d7f9bd0ebd967231b2f0dac4df4b8f0b5b3bbb49a7bda2c344f'
+DEPLOYED_GAINERS_RUNTIME_HASH = '0f166886744f7fe7c6d2e61544a93634e09f85245b0b168d6299d137e820f5fc'
 
 
 def owned(path):
@@ -65,6 +65,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--revision', required=True)
+    parser.add_argument('--repo', type=Path, default=Path.home() / 'telegram_bot_repo')
     args = parser.parse_args()
     if not hasattr(os, 'geteuid') or os.geteuid() == 0 or not re.fullmatch('[0-9a-f]{40}', args.revision):
         parser.error('Run as the publisher user without sudo, using the reviewed revision.')
@@ -75,7 +76,11 @@ def main():
     from crypto_top50_data import collect, validate_snapshot
     assets = home / 'kiani-instagram-publisher'
     for name in app.RUNTIME_FILES:
-        ast.parse((runtime / name).read_text(encoding='utf-8'), filename=name)
+        raw = owned(runtime / name)
+        pinned = subprocess.check_output(['git', '-C', str(args.repo), 'show', args.revision + ':' + name], timeout=20)
+        if raw != pinned:
+            raise RuntimeError('Staged runtime differs from pinned source: ' + name)
+        ast.parse(raw, filename=name)
     for path in (home / '.kiani-instagram.env', app.DEFAULT_DB):
         if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.getuid():
             raise RuntimeError('An existing publisher prerequisite is missing: ' + str(path))
@@ -152,16 +157,16 @@ def main():
                 manifest = json.loads(row['manifest_json'])
                 if (manifest.get('top50_runtime_fingerprint') == runtime_hash and
                         manifest.get('shared_assets_fingerprint') == assets_hash and not manifest.get('sample') and
-                        manifest.get('sections') == ['market_pulse', 'declines'] + ['top50']*10 and len(manifest.get('images', [])) == 12):
+                        manifest.get('sections') == list(app.SECTIONS) and len(manifest.get('images', [])) == 4):
                     snapshot = json.loads(row['data_json'])
                     validate_snapshot(snapshot)
                     preview = row['id']
                     break
             if not preview:
-                raise RuntimeError('Run a verified twelve-slide preview from this exact runtime/assets before activation.')
+                raise RuntimeError('Run a verified four-slide preview from this exact runtime/assets before activation.')
         finally:
             con.close()
-        proof_path = app.DEFAULT_DB.parent / 'meta-12-carousel-proof.json'
+        proof_path = app.DEFAULT_DB.parent / 'meta-4-carousel-proof.json'
         proof = json.loads(owned(proof_path))
         account = os.environ.get('INSTAGRAM_USER_ID', '').strip()
         token = os.environ.get('INSTAGRAM_ACCESS_TOKEN', '').strip()
@@ -171,7 +176,7 @@ def main():
                 proof.get('token_hash') != hashlib.sha256(token.encode()).hexdigest() or
                 proof.get('preview_id') != preview or proof.get('ready') is not True or
                 not 0 <= time.time() - float(proof.get('checked_at', 0)) <= 24*3600):
-            raise RuntimeError('A recent matching twelve-image Meta container check is required; no post published.')
+            raise RuntimeError('A recent matching four-image Meta container check is required; no post published.')
         # A new source-only check is required; a historical preview never
         # authorizes reuse of its prices for the next scheduled publication.
         snapshot = collect()
@@ -182,7 +187,7 @@ def main():
                 (owned(metadata_path) if metadata_path.exists() else None) != original_metadata or
                 app.fingerprint(assets, app.SHARED_FILES) != assets_hash):
             raise RuntimeError('Publisher files/assets/schedules changed during preparation; nothing replaced.')
-        backup = Path(tempfile.mkdtemp(prefix='kiani-instagram-gainers-backup-', dir=home))
+        backup = Path(tempfile.mkdtemp(prefix='kiani-crypto-highlights-backup-', dir=home))
         atomic(backup / 'launcher.sh', original, launcher.stat().st_mode & 0o777)
         atomic(backup / 'crontab.txt', original_cron)
         if original_metadata:
@@ -210,7 +215,7 @@ def main():
     print('Market USDT: existing Akamai feed; unadjusted median ask; original source proofs/expiry preserved.')
     print('Preparation: three concurrent slide uploads; at most three total attempts with fresh rebuilds on expiry only.')
     print('Final freshness check remains mandatory. Uncertain publication stops all retries; no stale image/evidence reuse.')
-    print('Feed: daily 16:00 Europe/Istanbul; market pulse, decliners and ten price slides (five coins each).')
+    print('Feed: daily 16:00 Europe/Istanbul; market cover, gainers, decliners and engagement (four slides).')
     print('Market movers: up to five gains and five declines beyond 2%; volume > USD 50,000; CoinPaprika.')
     print('Story: first-slide market pulse, 30 minutes after successful Feed publication.')
     print('Next scheduled attempt:', start.isoformat())

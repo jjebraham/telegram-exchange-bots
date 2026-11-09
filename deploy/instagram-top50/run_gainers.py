@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or activate the small pinned top-50-plus-gainers runtime."""
+"""Preview or activate the pinned four-slide crypto highlights runtime."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,7 @@ RUNTIME = ('instagram_top50_prices.py', 'crypto_top50_data.py', 'instagram_top50
 FILES = RUNTIME + ('deploy/instagram-top50/upgrade_gainers.py',
     'deploy/instagram-top50/run_gainers.py', 'deploy/instagram-top50/activate_top50_cron.py',
     'deploy/instagram-top50/NOTICE', 'deploy/instagram-top50/README.md', 'test_market_pulse.py',
-    'deploy/instagram-top50/check_meta12.py')
+    'deploy/instagram-top50/check_highlights.py', 'test_crypto_highlights.py')
 
 
 def main():
@@ -62,8 +62,8 @@ def main():
         command = [str(python), '-u', str(root / 'instagram_top50_prices.py'),
                    '--publisher-root', str(home / 'kiani-instagram-publisher'), '--output', str(output)]
     print(f'Extracted/verified {len(FILES)} files ({total/1024:.1f} KiB); no repository checkout.', flush=True)
-    print('Activating the twelve-slide market carousel.' if args.activate else
-          'Preview only: market pulse, decliners and 50 prices. No Meta API contact.', flush=True)
+    print('Activating the four-slide crypto carousel.' if args.activate else
+          'Preview only: market cover, gainers, decliners and engagement. No Meta API contact.', flush=True)
     result = subprocess.run(command, cwd=root, env=dict(os.environ, PYTHONIOENCODING='utf-8', TZ='Europe/Istanbul'))
     if result.returncode or args.activate:
         return result.returncode
