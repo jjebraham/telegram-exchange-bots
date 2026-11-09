@@ -54,6 +54,12 @@ _TEENS = ('ده', 'یازده', 'دوازده', 'سیزده', 'چهارده', '�
 _TENS = ('', '', 'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 'هفتاد', 'هشتاد', 'نود')
 _HUNDREDS = ('', 'صد', 'دویست', 'سیصد', 'چهارصد', 'پانصد', 'ششصد', 'هفتصد', 'هشتصد', 'نهصد')
 _SCALES = ('', 'هزار', 'میلیون', 'میلیارد', 'تریلیون')
+_FRACTION_UNITS = (
+    '', 'دهم', 'صدم', 'هزارم', 'ده هزارم', 'صد هزارم',
+    'میلیونم', 'ده میلیونم', 'صد میلیونم', 'میلیاردم',
+    'ده میلیاردم', 'صد میلیاردم', 'تریلیونم',
+    'ده تریلیونم', 'صد تریلیونم', 'هزار تریلیونم',
+)
 _WORDS = {
     'BTC': 'بیت کوین', 'ETH': 'اتریوم', 'USDT': 'تتر',
     'USDC': 'یو اس دی سی', 'XRP': 'ایکس آر پی', 'BNB': 'بی ان بی',
@@ -98,6 +104,19 @@ def persian_integer(digits):
     return ' و '.join(reversed(parts))
 
 
+def _decimal_fraction(digits):
+    """Read a decimal numerator as one integer with its exact place value.
+
+    Leading fractional zeros affect the denominator, never the numerator.
+    Use strings/integers only; do not round or rescale a financial amount.
+    Precision is bounded consistently with the existing integer reader.
+    """
+    if (not digits or not digits.isascii() or not digits.isdigit()
+            or len(digits) >= len(_FRACTION_UNITS)):
+        raise TimingError('Unsupported decimal precision')
+    return persian_integer(digits) + ' ' + _FRACTION_UNITS[len(digits)]
+
+
 @dataclass(frozen=True)
 class DisplayToken:
     text: str
@@ -140,8 +159,11 @@ def _spoken(token):
         if len(integer) > 1 and integer.startswith('0'):
             raise TimingError('A leading-zero number needs pronunciation review')
         result = persian_integer(integer)
-        if separator:
-            result += ' ممیز ' + ' '.join(_ONES[int(d)] for d in fraction)
+        # Trailing zeros need not be narrated: 0.0500 is exactly 0.05.
+        # The original display token stays unchanged, including its precision.
+        fraction = fraction.rstrip('0')
+        if separator and fraction:
+            result += ' ممیز ' + _decimal_fraction(fraction)
         if number.group('sign') in ('-', '−'):
             result = 'منفی ' + result
         elif number.group('sign') == '+':
@@ -219,3 +241,4 @@ def word_starts(script, tokens, alignment, source_duration, speed=1.5):
         result.append(starts[provider_base[plain_offsets[token.start]]] / speed)
         last_end = token.end
     return result
+

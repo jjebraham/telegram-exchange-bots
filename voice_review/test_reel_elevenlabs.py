@@ -57,6 +57,31 @@ class VoiceTests(unittest.TestCase):
                 self.assertEqual(audio.getframerate(), 24000)
                 self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), 2 / 1.5, delta=.15)
 
+    def test_fixed_decimal_script_does_not_reuse_old_audio_and_then_caches(self):
+        from reel_narration_timing import DisplayToken
+        display = 'قیمت 1.38 دلار'
+        old_script = 'قیمت یک ممیز سه هشت دلار'
+        old_tokens = []
+        position = 0
+        for word, spoken in zip(display.split(), ('قیمت', 'یک ممیز سه هشت', 'دلار')):
+            old_tokens.append(DisplayToken(word, spoken, position, position + len(spoken)))
+            position += len(spoken) + 1
+        with tempfile.TemporaryDirectory() as tmp, patch('reel_elevenlabs._generate', side_effect=sample) as request:
+            path = Path(tmp) / 'cache.sqlite3'
+            with patch('reel_elevenlabs.build_script', return_value=(old_script, old_tokens)):
+                legacy = synthesize_segment(display, path, 'test-key')
+            fixed = synthesize_segment(display, path, 'test-key')
+            again = synthesize_segment(display, path, 'test-key')
+            self.assertEqual(fixed['script'], 'قیمت یک ممیز سی و هشت صدم دلار')
+            self.assertNotEqual(legacy['cache_key'], fixed['cache_key'])
+            self.assertFalse(fixed['cached'])
+            self.assertTrue(again['cached'])
+            self.assertEqual(fixed['cache_key'], again['cache_key'])
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(len(fixed['starts']), len(display.split()))
+            self.assertGreater(fixed['submitted_characters'], 0)
+            self.assertEqual(again['submitted_characters'], 0)
+
     def test_changed_display_tokens_cannot_reuse_incompatible_mapping(self):
         with tempfile.TemporaryDirectory() as tmp, patch('reel_elevenlabs._generate', side_effect=sample) as request:
             path = Path(tmp) / 'cache.sqlite3'
@@ -84,4 +109,5 @@ class VoiceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
 
