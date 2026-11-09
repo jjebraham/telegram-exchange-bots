@@ -34,6 +34,7 @@ FILES = (
     'voice_review/test_reel_pronunciation.py',
     'voice_review/test_persian_news_editing.py',
     'voice_review/test_reel_schedule_policy.py',
+    'voice_review/test_reel_translation_recovery.py',
     'voice_review/reel_elevenlabs.py',
     'voice_review/reel_audio_mix.py',
     'voice_review/reel_voice_registry.py',
