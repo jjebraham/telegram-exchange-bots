@@ -37,6 +37,7 @@ def rejected_start(error):
         body = error.read(32769)
     except (OSError, ValueError):
         body = b''
+    if not isinstance(body, bytes): body = b''
     message = body[:32768].decode('utf-8', errors='replace').lower()
     category = 'request_rejected'
     if error.code == 401: category = 'authentication_failed'
