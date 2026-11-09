@@ -398,7 +398,42 @@ def _live_guard():
     return detail, reservation
 
 
-def _caption(story, kind, reel_mode='trial'):
+def _caption_summary(story, budget):
+    """Use verified display text; shorten only the caption, never narration.
+
+    Prefer a complete saved summary, then complete source sentences. If a
+    single sentence cannot fit, make an explicit word-boundary excerpt.
+    Attribution is budgeted separately and is never shortened.
+    """
+    summary = _safe_text(story.get('summary_fa'))
+    full = story.get('full_summary_fa')
+    if isinstance(full, str) and full.strip() and len(full.strip()) <= 12000:
+        full = _safe_text(full)
+    else:
+        full = summary
+    for candidate in (full, summary):
+        if len(candidate) <= budget:
+            return candidate
+    abbreviation = re.compile(r'(?:\b(?:Mr|Mrs|Ms|Dr|Prof|St|vs|etc|e\.g|i\.e|U\.S|U\.K)\.|\b[A-Za-z]\.)$', re.IGNORECASE)
+    for candidate in (full, summary):
+        best = ''
+        for boundary in re.finditer(r'[.!?؟۔](?:[»”"\']*)?(?:\s+|$)', candidate):
+            prefix = candidate[:boundary.end()].strip()
+            if len(prefix) > budget:
+                break
+            if not abbreviation.search(prefix):
+                best = prefix
+        if best:
+            return best
+    candidate = summary[:max(0, budget - 1)]
+    # rsplit keeps whole tokens, including decimal financial amounts.
+    words = candidate.rsplit(None, 1)[0].strip() if len(summary) > len(candidate) and any(ch.isspace() for ch in candidate) else ''
+    if len(words) < 40:
+        raise TrialReelError('Not enough caption space for Persian news and required credits.')
+    return words + '…'
+
+
+def _caption(story, kind, reel_mode='trial', *, include_summary=True, extra_credits=()):
     if story.get('story_type') == 'forecast':
         label = 'پیش‌بینی کریپتو' if kind == 'crypto' else 'پیش‌بینی اقتصادی'
     elif story.get('story_type') == 'promotional':
@@ -407,15 +442,31 @@ def _caption(story, kind, reel_mode='trial'):
         label = 'تحلیل کریپتو' if kind == 'crypto' else 'تحلیل اقتصادی'
     else:
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
-    text = ('صرافی کیانی | ' + label + '\n\n' + story['title_fa'] + '\n\nمنبع: ' +
-        story['source_name'] + '\n' + story['source_url'])
+    brand = 'صرافی کیانی | ' + label
+    source = 'منبع: ' + story['source_name'] + '\n' + story['source_url']
+    notes = []
     if story.get('source_scope') == 'coindesk_rss_summary':
-        text += '\n\nاین ویدئو بر اساس عنوان و خلاصه فید رسمی کوین‌دسک تهیه شده است.'
-    full_summary = story.get('full_summary_fa')
-    if isinstance(full_summary, str) and full_summary.strip() and full_summary.strip() != story.get('summary_fa', '').strip():
-        text += '\n\nنسخه کوتاه خبر'
+        notes.append('این ویدئو بر اساس عنوان و خلاصه فید رسمی کوین‌دسک تهیه شده است.')
     if reel_mode == 'trial':
-        text += '\n\nاین ویدئو به‌صورت Trial Reel منتشر شده است.'
+        notes.append('این ویدئو به‌صورت Trial Reel منتشر شده است.')
+    if not include_summary:
+        # Preserve the existing media-selection/credit budget while gathering
+        # assets. This draft is replaced before narration or publication.
+        text = brand + '\n\n' + story['title_fa'] + '\n\n' + source
+        full = story.get('full_summary_fa')
+        if notes and story.get('source_scope') == 'coindesk_rss_summary':
+            text += '\n\n' + notes[0]
+        if isinstance(full, str) and full.strip() and full.strip() != story.get('summary_fa', '').strip():
+            text += '\n\nنسخه کوتاه خبر'
+        if reel_mode == 'trial':
+            text += '\n\n' + notes[-1]
+    else:
+        title = _safe_text(story.get('title_fa'), 500)
+        credits = [str(credit).strip() for credit in extra_credits if str(credit).strip()]
+        footer = '\n\n'.join([brand, source] + notes + credits)
+        budget = 2200 - len(title) - len(footer) - 4
+        body = _caption_summary(story, budget)
+        text = title + '\n\n' + body + '\n\n' + footer
     if len(text) > 2200:
         raise TrialReelError('Trial Reel caption exceeds Instagram’s length limit.')
     return text
@@ -584,11 +635,14 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     if normalized['story_type'] not in {'hard_news', 'opinion', 'forecast', 'roundup', 'promotional'}:
         raise TrialReelError('The selected story type is not eligible for Trial Reels.')
     source_key = _source_key(normalized['source_url'])
-    caption = _caption(normalized, kind, reel_mode)
+    caption = _caption(normalized, kind, reel_mode, include_summary=False)
+    caption_credits = []
     from instagram_reel_media import select as select_media, caption as media_caption
     media = select_media(normalized)
     if media:
-        caption += '\n\n' + media_caption(media)
+        initial_credit = media_caption(media)
+        caption += '\n\n' + initial_credit
+        caption_credits.append(initial_credit)
         if len(caption) > 2200:
             raise TrialReelError('Trial Reel caption with image credits is too long.')
     trial_id = uuid.uuid4().hex
@@ -678,7 +732,9 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                                 break
                 media = media[:8]
                 print('Reel images selected:', len(media), flush=True)
-                caption += '\n\nتصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
+                publisher_credit = 'تصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
+                caption += '\n\n' + publisher_credit
+                caption_credits.append(publisher_credit)
                 if len(caption)>2200: raise TrialReelError('Caption with image credit is too long.')
                 _update(con, trial_id, caption=caption, updated_at=time.time())
             except TrialReelError:
@@ -706,6 +762,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                     if len(caption) + len(addition) > 1650:
                         continue
                     caption += addition
+                    caption_credits.append(addition.strip())
                     providers_credited.add(provider)
                     seen.add(digest)
                     media.append(item)
@@ -734,6 +791,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                         continue
                     seen.add(digest)
                     caption += credit
+                    caption_credits.append(credit.strip())
                     media.append(item)
                     commons_added = True
             except Exception as exc:
@@ -742,7 +800,9 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 _update(con, trial_id, caption=caption, updated_at=time.time())
         print('Total verified Reel images:', len(media), flush=True)
         if any(item.get('kind') == 'illustrative' for item in media):
-            caption = 'برخی تصاویر این ویدئو نمادین هستند.\n\n' + caption
+            disclosure = 'برخی تصاویر این ویدئو نمادین هستند.'
+            caption = disclosure + '\n\n' + caption
+            caption_credits.insert(0, disclosure)
             if len(caption) > 2200:
                 raise TrialReelError('Reel caption with image disclosure is too long.')
             _update(con, trial_id, caption=caption, updated_at=time.time())
@@ -768,18 +828,16 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 print('Music source unavailable or unverified:', type(exc).__name__, flush=True)
         if music:
             music['content_mood'] = classify_story(normalized)
-            caption += '\n\n' + caption_credit(music)
+            music_credit = caption_credit(music)
+            caption += '\n\n' + music_credit
+            caption_credits.append(music_credit)
             if len(caption) > 2200:
                 raise TrialReelError('Trial Reel caption with music credit is too long.')
             _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
-        full_summary = normalized.get('full_summary_fa')
-        if isinstance(full_summary, str) and full_summary.strip() and full_summary.strip() != normalized['summary_fa'].strip():
-            addition = '\n\nخلاصه کامل خبر:\n' + full_summary.strip()
-            if len(caption) + len(addition) <= 2200:
-                caption += addition
-                _update(con, trial_id, caption=caption, updated_at=time.time())
+        caption = _caption(normalized, kind, reel_mode, extra_credits=caption_credits)
+        _update(con, trial_id, caption=caption, updated_at=time.time())
         _load_voice_modules()
         from reel_local_settings import load as load_local_voice_settings
         load_local_voice_settings()
