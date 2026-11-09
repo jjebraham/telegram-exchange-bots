@@ -68,6 +68,29 @@ configuration for a complete runtime rollback. No RunPod configuration is touche
 
 ### Speech-only Persian pronunciation marks
 
+The active staged protocol now requests sparse annotations of words identified
+by section and word indices. Whole-sentence rewriting is not used. Each proposed
+word must preserve every original character and only insert valid marks; bad,
+out-of-range or duplicate edits are ignored independently. The application
+rebuilds speech from the original words and whitespace, then validates the full
+result. A changed model proposal can no longer discard all other valid words.
+
+For migration, a saved rejected sentence response may supply marks only for
+unchanged words at stable positions, with unchanged immediate neighbors.
+Sections with a changed word count are skipped. Altered words and their
+neighbors keep their original pronunciation. The recovered result is fully
+validated and cached under the word-annotation protocol without a new model
+request. Old cache entries and attempt counts are retained. This preserves
+literal news content; it does not prove that every accepted vowel is correct.
+
+`check_pronunciation.py --runtime RUNTIME --cached-only --reel-id SAVED_ID`
+attempts this recovery without DeepSeek. The live checker also prefers recovery
+before making one new word-annotation request. It displays the number of added
+marks. Private previews can target that exact saved Reel with `--reel-id` and
+use `--cached-pronunciation-only` to prohibit DeepSeek and stop before audio
+when no checked pronunciation is cached. New audio still uses ElevenLabs
+credits. This provides a private audio check before production activation.
+
 Narrated Reels make one bounded DeepSeek request for all expanded speech
 sections together, using the title and surrounding sentences for context.
 Only additive short-vowel/ezafe marks, shadda, sukun and supported tanwin are
