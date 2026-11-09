@@ -66,6 +66,39 @@ configuration for a complete runtime rollback. No RunPod configuration is touche
 
 ## Reliability and accounting
 
+### Speech-only Persian pronunciation marks
+
+Narrated Reels make one bounded DeepSeek request for all expanded speech
+sections together, using the title and surrounding sentences for context.
+Only additive short-vowel/ezafe marks, shadda, sukun and supported tanwin are
+accepted. Every existing letter, digit, space, zero-width joiner and punctuation
+mark must remain exact. The displayed story is unchanged. Existing number,
+date and currency expansion happens before the pronunciation pass.
+
+The result is cached independently of voice so it can be reused across
+narrators. Cache hits are validated again. Lost, malformed or text-changing
+results fall back to the original speech script without an automatic second
+DeepSeek request. A missing key also uses the original script. The existing
+production DeepSeek transport accounts for the call within a tracked Reel run.
+This is an extra model request on a new pronunciation-cache miss; it can incur
+DeepSeek charges. Cache reservations avoid repeated charges after a lost
+response, but they cannot establish the provider's final bill.
+
+Word offsets are remapped to the marked speech while preserving visible
+tokens. Alignment may include or omit combining marks, but its base characters
+must still match. ElevenLabs caching includes the exact speech script, so old
+unmarked audio cannot be mistaken for corrected audio. Model-generated marks
+can still be linguistically wrong; review a real private audio preview.
+
+`REEL_PRONUNCIATION_ENABLED=false` in the private local-render settings opts
+out of the pronunciation pass while retaining narration. It defaults on in
+this staged update. `check_pronunciation.py --runtime RUNTIME --live` inspects
+one cached DeepSeek result for the latest saved published Reel, without an
+ElevenLabs or Instagram call. `preview_voice_reel.py --runtime RUNTIME
+--latest --voice Sahar --send` renders and sends a private preview through the
+existing verified test channel. New audio uses ElevenLabs credits. Test this
+update privately before switching the active production runtime.
+
 Random selection is uniform among eligible final-approved or explicitly
 evaluation-enrolled voices after excluding the last
 published and currently reserved voice. Overrides still require approval.
