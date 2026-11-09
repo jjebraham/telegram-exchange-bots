@@ -15,6 +15,38 @@ import reel_elevenlabs as eleven
 
 
 class MappingTests(unittest.TestCase):
+    def test_word_updates_keep_all_original_words_and_ignore_bad_edits(self):
+        text = 'احتمال در اختیار داشتن کلید توسط سارق'
+        original = [build_script(text)]
+        result, accepted, ignored = pronunciation.apply_word_updates(original, {'updates': [
+            {'section': 0, 'word': 0, 'text': 'احتمالِ'},
+            {'section': 0, 'word': 4, 'text': 'پول'},
+            {'section': 0, 'word': 5, 'text': 'توسّطِ'},
+        ]})
+        self.assertEqual(result, ['احتمالِ در اختیار داشتن کلید توسّطِ سارق'])
+        self.assertEqual((accepted, ignored), (2, 1))
+        pronunciation.validate(original, result)
+
+    def test_duplicate_or_invalid_word_ids_cannot_choose_a_replacement(self):
+        original = [build_script('خبر بازار')]
+        result, accepted, ignored = pronunciation.apply_word_updates(original, {'updates': [
+            {'section': 0, 'word': 0, 'text': 'خَبَر'},
+            {'section': 0, 'word': 0, 'text': 'خِبَر'},
+            {'section': True, 'word': 0, 'text': 'خَبَر'},
+            {'section': 0, 'word': 99, 'text': 'خبَر'},
+        ]})
+        self.assertEqual(result, ['خبر بازار'])
+        self.assertEqual(accepted, 0)
+        self.assertEqual(ignored, 4)
+
+    def test_legacy_recovery_discards_changed_word_and_its_neighborhood(self):
+        original = [build_script('احتمال در اختیار داشتن کلید توسط سارق')]
+        response = {'sections': ['احتمالِ در اختیار داشتنِ پول توسّطِ سارق']}
+        marked, count = pronunciation.recover_legacy(original, response)
+        self.assertEqual(marked, ['احتمالِ در اختیار داشتن کلید توسط سارق'])
+        self.assertEqual(count, 1)
+        self.assertIsNone(pronunciation.recover_legacy(original, {'sections': ['احتمالِ در اختیار داشتن پول اضافی توسط سارق']}))
+
     def test_ezafe_marks_are_speech_only_and_offsets_remain_exact(self):
         display = 'احتمال در اختیار داشتن کلید توسط سارق'
         script, tokens = build_script(display)
@@ -91,6 +123,36 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(seen), 1)
         self.assertIn('احتمالِ', first[0])
+
+    def test_word_protocol_asks_only_for_sparse_identified_word_annotations(self):
+        seen = []
+        def request(body):
+            data = json.loads(body['messages'][1]['content'])
+            seen.append(data)
+            self.assertEqual(data['sections'][0], {'id': 0, 'words': ['احتمال', 'رشد']})
+            return {'updates': [{'section': 0, 'word': 0, 'text': 'احتمالِ'}]}
+        result, status = pronunciation.prepare(['احتمال رشد'], self.path, request_fn=request, word_updates=True)
+        self.assertEqual((result, status), (['احتمالِ رشد'], 'prepared'))
+        self.assertEqual(pronunciation.prepare(['احتمال رشد'], self.path, request_fn=request, word_updates=True)[1], 'cached')
+        self.assertEqual(len(seen), 1)
+
+    def test_saved_rejected_response_can_be_recovered_without_a_model_call(self):
+        text = 'احتمال در اختیار داشتن کلید توسط سارق'
+        pronunciation.prepare([text], self.path, request_fn=lambda body: {
+            'sections': ['احتمالِ در اختیار داشتنِ پول توسّطِ سارق']})
+        with patch.dict(os.environ, {}, clear=True):
+            marked, status = pronunciation.prepare([text], self.path, word_updates=True, cache_only=True,
+                request_fn=lambda body: self.fail('Recovery must not request the model'))
+        self.assertEqual(status, 'recovered_cache')
+        self.assertEqual(marked, ['احتمالِ در اختیار داشتن کلید توسط سارق'])
+        self.assertEqual(pronunciation.prepare([text], self.path, word_updates=True, cache_only=True)[1], 'cached')
+
+    def test_cache_only_mode_never_requests_when_recovery_is_impossible(self):
+        pronunciation.prepare(['خبر بازار'], self.path, request_fn=lambda body: {'sections': ['کاملاً متفاوت است']})
+        marked, status = pronunciation.prepare(['خبر بازار'], self.path, word_updates=True, cache_only=True,
+            request_fn=lambda body: self.fail('No model request permitted'))
+        self.assertEqual(marked, ['خبر بازار'])
+        self.assertEqual(status, 'fallback_no_usable_cached_marks')
 
     def test_changed_words_fall_back_without_another_model_call(self):
         seen = []
