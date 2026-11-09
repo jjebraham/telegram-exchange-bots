@@ -20,6 +20,7 @@ RED_THEME = {'background': '#2D1016', 'panel': '#411B25', 'accent': RED, 'muted'
 SECTIONS = ('market_pulse', 'gainers', 'declines', 'engagement')
 
 NAMES = {
+    'lit-lighter': 'لایتر',
     'btc-bitcoin': 'بیت‌کوین', 'eth-ethereum': 'اتریوم', 'bnb-binance-coin': 'بی‌ان‌بی',
     'xrp-xrp': 'ریپل', 'sol-solana': 'سولانا', 'trx-tron': 'ترون', 'zec-zcash': 'زی‌کش',
     'hype-hyperliquid': 'هایپرلیکوئید', 'doge-dogecoin': 'دوج‌کوین', 'xmr-monero': 'مونرو',
