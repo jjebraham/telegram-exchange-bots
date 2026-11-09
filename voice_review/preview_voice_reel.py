@@ -55,6 +55,8 @@ def main():
     parser.add_argument('--voice', default='Sahar')
     parser.add_argument('--send', action='store_true')
     parser.add_argument('--latest', action='store_true', help='Use only the newest saved published Reel for this private preview.')
+    parser.add_argument('--reel-id', help='Use this exact saved published trial ID or media ID.')
+    parser.add_argument('--cached-pronunciation-only', action='store_true', help='Require cached pronunciation; never request DeepSeek for this preview.')
     args = parser.parse_args()
     home = Path.home()
     source_root = (home / '.local/state/kiani-instagram-manual-news/source').resolve()
@@ -88,8 +90,14 @@ def main():
     now = time.time()
     with closing(sqlite3.connect(trial.DB.resolve().as_uri() + '?mode=ro', uri=True)) as con:
         con.row_factory = sqlite3.Row
-        rows = [dict(row) for row in con.execute('''SELECT * FROM trial_reels WHERE status='published'
-            AND article_published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 50''', (now - 7 * 86400, now))]
+        if args.reel_id:
+            import re
+            if not re.fullmatch('[A-Za-z0-9_-]{1,80}', args.reel_id):
+                raise RuntimeError('Invalid saved Reel identity.')
+            rows = [dict(row) for row in con.execute("SELECT * FROM trial_reels WHERE status='published' AND (trial_id=? OR media_id=?)", (args.reel_id, args.reel_id))]
+        else:
+            rows = [dict(row) for row in con.execute('''SELECT * FROM trial_reels WHERE status='published'
+                AND article_published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 50''', (now - 7 * 86400, now))]
         history = con.execute("SELECT music_json FROM trial_reels WHERE music_json IS NOT NULL ORDER BY created_at DESC LIMIT 50").fetchall()
     recent = []
     for row in history:
@@ -192,6 +200,8 @@ def main():
     os.environ['REEL_NARRATION_SPEED'] = str(voices.SPEED)
     os.environ['REEL_MUSIC_VOLUME'] = '0.20'
     os.environ['REEL_AUDIO_DUCKING_ENABLED'] = 'true'
+    if args.cached_pronunciation_only:
+        os.environ['REEL_PRONUNCIATION_CACHE_ONLY'] = 'true'
     from reel_local_settings import read as read_local_settings
     local_settings = read_local_settings()
     for name in ('REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT', 'REEL_PRONUNCIATION_ENABLED'):
