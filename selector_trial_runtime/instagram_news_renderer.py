@@ -1,4 +1,4 @@
-"""Code-native Persian news cards using the existing Instagram font and logo."""
+"""Readable Option B news carousels with the existing Kiani font and logo."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -15,9 +15,14 @@ import xml.etree.ElementTree as ET
 
 import arabic_reshaper
 from bidi.algorithm import get_display
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 
-INK, MUTED, GREEN, RED = '#15201B', '#708078', '#1C8C67', '#D9362C'
+INK, MUTED, GREEN, RED = '#173D32', '#70857D', '#1C8C67', '#D9362C'
+LAYOUT_VERSION = 'kiani-news-carousel-b-v1'
+BODY_FONT_PX = 64
+BODY_LEADING = 96
+BODY_LINES_PER_PAGE = 7
+ASSET_FILES = ('assets/instagram/kiani-logo.svg', 'fonts/Vazirmatn-Regular.ttf', 'fonts/Vazirmatn-Bold.ttf')
 DIGITS = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
 
 
@@ -89,9 +94,17 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
                 caption_title='صرافی کیانی | خبر کریپتو',
                 caption_footer='اخبار فارسی کریپتو در تلگرام: https://t.me/kriptofarsi',
                 require_image=False):
+    """Render one cover and lossless large-type summary pages; never publish."""
+    if len(stories) != 1:
+        raise ValueError('Each readable news carousel must contain exactly one story.')
     output = Path(output).expanduser().resolve()
     asset_root = Path(asset_root).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    story = metadata(dict(stories[0]))
+    title = re.sub(r'\s+', ' ', str(story.get('title_fa') or '')).strip()
+    summary = re.sub(r'\s+', ' ', str(story.get('summary_fa') or '')).strip()
+    if not title or not summary or len(title) > 300 or len(summary) > 8000:
+        raise ValueError('A bounded, nonempty verified headline and summary are required.')
     fonts = {}
 
     def font(size, bold=False):
@@ -104,150 +117,189 @@ def render_news(stories, output, asset_root, *, news_label='خبر کریپتو'
     def rtl(text):
         return get_display(arabic_reshaper.reshape(str(text).translate(DIGITS)), base_dir='R')
 
-    def fa(draw, text, xy, size, *, bold=False, fill=INK, anchor='rm'):
+    def fa(draw, text, xy, size, *, bold=False, fill=INK, anchor='rt'):
         draw.text(xy, rtl(text), font=font(size, bold), fill=fill, anchor=anchor)
 
-    def wrap(draw, text, size, bold=False, width=952):
-        rows, row = [], ''
-        for word in str(text).split():
-            candidate = (row + ' ' + word).strip()
-            if row and draw.textlength(rtl(candidate), font=font(size, bold)) > width:
-                rows.append(row)
-                row = word
-            else:
-                row = candidate
-        if row:
-            rows.append(row)
-        for row in rows:
-            if draw.textlength(rtl(row), font=font(size, bold)) > width:
-                raise ValueError('A news word/link is too wide; edit the saved Persian summary before publishing.')
+    scratch = ImageDraw.Draw(Image.new('RGB', (1080, 1350)))
+
+    def wrap_spans(text, size, width, bold=False):
+        """Keep original character spans, including when a long token must wrap."""
+        rows, cursor = [], 0
+        while cursor < len(text):
+            while cursor < len(text) and text[cursor].isspace():
+                cursor += 1
+            if cursor == len(text):
+                break
+            end = cursor
+            while end < len(text) and scratch.textlength(rtl(text[cursor:end+1]), font=font(size, bold)) <= width:
+                end += 1
+            if end == cursor:
+                raise ValueError('A glyph exceeds the fixed readable text width.')
+            if end < len(text):
+                boundary = text.rfind(' ', cursor, end+1)
+                if boundary > cursor:
+                    end = boundary
+            piece = text[cursor:end].rstrip()
+            rows.append(dict(start=cursor, end=cursor+len(piece), text=piece))
+            cursor = end
         return rows
 
+    # Give each complete sentence its own line boundary so a few words from
+    # the next sentence cannot become a dangling tail at the page bottom.
+    lines, start = [], 0
+    stops = [(match.end(1), match.end()) for match in re.finditer(r'([.!?؟][»”"]?)(\s+)', summary)]
+    for end, following in stops + [(len(summary), len(summary))]:
+        for row in wrap_spans(summary[start:end], BODY_FONT_PX, 824):
+            lines.append(dict(start=row['start']+start, end=row['end']+start, text=row['text']))
+        start = following
+    pages = []
+    while lines:
+        count = min(BODY_LINES_PER_PAGE, len(lines))
+        if len(lines) > count:
+            for candidate in range(count, max(2, count-4), -1):
+                if re.search(r'[.!?؟][»”"]?$', lines[candidate-1]['text']):
+                    count = candidate
+                    break
+        pages.append(lines[:count])
+        lines = lines[count:]
+    if not pages or len(pages) > 9:
+        raise ValueError('The full summary exceeds ten large-type slides; no text was truncated.')
+    page_spans = [dict(start=rows[0]['start'], end=rows[-1]['end'],
+                       text=summary[rows[0]['start']:rows[-1]['end']],
+                       lines=rows) for rows in pages]
+    cursor, reconstructed = 0, []
+    for page in page_spans:
+        if summary[cursor:page['start']].strip():
+            raise ValueError('Pagination omitted source text.')
+        page['separator_before'] = summary[cursor:page['start']]
+        reconstructed.append(page['separator_before'] + page['text'])
+        cursor = page['end']
+    if ''.join(reconstructed) != summary or cursor != len(summary):
+        raise ValueError('Summary text changed during pagination.')
+
+    headline_rows, headline_size = None, None
+    for size in (88, 84, 80, 76, 72):
+        candidate = wrap_spans(title, size, 864, True)
+        if len(candidate) <= 6 and len(candidate)*(size+18)+80 <= 620:
+            headline_rows, headline_size = candidate, size
+            break
+    if headline_rows is None:
+        raise ValueError('The complete headline needs editorial shortening; readable fonts were not reduced.')
+
+    hero = hero_image(story, output / '.source-images')
+    if require_image and hero is None:
+        raise ValueError('A source illustration is required for this news post.')
     logo_root = ET.parse(asset_root / 'assets/instagram/kiani-logo.svg').getroot()
     _, _, lw, lh = map(float, logo_root.attrib['viewBox'].split())
-    logo = Image.new('RGBA', (256, 256))
-    ld = ImageDraw.Draw(logo)
+    mark = Image.new('RGBA', (248, 248))
+    ld = ImageDraw.Draw(mark)
     for node in logo_root.iter('{http://www.w3.org/2000/svg}polygon'):
         points = [tuple(map(float, pair.split(','))) for pair in node.attrib['points'].split()]
-        ld.polygon([(x * 256/lw, y * 256/lh) for x, y in points], fill=INK)
-    logo = logo.resize((72, 74), Image.Resampling.LANCZOS)
+        ld.polygon([(x*248/lw, y*248/lh) for x, y in points], fill=INK)
+    mark = mark.resize((62, 62), Image.Resampling.LANCZOS)
+    total = len(pages)+1
 
-    def base(story, page, pages):
-        image = Image.new('RGB', (1080, 1350), '#FFFFFF')
+    def arrow(draw, y, *, white=False):
+        fill = '#FFFFFF' if white else GREEN
+        draw.line((148, y, 102, y), fill=fill, width=5)
+        draw.line((116, y-14, 102, y, 116, y+14), fill=fill, width=5)
+
+    def base(page):
+        image = Image.new('RGB', (1080, 1350), '#EDF4EF')
         draw = ImageDraw.Draw(image)
-        image.paste(logo, (944, 50), logo)
-        fa(draw, 'صرافی کیانی', (925, 73), 34, bold=True)
-        draw.text((925, 111), 'kiani.exchange', font=font(25), fill=MUTED, anchor='rm')
-        draw.rounded_rectangle((64, 61, 257, 120), radius=28, fill='#FDEDEB')
-        fa(draw, news_label, (160, 92), 27, bold=True, fill=RED, anchor='mm')
-        draw.line((64, 1246, 1016, 1246), fill='#E4EAE6', width=2)
-        draw.text((64, 1282), 'kiani.exchange', font=font(25, True), fill=GREEN, anchor='lm')
-        label = f"Source: {story['source_name']}"
+        draw.rounded_rectangle((64, 55, 1016, 66), radius=5, fill='#D8E6DE')
+        draw.rounded_rectangle((1016-round(952*page/total), 55, 1016, 66), radius=5, fill=GREEN)
+        image.paste(mark, (954, 108), mark)
+        fa(draw, 'صرافی کیانی', (934, 111), 34, bold=True)
+        draw.text((934, 159), 'kiani.exchange', font=font(25), fill=MUTED, anchor='rt')
+        draw.rounded_rectangle((64, 111, 306, 165), radius=26, fill='#DDEDE4')
+        fa(draw, news_label, (185, 137), 29, bold=True, fill=GREEN, anchor='mm')
+        draw.line((64, 1240, 1016, 1240), fill='#D8E6DE', width=2)
+        source = 'Source: ' + str(story.get('source_name') or 'Original publisher')
+        source_size = 24
+        while draw.textlength(source, font=font(source_size)) > 680 and source_size > 18:
+            source_size -= 1
+        if draw.textlength(source, font=font(source_size)) > 680:
+            raise ValueError('The source label is too wide; full attribution was not truncated.')
+        draw.text((64, 1270), source, font=font(source_size), fill=MUTED, anchor='lm')
         if story.get('article_date'):
-            label += ' · ' + story['article_date']
-        size = 24
-        while draw.textlength(label, font=font(size)) > 720 and size > 16:
-            size -= 1
-        draw.text((1016, 1282), label, font=font(size), fill=MUTED, anchor='rm')
-        if pages > 1:
-            draw.text((64, 1222), f'{page}/{pages}', font=font(20), fill=MUTED, anchor='lm')
+            fa(draw, str(story['article_date']), (1016, 1270), 25, fill=MUTED, anchor='rm')
+        draw.text((64, 1318), 'kiani.exchange', font=font(24, True), fill=GREEN, anchor='lm')
+        fa(draw, f'اسلاید {page} از {total}', (1016, 1318), 25, fill=MUTED, anchor='rm')
         return image, draw
 
-    frames, enriched = [], []
-    for saved in stories:
-        story = metadata(dict(saved))
-        enriched.append(story)
-        hero = hero_image(story, output / '.source-images')
-        if require_image and hero is None:
-            raise ValueError('A source illustration is required for this news post.')
-        scratch = ImageDraw.Draw(Image.new('RGB', (1080, 1350)))
-        title_size = 61
-        title_rows = wrap(scratch, story['title_fa'], title_size, True)
-        while len(title_rows) > 3 and title_size > 42:
-            title_size -= 1
-            title_rows = wrap(scratch, story['title_fa'], title_size, True)
-        if len(title_rows) > 3:
-            raise ValueError('News headline is too long for the card; shorten the saved title before publishing.')
-        title_bottom = 165 + len(title_rows) * (title_size + 19)
-        hero_top = title_bottom + 24
-        hero_height = min(488, max(310, 810 - hero_top)) if hero else 0
-        body_top = hero_top + hero_height + 31
-        highlights = json.loads(story.get('highlights_json', '[]'))[:3]
-        if highlights and len(highlights) == 3:
-            body_top += 160
-        body_size = 30
-        body_rows = wrap(scratch, story['summary_fa'], body_size)
-        available = 1205 - body_top
-        while len(body_rows) * (body_size + 13) > available and body_size > 25:
-            body_size -= 1
-            body_rows = wrap(scratch, story['summary_fa'], body_size)
-        capacity = max(1, int(available // (body_size + 13)))
-        first_rows, remaining = body_rows[:capacity], body_rows[capacity:]
-        # Longer summaries continue on readable text slides; never silently truncate.
-        continuation = []
-        if remaining:
-            # Rewrap the actual remaining words, rather than the already shaped display text.
-            tail = ' '.join(remaining)
-            continuation_rows = wrap(scratch, tail, 35)
-            continuation_capacity = max(1, int((1205-title_bottom-55)//50))
-            continuation = [continuation_rows[i:i+continuation_capacity]
-                            for i in range(0, len(continuation_rows), continuation_capacity)]
-        pages = 1 + len(continuation)
-        image, draw = base(story, 1, pages)
-        for index, row in enumerate(title_rows):
-            fa(draw, row, (1016, 172 + index * (title_size + 19)), title_size, bold=True, anchor='rt')
-        if hero:
-            box = Image.new('RGB', (952, hero_height), '#F0F3F1')
-            illustration = ImageOps.contain(hero, box.size, Image.Resampling.LANCZOS)
-            box.paste(illustration, ((952-illustration.width)//2, (hero_height-illustration.height)//2))
-            mask = Image.new('L', box.size)
-            ImageDraw.Draw(mask).rounded_rectangle((0, 0, 951, hero_height-1), radius=27, fill=255)
-            image.paste(box, (64, hero_top), mask)
-        if len(highlights) == 3:
-            top = hero_top + hero_height + 31
-            for index, item in enumerate(reversed(highlights)):
-                x = 64 + index * 324
-                draw.rounded_rectangle((x, top, x+304, top+135), radius=22, fill='#FFFFFF', outline='#E3EAE6', width=2)
-                fa(draw, str(item['value']), (x+152, top+48), 51, bold=True,
-                   fill=RED if index == 2 else INK, anchor='mm')
-                fa(draw, str(item['label']), (x+152, top+103), 25, fill=MUTED, anchor='mm')
-        for index, row in enumerate(first_rows):
-            fa(draw, row, (1016, body_top+index*(body_size+13)), body_size, anchor='rt')
+    cover, draw = base(1)
+    box_size = (1016, 572)
+    if hero is not None:
+        backdrop = ImageOps.fit(hero, box_size, Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(24))
+        illustration = ImageOps.contain(hero, box_size, Image.Resampling.LANCZOS)
+        backdrop.paste(illustration, ((box_size[0]-illustration.width)//2, (box_size[1]-illustration.height)//2))
+    else:
+        backdrop = Image.new('RGB', box_size, '#DDEDE4')
+        ghost = mark.resize((218, 218), Image.Resampling.LANCZOS)
+        backdrop.paste(ghost, (399, 150), ghost)
+    mask = Image.new('L', box_size)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, 1015, 571), radius=26, fill=255)
+    cover.paste(backdrop, (32, 212), mask)
+    panel_height = max(420, len(headline_rows)*(headline_size+18)+80)
+    panel_top = 1113-panel_height
+    draw.rounded_rectangle((64, panel_top, 1016, 1113), radius=32, fill='#FFFFFF')
+    for index, row in enumerate(headline_rows):
+        fa(draw, row['text'], (968, panel_top+40+index*(headline_size+18)), headline_size, bold=True)
+    draw.rounded_rectangle((64, 1162, 1016, 1229), radius=32, fill=GREEN)
+    fa(draw, 'برای خواندن خبر به چپ بکشید', (958, 1196), 35, bold=True, fill='white', anchor='rm')
+    arrow(draw, 1196, white=True)
+    frames = [cover]
+    for index, rows in enumerate(pages, 2):
+        image, draw = base(index)
+        heading = 'اصل خبر' if index == 2 else 'ادامه خبر'
+        fa(draw, heading, (1016, 264), 80, bold=True)
+        draw.rounded_rectangle((856, 389, 1016, 397), radius=4, fill=GREEN)
+        draw.rounded_rectangle((64, 425, 1016, 1145), radius=32, fill='#FFFFFF')
+        block_height = (len(rows)-1)*BODY_LEADING + BODY_FONT_PX
+        top = 425 + max(36, (720-block_height)//2)
+        for row_index, row in enumerate(rows):
+            y = top + row_index*BODY_LEADING
+            shaped = rtl(row['text'])
+            bounds = draw.textbbox((952, y), shaped, font=font(BODY_FONT_PX), anchor='rt')
+            if bounds[0] < 112 or bounds[2] > 968 or bounds[1] < 440 or bounds[3] > 1115:
+                raise ValueError('Large-type text exceeds its safe card; nothing was truncated.')
+            fa(draw, row['text'], (952, y), BODY_FONT_PX)
+        if index < total:
+            fa(draw, 'به چپ بکشید', (1016, 1184), 35, bold=True, fill=GREEN)
+            arrow(draw, 1200)
+        else:
+            fa(draw, 'دیدگاه شما چیست؟', (1016, 1184), 36, bold=True, fill=GREEN)
         frames.append(image)
-        for page, rows in enumerate(continuation, 2):
-            image, draw = base(story, page, pages)
-            for index, row in enumerate(title_rows):
-                fa(draw, row, (1016, 172+index*(title_size+19)), title_size, bold=True, anchor='rt')
-            for index, row in enumerate(rows):
-                fa(draw, row, (1016, title_bottom+55+index*50), 35, anchor='rt')
-            frames.append(image)
 
-    if len(frames) > 10:
-        raise ValueError('News summaries require more than ten slides; select fewer stories.')
-    prefix = 'kiani-news-' + datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
+    prefix = 'kiani-news-carousel-b-' + datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
     paths = []
     for index, image in enumerate(frames, 1):
         path = output / f'{prefix}-{index:02}.jpg'
-        image.save(path, quality=95, subsampling=0)
+        image.save(path, 'JPEG', quality=95, subsampling=0)
         paths.append(path)
-    paragraphs = [caption_title]
-    for story in enriched:
-        paragraphs.append(story['title_fa'])
-        paragraphs.append(story['summary_fa'])
-        paragraphs.append('منبع: ' + story['source_name'] + '\n' + story['source_url'])
+    paragraphs = [caption_title, story['title_fa'], story['summary_fa'],
+                  'منبع: ' + story['source_name'] + '\n' + story['source_url']]
     if caption_footer:
         paragraphs.append(caption_footer)
     caption = '\n\n'.join(paragraphs)
     if len(caption) > 2200:
-        paragraphs = [caption_title]
-        paragraphs.extend(story['title_fa'] + '\nمنبع: ' + story['source_name'] + '\n' + story['source_url'] for story in enriched)
-        paragraphs.append('متن کامل خبرها روی اسلایدها')
+        paragraphs = [caption_title, story['title_fa'],
+                      'متن کامل خبر روی اسلایدها',
+                      'منبع: ' + story['source_name'] + '\n' + story['source_url']]
         if caption_footer:
             paragraphs.append(caption_footer)
         caption = '\n\n'.join(paragraphs)
     if len(caption) > 2200:
-        raise ValueError('News caption exceeds the Instagram limit; select fewer stories.')
-    manifest = {'created_at': datetime.now(timezone.utc).isoformat(), 'slides': [path.name for path in paths],
-                'caption': caption, 'stories': enriched}
+        raise ValueError('News caption exceeds the Instagram limit.')
+    manifest = dict(created_at=datetime.now(timezone.utc).isoformat(), slides=[p.name for p in paths],
+                    caption=caption, stories=[story], layout_version=LAYOUT_VERSION,
+                    body_font_px=BODY_FONT_PX, body_leading=BODY_LEADING,
+                    max_body_lines=BODY_LINES_PER_PAGE, body_pages=page_spans,
+                    summary_normalized=summary, summary_sha256=hashlib.sha256(summary.encode()).hexdigest(),
+                    text_complete=True, hero_available=hero is not None, headline_font_px=headline_size,
+                    assets_fingerprint=hashlib.sha256(b'\0'.join(n.encode()+b'\0'+(asset_root/n).read_bytes()
+                                                               for n in ASSET_FILES)).hexdigest())
     (output / (prefix + '.json')).write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    print(f'News carousel: {len(paths)} slides; body {BODY_FONT_PX}px; full verified summary preserved.', flush=True)
     return paths, caption, manifest

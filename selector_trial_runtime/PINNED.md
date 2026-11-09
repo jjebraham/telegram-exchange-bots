@@ -1,6 +1,18 @@
-# Unmodified reviewed preview dependencies
+# Reviewed selector dependencies and readable-carousel renderer
 
-These helpers are copied byte-for-byte (UTF-8/LF) from:
+## Option B template update
+
+Only `instagram_news_renderer.py` is intentionally updated from the original
+helper listed below. It now renders a photo/headline cover and full, 64px
+summary pages for one story per carousel. Parsing, translation, source selection
+and the existing carousel publication helper remain byte-identical. The runtime
+fingerprint and manifests identify the new layout. Original source dates,
+caption attribution and all summary text are preserved. This does not change
+hourly slots, daily limits, eligibility, Story timing or news retention.
+
+The table below records the original provenance, not the new renderer's hash.
+
+The original helpers were copied byte-for-byte (UTF-8/LF) from:
 `ed50327ee0bd0082be479606f26648a46e35c636` in
 `jjebraham/telegram-exchange-bots`.
 
