@@ -27,7 +27,7 @@ TOPICS = (
     (('tether', 'usdt'), 'tether cryptocurrency', 'tether'),
     (('gold',), 'gold bullion', 'gold'),
     (('silver',), 'silver bullion', 'silver'),
-    (('oil', 'brent'), 'crude oil', 'oil'),
+    (('oil', 'brent', 'petroleum', 'wti'), 'oil barrels', 'oil'),
     (('asset management', 'asset-management', 'asset manager', 'wealth management', 'wealth manager',
       'fund management', 'fund manager', 'investment management', 'investment manager', 'portfolio management', 'financial services'),
      'investment management finance', ('finance', 'investment', 'asset management', 'fund management')),
@@ -80,6 +80,37 @@ def _read(url, limit, timeout):
 def _plain(value):
     value = html.unescape(re.sub(r'<[^>]*>', ' ', str(value)))
     return re.sub(r'\s+', ' ', value).strip()
+
+
+# Explicit editorial exclusion: laboratory glassware is misleading for oil news.
+REJECTED_IMAGE_SHA1 = {'ff6f5f933b4d192d88ad8f5a9570827d27d3dd7a'}
+
+
+def rejected_image(item):
+    if str(item.get('sha1', '')).casefold() in REJECTED_IMAGE_SHA1:
+        return True
+    for key in ('title', 'source_url', 'url'):
+        text = unquote(str(item.get(key, ''))).casefold().replace('_', ' ')
+        if 'petroleum sample.jpg' in text:
+            return True
+    return False
+
+
+def oil_scene(item):
+    """Require visible oil infrastructure, rather than a generic oil keyword."""
+    if rejected_image(item):
+        return False
+    text = _plain(str(item.get('title', '')) + ' ' +
+                  str(item.get('description', ''))).casefold().replace('_', ' ')
+    if re.search(r'beaker|laborator|glassware|test[ -]tube|flask|bottl|'
+                 r'(?:oil|petroleum)[ -]samples?|essential[ -]oil|'
+                 r'olive[ -]oil|cooking[ -]oil|cosmetic|sunflower|rapeseed', text):
+        return False
+    petroleum = re.search(r'\b(?:oil|petroleum|crude|brent|wti)\b', text)
+    scene = re.search(r'\b(?:barrels?|drums?|refiner(?:y|ies)|tankers?|'
+                      r'pump[ -]?jacks?|oil[ -]rigs?|drilling[ -]rigs?|'
+                      r'platforms?|pipelines?|storage[ -]tanks?|tank[ -]farms?)\b', text)
+    return bool(petroleum and scene)
 
 
 def _topic(story):
@@ -147,6 +178,10 @@ def collect(story, output_dir, limit=7, *, seconds=30):
             description = _plain(value('ImageDescription'))
             title = _plain(page['title'])
             relevant = (title+' '+description).casefold()
+            candidate = dict(title=title, description=description,
+                             source_url=info.get('descriptionurl'), url=info.get('url'), sha1=info.get('sha1'))
+            if rejected_image(candidate) or (topic[1] == 'oil' and not oil_scene(candidate)):
+                continue
             relevance_terms = topic[1] if isinstance(topic[1], tuple) else (topic[1],)
             if not any(term in relevant for term in relevance_terms):
                 continue
