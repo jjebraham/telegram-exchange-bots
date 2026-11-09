@@ -74,6 +74,21 @@ class IntegrationTests(unittest.TestCase):
                 trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8', self.root, has_images=True)
             synth.assert_not_called()
 
+    def test_one_pronunciation_pass_is_used_without_modifying_visible_story(self):
+        story = {'title_fa': 'احتمال در اختیار داشتن کلید', 'summary_fa': 'خبر آزمایشی گزارش شد.'}
+        original = dict(story)
+        spoken = ['احتمالِ در اختیار داشتن کلید', 'خَبَر آزمایشی گزارش شد.']
+        output = {'audio': self.wav.read_bytes(), 'starts': [0, .5], 'cached': False}
+        with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key'}, clear=True), \
+                patch('reel_persian_pronunciation.prepare', return_value=(spoken, 'prepared')) as marks, \
+                patch('reel_elevenlabs.synthesize_segment', return_value=output) as synth, \
+                patch.object(trial, '_narrated_chunks', return_value=[story['summary_fa']]):
+            result = trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8', self.root, has_images=True)
+        self.assertEqual(story, original)
+        self.assertEqual(marks.call_count, 1)
+        self.assertEqual([call.kwargs['spoken_script'] for call in synth.call_args_list], spoken)
+        self.assertTrue(all(segment['pronunciation_status'] == 'prepared' for segment in result))
+
     def test_sentence_chunks_are_complete_and_text_is_preserved(self):
         local_assets = Path(__file__).resolve().parent.parent / 'telegram-exchange-bots-instagram'
         assets = local_assets if (local_assets / 'fonts/Vazirmatn-Regular.ttf').is_file() else Path.home() / 'kiani-instagram-publisher'
@@ -140,4 +155,3 @@ class IntegrationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
