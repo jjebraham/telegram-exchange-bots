@@ -1,4 +1,5 @@
 from io import BytesIO
+from contextlib import redirect_stdout
 import json
 import os
 from pathlib import Path
@@ -102,6 +103,80 @@ class PreparationTests(unittest.TestCase):
             self.assertTrue(status.startswith('fallback'))
             self.assertEqual(result, sections)
         self.assertEqual(len(seen), 1)
+        details = pronunciation.audit(self.path)
+        self.assertEqual(details[0]['diagnostic']['category'], 'verified_characters_changed')
+        self.assertEqual(details[0]['diagnostic']['section'], 1)
+
+    def test_one_explicit_retry_is_allowed_but_cannot_repeat_indefinitely(self):
+        seen = []
+        def request(body):
+            seen.append(body)
+            raise TimeoutError('private-body-and-key')
+        for retry in (False, True, True):
+            _, status = pronunciation.prepare(['خبر'], self.path, request_fn=request, retry_failed_once=retry)
+            self.assertTrue(status.startswith('fallback'))
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(pronunciation.audit(self.path)[0]['attempts'], 2)
+
+    def test_explicit_retry_recovers_after_validation_failure_and_reuses_new_result(self):
+        pronunciation.prepare(['احتمال رشد'], self.path, request_fn=lambda body: {'sections': ['متن تغییر کرد']})
+        seen = []
+        def request(body):
+            seen.append(body)
+            return {'sections': ['احتمالِ رشد']}
+        result, status = pronunciation.prepare(['احتمال رشد'], self.path, request_fn=request, retry_failed_once=True)
+        self.assertEqual((result, status), (['احتمالِ رشد'], 'prepared'))
+        self.assertEqual(pronunciation.prepare(['احتمال رشد'], self.path, request_fn=request)[1], 'cached')
+        self.assertEqual(len(seen), 1)
+
+    def test_old_cache_migrates_without_a_request_and_audit_does_not_modify_it(self):
+        scripts = ['خبر']
+        model = os.environ.get('DEEPSEEK_MODEL', 'deepseek-flash')
+        identity = json.dumps({'version': 1, 'prompt': pronunciation.PROMPT, 'model': model,
+                               'scripts': scripts, 'context': ''}, ensure_ascii=False, sort_keys=True)
+        import hashlib
+        key = hashlib.sha256(identity.encode('utf-8')).hexdigest()
+        con = sqlite3.connect(self.path)
+        try:
+            con.execute('CREATE TABLE pronunciation(cache_key TEXT PRIMARY KEY,status TEXT,result_json TEXT,created_at REAL)')
+            con.execute('INSERT INTO pronunciation VALUES(?,?,NULL,?)', (key, 'fallback', 100))
+            con.commit()
+        finally:
+            con.close()
+        before = self.path.read_bytes()
+        self.assertEqual(pronunciation.audit(self.path)[0]['diagnostic']['category'], 'not_recorded_by_previous_version')
+        self.assertEqual(self.path.read_bytes(), before)
+        _, status = pronunciation.prepare(scripts, self.path, request_fn=lambda body: self.fail('Must not recharge'))
+        self.assertEqual(status, 'fallback_cached_fallback')
+
+    def test_audit_and_console_never_expose_exception_text_or_candidate(self):
+        private = 'secret-key-never-display'
+        def request(body):
+            raise RuntimeError(private)
+        import io
+        text = io.StringIO()
+        with redirect_stdout(text):
+            pronunciation.prepare(['خبر'], self.path, request_fn=request)
+        report = json.dumps(pronunciation.audit(self.path))
+        self.assertNotIn(private, text.getvalue() + report)
+        self.assertNotIn('candidate_json', report)
+
+    def test_transport_helper_http_and_incomplete_errors_have_safe_categories(self):
+        import sys
+        import types
+        fake = types.ModuleType('economy_news_translation')
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'test-key'}), patch.dict(sys.modules, {'economy_news_translation': fake}):
+            def failure(body, key):
+                raise RuntimeError('DeepSeek translation request failed (HTTP 401).')
+            fake.request_completion = failure
+            with self.assertRaises(pronunciation.PronunciationFailure) as raised:
+                pronunciation._request({})
+            self.assertEqual(pronunciation.safe_failure(raised.exception, 'request'),
+                             {'stage': 'request', 'category': 'request_http_error', 'http_status': 401})
+            fake.request_completion = lambda body, key: types.SimpleNamespace(finish_reason='length', content=None)
+            with self.assertRaises(pronunciation.PronunciationFailure) as raised:
+                pronunciation._request({})
+            self.assertEqual(raised.exception.finish_reason, 'length')
 
     def test_lost_response_is_not_retried_automatically(self):
         seen = []
