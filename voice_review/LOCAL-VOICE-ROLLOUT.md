@@ -99,6 +99,24 @@ ElevenLabs or Instagram call. `preview_voice_reel.py --runtime RUNTIME
 existing verified test channel. New audio uses ElevenLabs credits. Test this
 update privately before switching the active production runtime.
 
+Pronunciation failure diagnostics record fixed categories, an optional HTTP
+code/finish reason, affected section number, and text-length/change flags.
+They do not print keys, raw provider errors or rejected text. Parsed rejected
+candidates are retained in the owner-only cache for offline investigation.
+`check_pronunciation.py --runtime RUNTIME --audit` only reads these diagnostics.
+Older generic failures have no recoverable reason. An explicit
+`--live --retry-one --reel-id SAVED_ID` can make one additional request for a
+failed entry, limited to two attempts total; ordinary narration never retries
+it automatically. Use the saved Reel ID to avoid testing a different latest
+article. This diagnostic does not request ElevenLabs or publish anything.
+
+DeepSeek credentials are loaded by explicit live entry points, not by the
+testable narration-preparation function. Integration tests isolate state in a
+temporary directory and verify that preparation cannot read a production key
+from the home directory or make an unintended DeepSeek request. An earlier
+version could load the real key in Linux tests; historical billing cannot be
+established from that version's generic fallback output.
+
 Random selection is uniform among eligible final-approved or explicitly
 evaluation-enrolled voices after excluding the last
 published and currently reserved voice. Overrides still require approval.
