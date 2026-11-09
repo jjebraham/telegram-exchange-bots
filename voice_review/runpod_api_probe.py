@@ -102,8 +102,8 @@ def verify_locked_watchdog(home):
 
 
 def run_worker(home, lease_id, unit, *, api_factory=RunpodAPI, wait=time.sleep,
-               monotonic=time.monotonic):
-    """Run only in a verified time-limited systemd process; no remote assets."""
+               monotonic=time.monotonic, work=None):
+    """Run in a verified time-limited process; optional work is reproducible."""
     runpod_supervision_probe.validate_with_retry(unit)
     config_dir = home / '.config/kiani-instagram-runpod'
     state = home / '.local/state/kiani-instagram-runpod'
@@ -122,13 +122,13 @@ def run_worker(home, lease_id, unit, *, api_factory=RunpodAPI, wait=time.sleep,
                 verify_locked_watchdog(home)
                 if service.private_json(config_dir / 'config.json') != cfg_raw:
                     raise ProbeError('Runpod settings changed; the Pod was not started.')
-                return _worker_locked(state, cfg, api, lease_id, wait=wait, monotonic=monotonic)
+                return _worker_locked(state, cfg, api, lease_id, wait=wait, monotonic=monotonic, work=work)
         if monotonic() >= lock_deadline:
             raise ProbeError('The probe could not acquire the managed Pod lock.')
         wait(1)
 
 
-def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
+def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic, work=None):
     pod_id, limits = cfg['pod_id'], cfg['limits']
     with closing(leases.connect(state / 'leases.sqlite3')) as con:
         row = con.execute('SELECT * FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
@@ -169,6 +169,11 @@ def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
             leases.start_confirmed(con, lease_id, pod_id=pod_id, provider_status='RUNNING',
                                    provider_started_at=pod.get('startedAt'),
                                    max_start_delay_seconds=limits.max_uptime_seconds)
+            # Render inputs must already be saved on Selenium. This callback
+            # must be reproducible: a killed worker leaves no irreplaceable
+            # remote output, so the independent watchdog may stop the Pod.
+            if work is not None:
+                work(pod, lease_id)
             result = runpod_watchdog.tick(con, api, lease_id, expected_pod_id=pod_id, exclusive=True,
                 worker_lock_held=True, worker_active=False, output_pending=False, job_done=True, limits=limits)
             if result == 'closed':
@@ -178,6 +183,9 @@ def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
             row = con.execute('SELECT state FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
             if row and row['state'] == 'START_REQUESTED':
                 leases.action_uncertain(con, lease_id)
+            elif row and row['state'] == 'START_CONFIRMED':
+                runpod_watchdog.tick(con, api, lease_id, expected_pod_id=pod_id, exclusive=True,
+                    worker_lock_held=True, worker_active=False, output_pending=False, job_done=True, limits=limits)
 
 
 def begin(home, *, api_factory=RunpodAPI, runtime=None, runner=subprocess.run,

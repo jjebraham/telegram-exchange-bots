@@ -140,6 +140,17 @@ class APIProbeTests(unittest.TestCase):
         with patch.object(probe, 'pod_lock', return_value=nullcontext(True)):
             self.assertTrue(probe.finalize(self.home, lease, api_factory=lambda key:self.api).startswith('start rejected;'))
         self.assertFalse(service.private_json(self.path)['enabled'])
+
+    def test_reproducible_render_failure_still_stops_confirmed_pod(self):
+        lease, _ = self.begin()
+        cfg = runpod_supervisor.parse_config(service.private_json(self.path))
+        def failed(pod, lease): raise RuntimeError('render failed')
+        with self.assertRaises(RuntimeError):
+            probe._worker_locked(self.state, cfg, self.api, lease, wait=lambda n:None,
+                                 monotonic=lambda:0, work=failed)
+        self.assertEqual(self.api.actions, ['start','stop'])
+        with closing(leases.connect(self.state / 'leases.sqlite3')) as con:
+            self.assertEqual(con.execute('SELECT state,output_pending FROM leases').fetchone()[:], ('CLOSED',0))
     def test_finalize_never_disables_watchdog_for_unresolved_lease(self):
         lease, _ = self.begin()
         with patch.object(probe, 'pod_lock', return_value=nullcontext(True)):
