@@ -10,7 +10,10 @@ reviewed behavior. The translation helper now requests natural, complete Iranian
 Persian news sentences, preserves financial meaning and uncertainty, and keeps
 pronunciation marks out of display text. New prompt-version cache keys avoid
 reusing older compressed wording; prior cache rows remain intact. Source-number,
-length, Persian-text and link checks are retained. The runtime
+length, Persian-text and link checks are retained. Equivalent decimal/digit
+formats now compare exactly without rounding or rescaling. Unsupported numbers
+receive one targeted correction attempt, with rejected parsed news fields retained
+privately and never cached as a successful translation. The runtime
 fingerprint and manifests identify the new layout. Original source dates,
 caption attribution and complete rendered summary text are preserved. This does not change
 hourly slots, daily limits, eligibility, Story timing or news retention.
