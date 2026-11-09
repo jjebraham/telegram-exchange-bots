@@ -39,14 +39,10 @@ class MarketPulseTests(unittest.TestCase):
         self.assertEqual([x['change_24h'] for x in renderer.significant_gainers(snapshot)], ['8', '7', '6', '5', '4'])
         self.assertEqual(renderer.significant_gainers({'gainers': [{'change_24h': '2.004'}]}), [])
 
-    def test_every_price_page_has_five_coins_once_in_order(self):
-        coins = list(range(50))
-        pages = renderer.price_sections({'coins': coins})
-        self.assertEqual(len(pages), 10)
-        self.assertTrue(all(len(page[2]) == 5 for page in pages))
-        self.assertEqual([c for page in pages for c in page[2]], coins)
+    def test_four_highlights_keep_their_editorial_order(self):
+        self.assertEqual(renderer.SECTIONS, ('market_pulse', 'gainers', 'declines', 'engagement'))
 
-    def test_twelve_slide_publication_order_with_fake_meta(self):
+    def test_four_slide_publication_order_with_fake_meta(self):
         helper = '''\nfrom urllib.parse import urlsplit\nseen = []\ndef verify_public_image(url): pass\ndef _create_container(payload):\n    if payload.get('media_type') == 'CAROUSEL':\n        seen.append(payload['children'])\n        return 'parent'\n    return urlsplit(payload['image_url']).path.rsplit('/', 1)[-1]\ndef _wait_for_container(child): pass\ndef _publish_container(parent): return 'fake-media'\n'''
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -54,8 +50,8 @@ class MarketPulseTests(unittest.TestCase):
             con = app.database(root / 'test.sqlite3')
             now = datetime.now(timezone.utc)
             snapshot = {'generated_at': now.isoformat()}
-            manifest = {'snapshot_id': 'example', 'images': [f'slide-{i}.jpg' for i in range(1, 13)],
-                        'sections': ['market_pulse', 'declines'] + ['top50'] * 10, 'caption': 'sample'}
+            manifest = {'snapshot_id': 'example', 'images': [f'slide-{i}.jpg' for i in range(1, 5)],
+                        'sections': list(renderer.SECTIONS), 'caption': 'sample'}
             day = now.astimezone(app.ZoneInfo('Europe/Istanbul')).date().isoformat()
             con.execute('INSERT INTO top50_snapshots VALUES (?,?,?,?,?)', ('example', day, 0, '{}', '{}'))
             con.commit()
@@ -64,24 +60,24 @@ class MarketPulseTests(unittest.TestCase):
                 self.assertEqual(app.publish(con, snapshot, manifest, root, 'https://example.com'), 'fake-media')
             import sys
             helper_module = sys.modules['kiani_top50_shared_publisher']
-            self.assertEqual(helper_module.seen, [','.join(f'slide-{i}.jpg' for i in range(1, 13))])
+            self.assertEqual(helper_module.seen, [','.join(f'slide-{i}.jpg' for i in range(1, 5))])
             self.assertEqual(con.execute('SELECT status FROM top50_publications').fetchone()[0], 'published')
             con.close()
 
-    def test_renderer_twelve_and_missing_changes(self):
+    def test_renderer_four_and_missing_changes(self):
         fixture = Path(os.environ.get('TOP50_TEST_SNAPSHOT', 'missing-snapshot'))
         assets = Path(os.environ.get('TOP50_TEST_ASSETS', 'missing-assets'))
         if not fixture.is_file() or not assets.is_dir():
             self.skipTest('Optional private preview fixture and brand assets are unavailable')
         snapshot = json.loads(fixture.read_text(encoding='utf-8'))
         snapshot['sample'] = True
-        with tempfile.TemporaryDirectory() as tmp, patch.object(renderer, 'coin_icon', return_value=None):
+        with tempfile.TemporaryDirectory() as tmp:
             paths = renderer.render(snapshot, tmp, assets)
-            self.assertEqual(len(paths), 12)
+            self.assertEqual(len(paths), 4)
             self.assertTrue(all(p.stat().st_size > 10000 for p in paths))
         snapshot['coins'][0]['change_24h'] = None
-        with tempfile.TemporaryDirectory() as tmp, patch.object(renderer, 'coin_icon', return_value=None):
-            self.assertEqual(len(renderer.render(snapshot, tmp, assets)), 12)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(len(renderer.render(snapshot, tmp, assets)), 4)
 
 
 if __name__ == '__main__':
