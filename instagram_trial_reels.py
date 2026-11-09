@@ -2,7 +2,7 @@
 """Render and publish one daily Instagram Trial Reel using Meta graduation."""
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from datetime import datetime, timedelta
 import fcntl
 import hashlib
@@ -351,6 +351,11 @@ def _connect():
         posted_day TEXT NOT NULL, slot TEXT NOT NULL, status TEXT NOT NULL,
         started_at REAL NOT NULL, updated_at REAL NOT NULL, error_type TEXT,
         trial_id TEXT, PRIMARY KEY(posted_day,slot))''')
+    con.execute('''CREATE TABLE IF NOT EXISTS scheduled_translation_attempts(
+        posted_day TEXT NOT NULL, slot TEXT NOT NULL, position INTEGER NOT NULL,
+        kind TEXT NOT NULL, source_url TEXT NOT NULL, status TEXT NOT NULL,
+        error_code TEXT, unsupported_json TEXT NOT NULL, created_at REAL NOT NULL,
+        PRIMARY KEY(posted_day,slot,position))''')
     # Retain the old daily latch as the historical 20:30 slot; never rewrite it.
     con.execute('''INSERT OR IGNORE INTO scheduled_runs(posted_day,slot,status,started_at,updated_at,error_type,trial_id)
         SELECT d.posted_day,'20:30',d.status,d.started_at,d.updated_at,d.error_type,
@@ -1051,7 +1056,8 @@ def wait_for_scheduled_news_lock(factory, max_wait, *, sleeper=time.sleep, clock
 
 def scheduled_translation_error(exc):
     """Classify known translation errors without logging content or secrets."""
-    if type(exc).__name__ != 'NewsError':
+    from instagram_crypto_news import NewsError
+    if not isinstance(exc, NewsError):
         return 'unexpected_error'
     message = str(exc)
     exact = {
@@ -1084,6 +1090,51 @@ def translate_scheduled_news(ranked, con, row):
     except Exception as exc:
         print('Automatic Reel translation failure:', scheduled_translation_error(exc), flush=True)
         raise
+
+
+def record_scheduled_translation(day, slot, position, kind, row, status, code=None, unsupported=()):
+    with closing(_connect()) as con:
+        with con:
+            con.execute('''INSERT INTO scheduled_translation_attempts
+                (posted_day,slot,position,kind,source_url,status,error_code,unsupported_json,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)''', (day, slot, position, kind, row['source_url'], status, code,
+                json.dumps(list(unsupported)), time.time()))
+
+
+def choose_scheduled_translation(candidates, ranked, database, *, refill=None, record=None):
+    """Try at most three distinct verified candidates; never fall back after create/publish."""
+    recoverable = {'invalid_json_object','invalid_length','missing_persian_text',
+                   'disallowed_link_or_hashtag','unverified_number'}
+    queue, tried, attempts = list(candidates), set(), 0
+    while attempts < 3:
+        available = [(kind, row) for kind, row in queue if _source_key(row['source_url']) not in tried]
+        if not available:
+            if refill is None:
+                break
+            queue = list(refill(tried))
+            if not any(_source_key(row['source_url']) not in tried for _, row in queue):
+                break
+            continue
+        kind, row = max(available, key=lambda item: (item[1]['trial_score'], item[1]['article_published_at'], item[0] == 'crypto'))
+        tried.add(_source_key(row['source_url']))
+        attempts += 1
+        ranked.configure_engine(kind)
+        try:
+            with database(ranked.SOURCES[kind]) as con:
+                title, summary = translate_scheduled_news(ranked, con, row)
+        except Exception as exc:
+            code = scheduled_translation_error(exc)
+            if code not in recoverable:
+                raise
+            if record:
+                record(attempts, kind, row, 'rejected', code, getattr(exc, 'unsupported_numbers', ()))
+            print('Scheduled translation candidate rejected:', code, '| candidate', attempts,
+                  'of at most 3; checking another verified story.', flush=True)
+            continue
+        if record:
+            record(attempts, kind, row, 'prepared', None, ())
+        return kind, row, title, summary
+    raise TrialReelError('No scheduled candidate passed translation validation; no Reel was created.')
 
 
 def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
@@ -1158,7 +1209,7 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
             raise NewsError('No verified usable publisher image for automatic Reel.')
         import crypto_news_trial as engine
         import instagram_ranked_news as ranked
-        candidates = []
+        candidates, candidate_pools = [], {}
         with _connect() as reel_con:
             used_sources = {row['source_key'] for row in reel_con.execute('''SELECT source_key FROM trial_reels
                 WHERE status IN ('rendering','creating_container','container_processing','publishing','needs_review','published')''')}
@@ -1177,6 +1228,7 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
                     rows, audit = rank_events(con, kind, now, trial_relaxed=True,
                                               material_filter=check_material_image)
                     rows = [item for item in rows if _source_key(item['source_url']) not in used_sources]
+                    candidate_pools[kind] = (rows, audit)
                     if rows:
                         selected = select_main_stories(con, rows, kind, 1, now, audit, lambda: None)
                         candidates.extend((kind, item) for item in selected)
@@ -1185,11 +1237,26 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
                 con.execute("UPDATE scheduled_runs SET status='no_candidate',updated_at=? WHERE posted_day=? AND slot=?", (time.time(), day, slot))
             print(f'No verified fresh eligible story ranked today; no {slot_label} was prepared.', flush=True)
             return None
-        kind, row = max(candidates, key=lambda item: (item[1]['trial_score'], item[1]['article_published_at'], item[0] == 'crypto'))
-        configure_engine(kind)
-        import instagram_ranked_news as ranked
-        with database(ranked.SOURCES[kind]) as con:
-            title, summary = translate_scheduled_news(ranked, con, row)
+        def refill_translation_candidates(tried):
+            # Reuse this slot's already-ranked/source-verified pool. Extra
+            # main-story checks happen only after the initial winners fail.
+            more = []
+            wait_left = max(0, min(300, due + 540 - time.time()))
+            with wait_for_scheduled_news_lock(locks, wait_left):
+                for category, (pool, category_audit) in candidate_pools.items():
+                    remaining = [item for item in pool if _source_key(item['source_url']) not in tried]
+                    if not remaining:
+                        continue
+                    configure_engine(category)
+                    with database(ranked.SOURCES[category]) as con:
+                        selected = select_main_stories(con, remaining, category, 1,
+                                                       time.time(), category_audit, lambda: None)
+                    more.extend((category, item) for item in selected)
+            return more
+        kind, row, title, summary = choose_scheduled_translation(candidates, ranked, database,
+            refill=refill_translation_candidates,
+            record=lambda position, category, candidate, status, code, unsupported:
+                record_scheduled_translation(day, slot, position, category, candidate, status, code, unsupported))
         story = dict(source_url=row['source_url'], source_name=row['source_name'],
             title_original=row['title_original'], title_fa=title, summary_fa=summary,
             image_url=row.get('image_url'), image_urls=row.get('image_urls', []),
