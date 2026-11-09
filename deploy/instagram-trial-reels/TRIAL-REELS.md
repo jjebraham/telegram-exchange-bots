@@ -8,7 +8,7 @@ The Trial-only selector can include opinions, forecasts, roundups and promotiona
 
 The private bot sends configured admins an estimated DeepSeek cost range after an automatic or manual Trial Reel preparation attempt. It counts the model calls made during that attempt, including retries; a failed or missing usage response is reported as unknown. Previously cached material has no new API charge. Prices use the DeepSeek Flash peak/off-peak rates published on 2026-10-29 and expire 2026-11-29 UTC; after that estimates are unknown until updated. Amounts exclude server and other provider costs. The notice is not a final invoice, and a prepared Reel is not necessarily published. The private `report_reel_usage.py` script provides individual request counts.
 
-This add-on schedules automatic Trial Reels at 11:00, 13:00, 15:00, 17:00 and 20:30 Istanbul. At each slot it ranks eligible crypto and economy news from the preceding 24 hours and selects a distinct story. The existing private Telegram news bot also accepts an administrator-only `/trial <URL>` command.
+This add-on schedules automatic Trial Reels at 11:00, 12:00, 13:00, 15:00, 17:00, 18:00 and 20:30 Istanbul. At each slot it ranks eligible crypto and economy news from the preceding 24 hours and selects a distinct story. The existing private Telegram news bot also accepts an administrator-only `/trial <URL>` command.
 
 ## Admin use
 
@@ -19,8 +19,8 @@ This add-on schedules automatic Trial Reels at 11:00, 13:00, 15:00, 17:00 and 20
 
 ## Publishing and safeguards
 
-- Automatic selection runs at 20:30 `Europe/Istanbul`; it does not run immediately during installation.
-- Up to five admin Trial Reels and five automatic Trial Reels may be reserved per Istanbul calendar day, subject to Meta quota and existing Story reservations. Published, in-progress and unresolved attempts count; definite failures do not. Each automatic slot is attempted at most once, starts within ten minutes of its schedule, and is not backfilled.
+- Automatic selection runs at the seven daily slots above in `Europe/Istanbul`; it does not run immediately during installation.
+- Up to five admin Trial Reels and seven automatic Trial Reels may be reserved per Istanbul calendar day, subject to Meta quota and existing Story reservations. Published, in-progress and unresolved attempts count; definite failures do not. Each automatic slot is attempted at most once, starts within ten minutes of its schedule, and is not backfilled.
 - The video is published with `share_to_feed=false` so it stays out of the normal feed while Instagram tests it with non-followers.
 - Reels are created with `media_type=REELS` and `trial_params.graduation_strategy=SS_PERFORMANCE`. Instagram, not this publisher, decides whether and when a Trial Reel is shared with followers. Meta does not expose a numeric auto-graduation threshold to this system.
 - A rejected/uncertain Meta response never falls back to an ordinary Reel. An uncertain publish is held for review and reserves that day's slot.
@@ -33,7 +33,7 @@ This add-on schedules automatic Trial Reels at 11:00, 13:00, 15:00, 17:00 and 20
 
 Prepare the pinned runtime first and review the extracted revision. Then install with `--install`. Installation reuses the existing Telegram bot token and private admin list; it requests no new credentials and publishes nothing. It requires the existing publisher account, Kiani logo/fonts, Pillow with Arabic shaping support, FFmpeg/ffprobe, the active news quota guard, and the current public HTTPS media directory.
 
-The automatic candidate selector can spend the normal source collection and DeepSeek assessment calls at 20:30. If no eligible current story qualifies, it records a no-candidate result and skips that day. A failed video render or unsupported Trial Reel API response also results in no publication.
+The automatic candidate selector can spend the normal source collection and DeepSeek assessment calls at each configured slot. If no eligible current story qualifies, it records a no-candidate result and skips that day. A failed video render or unsupported Trial Reel API response also results in no publication.
 
 ## Known platform limitation
 
@@ -50,10 +50,21 @@ polling as `/trial`, but publishes a normal follower-facing Reel
 (`share_to_feed=true`, with no Trial graduation parameters).
 
 Direct-Reel limits are independent of Trial-Reel limits: at most 10 admin
-direct Reels and 2 automatically selected direct Reels per Istanbul day. The
-automatic slots are 12:00 and 18:00 Europe/Istanbul. Missed slots do not catch
-up. Both modes still obey the live Meta publishing quota and protected Story
+direct Reels per Istanbul day. Automatic direct Reels are disabled: the former
+12:00 and 18:00 slots now create Trials, for seven automatic Trials per day.
+The old direct-schedule launcher and CLI are compatibility aliases that submit
+Trials. A new automatic direct job is rejected before narration or Meta calls.
+Missed slots do not catch up. Both modes still obey the live Meta publishing quota and protected Story
 reservations.
+
+During installation, the old intake poller and reservation entry points must be
+idle. An in-flight old direct render or uncertain action must finish or be
+reconciled before switching. Old automatic direct containers waiting to publish
+are held as `needs_review` by the new worker; their mode and container IDs are
+never rewritten. Already published Reels and recorded daily slots are retained,
+so a direct Reel published earlier in the day is never replayed as a Trial.
+`check_reel_schedule.py` reads active constants, launcher routes, today's slot
+results and seven days of initial publication counts without service requests.
 
 Only direct Reels published after the direct-retention activation cutoff are
 eligible for review. At two hours, the worker reads the Reel's Views. At or
