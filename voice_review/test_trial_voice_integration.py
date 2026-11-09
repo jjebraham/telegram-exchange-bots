@@ -21,6 +21,8 @@ class IntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.state_patch = patch.object(trial, 'STATE', self.root)
+        self.state_patch.start()
         self.db = self.root / 'voices.sqlite3'
         self.con = voices.connect(self.db)
         voices.seed(self.con)
@@ -32,6 +34,7 @@ class IntegrationTests(unittest.TestCase):
             out.writeframes(b'\0\0' * 24000)
 
     def tearDown(self):
+        self.state_patch.stop()
         self.con.close()
         self.temp.cleanup()
 
@@ -88,6 +91,18 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(marks.call_count, 1)
         self.assertEqual([call.kwargs['spoken_script'] for call in synth.call_args_list], spoken)
         self.assertTrue(all(segment['pronunciation_status'] == 'prepared' for segment in result))
+
+    def test_narration_preparation_never_loads_a_deepseek_key_from_home(self):
+        story = {'title_fa': 'خبر آزمایشی', 'summary_fa': 'این خبر تأیید شده است.'}
+        output = {'audio': self.wav.read_bytes(), 'starts': [0, .5], 'cached': False}
+        with patch.dict(os.environ, {'ELEVENLABS_API_KEY': 'test-key'}, clear=True), \
+                patch('pathlib.Path.home', side_effect=AssertionError('Must not read production credentials')), \
+                patch('reel_persian_pronunciation._request', side_effect=AssertionError('Offline test must not call DeepSeek')) as request, \
+                patch('reel_elevenlabs.synthesize_segment', return_value=output), \
+                patch.object(trial, '_narrated_chunks', return_value=[story['summary_fa']]):
+            result = trial._prepare_narration(story, self.root, 'lIfJn0EyB8lHm00xiGY8', self.root, has_images=True)
+        self.assertEqual(result[0]['pronunciation_status'], 'fallback_no_key')
+        request.assert_not_called()
 
     def test_sentence_chunks_are_complete_and_text_is_preserved(self):
         local_assets = Path(__file__).resolve().parent.parent / 'telegram-exchange-bots-instagram'
