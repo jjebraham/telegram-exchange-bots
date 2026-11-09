@@ -515,7 +515,7 @@ def translate_admin_news(ranked, con, row):
             return ranked.translate(con, row)
         except NewsError as exc:
             code = _TRANSLATION_VALIDATION_ERRORS.get(str(exc))
-            if not code or attempt:
+            if not code or attempt or getattr(exc, 'translation_retry_exhausted', False):
                 raise
             print('News translation validation retry:', code, flush=True)
 
@@ -1125,6 +1125,7 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
 

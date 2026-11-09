@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import secrets
+import unicodedata
 from urllib.parse import urlencode, urlsplit, unquote
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
@@ -167,28 +168,6 @@ LICENSE_URLS = {
     'CC BY 3.0': 'https://creativecommons.org/licenses/by/3.0/',
 }
 
-MOOD_TERMS = {
-    'tense': (
-        'hack', 'breach', 'exploit', 'fraud', 'scam', 'sanction', 'arrest',
-        'charge', 'lawsuit', 'court', 'crime', 'theft', 'stolen', 'attack',
-        'ransomware', 'investigation', 'collapse', 'security', 'risk', 'loss',
-        'vulnerability', 'هک', 'نفوذ', 'امنیت', 'ریسک', 'زیان', 'کلاهبرداری',
-        'تحریم', 'بازداشت', 'اتهام', 'دادگاه', 'سرقت', 'حمله', 'ورشکستگی',
-    ),
-    'energetic': (
-        'bitcoin', 'crypto', 'market', 'stock', 'trading', 'price', 'surge',
-        'rally', 'record', 'upgrade', 'launch', 'technology', 'artificial intelligence',
-        'investment', 'rates', 'inflation', 'بیت‌کوین', 'بیت کوین', 'بازار',
-        'قیمت', 'رشد', 'جهش', 'رکورد', 'ارتقا', 'فناوری', 'هوش مصنوعی',
-        'سرمایه‌گذاری', 'نرخ بهره', 'تورم',
-    ),
-    'uplifting': (
-        'adoption', 'partnership', 'approval', 'milestone', 'growth', 'breakthrough',
-        'پذیرش', 'همکاری', 'تأیید', 'توسعه', 'پیشرفت', 'رکورد پذیرش',
-    ),
-}
-
-
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -207,23 +186,72 @@ def _plain(value):
     return html.unescape(re.sub(r'<[^>]*>', '', str(value))).strip()
 
 
+_EVENT_TERMS = {
+    'tense': ('hack', 'hacked', 'hacker', 'hackers', 'ransomware', 'breach', 'breached',
+              'exploit', 'exploited', 'fraud', 'scam', 'sanction', 'sanctions', 'sanctioned',
+              'lawsuit', 'arrest', 'arrested', 'theft', 'stolen', 'attack', 'attacked',
+              'collapse', 'collapsed', 'bankruptcy', 'crash', 'crashed', 'plunge', 'plunges',
+              'vulnerability', 'vulnerabilities', 'malware', 'seized',
+              'war', 'terrorism', 'casualties', 'هک', 'هکر', 'هکرها', 'کلاهبرداری', 'سرقت',
+              'تحریم', 'تحریمها', 'حمله', 'حملات', 'ورشکستگی', 'سقوط', 'ریزش', 'افت شدید',
+              'جنگ', 'نفوذ', 'زیان'),
+    'uplifting': ('approval', 'approved', 'approves', 'partnership', 'adoption', 'breakthrough',
+                  'recovery', 'recovers', 'recovered', 'milestone', 'collaboration',
+                  'پذیرش', 'همکاری', 'تایید', 'تأیید', 'پیشرفت', 'بازیابی', 'بهبود',
+                  'توافق', 'موفقیت'),
+    'energetic': ('surge', 'surged', 'surges', 'rally', 'rallies', 'soars', 'soared',
+                  'record', 'launch', 'launched', 'launches', 'upgrade', 'upgrades',
+                  'rise', 'rises', 'rose', 'growth', 'grows', 'gains', 'increase', 'increases',
+                  'جهش', 'رکورد', 'رشد', 'افزایش', 'صعود', 'راه اندازی', 'ارتقا'),
+}
+_PLAYFUL_TITLES = {
+    'Monkeys Spinning Monkeys', 'Sneaky Snitch', 'The Entertainer',
+    'Frogs Legs Rag', 'Maple Leaf Rag', 'Cheery Monday',
+}
+
+
+def _mood_text(value):
+    text = unicodedata.normalize('NFKC', str(value or '')).casefold()
+    text = text.replace('\u200c', ' ').replace('ي', 'ی').replace('ك', 'ک')
+    return re.sub(r'\s+', ' ', text)
+
+
+def _event_hits(text, terms):
+    found = []
+    for term in terms:
+        normalized = _mood_text(term)
+        if re.search(r'(?<!\w)' + re.escape(normalized) + r'(?!\w)', text):
+            found.append(term)
+    return found
+
+
+def classify_story(story):
+    """Classify the lead event; do not treat generic 'crypto' or 'price' as emotion."""
+    headline = _mood_text(' '.join(str(story.get(k) or '') for k in ('title_original', 'title_fa')))
+    body = _mood_text(' '.join(str(story.get(k) or '') for k in ('summary_original', 'summary_fa', 'summary')))
+    for source, text in (('headline', headline), ('summary', body)):
+        if re.search(r'(?:\binflation\b|تورم).{0,35}(?:\brises\b|\bincreases\b|\baccelerates\b|افزایش|شتاب)', text):
+            return {'mood': 'tense', 'source': source, 'signals': ['rising inflation']}
+        if re.search(r'(?:\binflation\b|تورم).{0,35}(?:\bfalls\b|\beases\b|\bcools\b|کاهش)', text):
+            return {'mood': 'uplifting', 'source': source, 'signals': ['easing inflation']}
+        matches = {mood: _event_hits(text, terms) for mood, terms in _EVENT_TERMS.items()}
+        for mood in ('tense', 'uplifting', 'energetic'):
+            if matches[mood]:
+                return {'mood': mood, 'source': source, 'signals': matches[mood][:5]}
+    return {'mood': None, 'source': 'unclear', 'signals': []}
+
+
 def select_order(story, previous=None):
-    fields = ('title_original', 'title_fa', 'summary_original', 'summary_fa', 'summary')
-    text = ' '.join(str(story.get(key, '')) for key in fields).casefold()
-    # Specific risk/legal signals win over generic market terms. Ambiguous
-    # stories use rotation so repeated topics do not always get the same cue.
-    mood = None
-    for candidate in ('tense', 'energetic', 'uplifting'):
-        if any(term in text for term in MOOD_TERMS[candidate]):
-            mood = candidate
-            break
+    mood = classify_story(story)['mood']
     recent = [previous] if isinstance(previous, str) else list(previous or ())
     recent = [title for title in recent if isinstance(title, str)][:50]
     candidates = list(TRACKS)
     secrets.SystemRandom().shuffle(candidates)
     return sorted(candidates, key=lambda item: (
-        item['title'] in recent,
         bool(mood and mood not in item['moods']),
+        item['name'] in _PLAYFUL_TITLES,
+        item['title'] in recent,
+        bool(mood == 'tense' and 'uplifting' in item['moods']),
         item['moods'].index(mood) if mood in item['moods'] else 0,
         -recent.index(item['title']) if item['title'] in recent else 0,
     ))
@@ -284,6 +312,8 @@ def retrieve_track(track, output):
 def caption_credit(info):
     return ('Music: ' + info['name'] + ' — ' + info['artist'] + ' (shortened and faded)\n' +
             info['source_url'] + '\n' + info['license'] + ': ' + info['license_url'])
+
+
 
 
 

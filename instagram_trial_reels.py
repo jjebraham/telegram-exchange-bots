@@ -2,7 +2,7 @@
 """Render and publish one daily Instagram Trial Reel using Meta graduation."""
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from datetime import datetime, timedelta
 import fcntl
 import hashlib
@@ -32,13 +32,14 @@ DB = STATE / 'trial_reels.sqlite3'
 PUBLIC_ROOT = Path('/var/www/peerexo.com/public/instagram-rates/trial-reels')
 PUBLIC_BASE = 'https://peerexo.com/instagram-rates/trial-reels'
 ZONE = ZoneInfo('Europe/Istanbul')
-MAX_PER_DAY = 5
+MAX_PER_DAY = 7
 MAX_REEL_SECONDS = 180
 MAX_ADMIN_PER_DAY = 5
-AUTO_SLOTS = ('11:00', '13:00', '15:00', '17:00', '20:30')
+AUTO_SLOTS = ('11:00', '12:00', '13:00', '15:00', '17:00', '18:00', '20:30')
 DIRECT_ADMIN_PER_DAY = 10
-DIRECT_AUTO_PER_DAY = 2
-DIRECT_AUTO_SLOTS = ('12:00', '18:00')
+DIRECT_AUTO_PER_DAY = 0
+DIRECT_AUTO_SLOTS = ()
+LEGACY_DIRECT_AUTO_SLOTS = ('12:00', '18:00')
 PENDING = {'rendering', 'creating_container', 'container_processing', 'publishing', 'needs_review'}
 DECISIVE = {'published', 'needs_review', 'container_processing', 'publishing', 'creating_container'}
 SEGMENT_SECONDS = 5.0
@@ -114,6 +115,51 @@ def _chunks(text, limit=170):
                 current = candidate
     if current:
         chunks.append(current)
+    return chunks
+
+
+def _narrated_chunks(text, asset_root, *, has_images, limit=170):
+    """Keep complete sentences together and validate the existing card layout."""
+    parts = [part.strip() for part in re.split(r'(?<=[.!?؟۔])\s+', text) if part.strip()]
+    if not parts:
+        raise TrialReelError('The narrated news summary is empty.')
+    sentences = []
+    abbreviation = re.compile(r'(?:\b(?:Mr|Mrs|Ms|Dr|Prof|St|vs|etc|e\.g|i\.e|U\.S|U\.K)\.|\b[A-Za-z]\.)$', re.IGNORECASE)
+    for part in parts:
+        part = ' '.join(part.split())
+        if sentences and abbreviation.search(sentences[-1]):
+            sentences[-1] += ' ' + part
+        else:
+            sentences.append(part)
+    draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+
+    def fits(value):
+        try:
+            font = _font(asset_root, 56)
+            rows = _wrap(draw, value, font, 780)
+            if len(rows) > 6:
+                font = _font(asset_root, 48)
+                rows = _wrap(draw, value, font, 780)
+            if len(rows) > 8:
+                return False
+            return not has_images or 940 + (len(rows) - 1) * int(font.size * 1.45) + int(font.size * 1.6) <= 1550
+        except TrialReelError:
+            return False
+
+    chunks, current = [], ''
+    for sentence in sentences:
+        candidate = (current + ' ' + sentence).strip()
+        if current and (len(candidate) > limit or not fits(candidate)):
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+        if not fits(current):
+            raise TrialReelError('A complete sentence does not fit the existing Reel card; a shorter verified summary is needed.')
+    if current:
+        chunks.append(current)
+    if len(chunks) > 16:
+        raise TrialReelError('Complete sentences need more than 16 Reel cards; a shorter verified summary is needed.')
     return chunks
 
 
@@ -241,7 +287,8 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
     summary = _safe_text(story.get('summary_fa'))
     source = _safe_text(story.get('source_name'), 180)
     story_type = story.get('story_type', 'hard_news')
-    chunks = _chunks(summary)
+    chunks = (_narrated_chunks(summary, asset_root, has_images=bool(media))
+              if narration is not None else _chunks(summary))
     if not chunks or len(chunks) > 16:
         raise TrialReelError('The complete verified summary exceeds the readable Reel card limit.')
     pages = len(chunks) + 2
@@ -291,6 +338,10 @@ def _connect():
         con.execute('ALTER TABLE trial_reels ADD COLUMN music_json TEXT')
     if 'reel_mode' not in columns:
         con.execute("ALTER TABLE trial_reels ADD COLUMN reel_mode TEXT NOT NULL DEFAULT 'trial'")
+    if 'voice_json' not in columns:
+        con.execute('ALTER TABLE trial_reels ADD COLUMN voice_json TEXT')
+    if 'duration_seconds' not in columns:
+        con.execute('ALTER TABLE trial_reels ADD COLUMN duration_seconds REAL')
     con.execute('CREATE INDEX IF NOT EXISTS trial_reels_day_status ON trial_reels(posted_day,status)')
     con.execute('CREATE INDEX IF NOT EXISTS trial_reels_source_status ON trial_reels(source_key,status)')
     con.execute('''CREATE TABLE IF NOT EXISTS daily_runs(
@@ -300,6 +351,11 @@ def _connect():
         posted_day TEXT NOT NULL, slot TEXT NOT NULL, status TEXT NOT NULL,
         started_at REAL NOT NULL, updated_at REAL NOT NULL, error_type TEXT,
         trial_id TEXT, PRIMARY KEY(posted_day,slot))''')
+    con.execute('''CREATE TABLE IF NOT EXISTS scheduled_translation_attempts(
+        posted_day TEXT NOT NULL, slot TEXT NOT NULL, position INTEGER NOT NULL,
+        kind TEXT NOT NULL, source_url TEXT NOT NULL, status TEXT NOT NULL,
+        error_code TEXT, unsupported_json TEXT NOT NULL, created_at REAL NOT NULL,
+        PRIMARY KEY(posted_day,slot,position))''')
     # Retain the old daily latch as the historical 20:30 slot; never rewrite it.
     con.execute('''INSERT OR IGNORE INTO scheduled_runs(posted_day,slot,status,started_at,updated_at,error_type,trial_id)
         SELECT d.posted_day,'20:30',d.status,d.started_at,d.updated_at,d.error_type,
@@ -342,7 +398,42 @@ def _live_guard():
     return detail, reservation
 
 
-def _caption(story, kind, reel_mode='trial'):
+def _caption_summary(story, budget):
+    """Use verified display text; shorten only the caption, never narration.
+
+    Prefer a complete saved summary, then complete source sentences. If a
+    single sentence cannot fit, make an explicit word-boundary excerpt.
+    Attribution is budgeted separately and is never shortened.
+    """
+    summary = _safe_text(story.get('summary_fa'))
+    full = story.get('full_summary_fa')
+    if isinstance(full, str) and full.strip() and len(full.strip()) <= 12000:
+        full = _safe_text(full)
+    else:
+        full = summary
+    for candidate in (full, summary):
+        if len(candidate) <= budget:
+            return candidate
+    abbreviation = re.compile(r'(?:\b(?:Mr|Mrs|Ms|Dr|Prof|St|vs|etc|e\.g|i\.e|U\.S|U\.K)\.|\b[A-Za-z]\.)$', re.IGNORECASE)
+    for candidate in (full, summary):
+        best = ''
+        for boundary in re.finditer(r'[.!?؟۔](?:[»”"\']*)?(?:\s+|$)', candidate):
+            prefix = candidate[:boundary.end()].strip()
+            if len(prefix) > budget:
+                break
+            if not abbreviation.search(prefix):
+                best = prefix
+        if best:
+            return best
+    candidate = summary[:max(0, budget - 1)]
+    # rsplit keeps whole tokens, including decimal financial amounts.
+    words = candidate.rsplit(None, 1)[0].strip() if len(summary) > len(candidate) and any(ch.isspace() for ch in candidate) else ''
+    if len(words) < 40:
+        raise TrialReelError('Not enough caption space for Persian news and required credits.')
+    return words + '…'
+
+
+def _caption(story, kind, reel_mode='trial', *, include_summary=True, extra_credits=()):
     if story.get('story_type') == 'forecast':
         label = 'پیش‌بینی کریپتو' if kind == 'crypto' else 'پیش‌بینی اقتصادی'
     elif story.get('story_type') == 'promotional':
@@ -351,15 +442,31 @@ def _caption(story, kind, reel_mode='trial'):
         label = 'تحلیل کریپتو' if kind == 'crypto' else 'تحلیل اقتصادی'
     else:
         label = 'خبر کریپتو' if kind == 'crypto' else 'خبر اقتصادی'
-    text = ('صرافی کیانی | ' + label + '\n\n' + story['title_fa'] + '\n\nمنبع: ' +
-        story['source_name'] + '\n' + story['source_url'])
+    brand = 'صرافی کیانی | ' + label
+    source = 'منبع: ' + story['source_name'] + '\n' + story['source_url']
+    notes = []
     if story.get('source_scope') == 'coindesk_rss_summary':
-        text += '\n\nاین ویدئو بر اساس عنوان و خلاصه فید رسمی کوین‌دسک تهیه شده است.'
-    full_summary = story.get('full_summary_fa')
-    if isinstance(full_summary, str) and full_summary.strip() and full_summary.strip() != story.get('summary_fa', '').strip():
-        text += '\n\nنسخه کوتاه خبر'
+        notes.append('این ویدئو بر اساس عنوان و خلاصه فید رسمی کوین‌دسک تهیه شده است.')
     if reel_mode == 'trial':
-        text += '\n\nاین ویدئو به‌صورت Trial Reel منتشر شده است.'
+        notes.append('این ویدئو به‌صورت Trial Reel منتشر شده است.')
+    if not include_summary:
+        # Preserve the existing media-selection/credit budget while gathering
+        # assets. This draft is replaced before narration or publication.
+        text = brand + '\n\n' + story['title_fa'] + '\n\n' + source
+        full = story.get('full_summary_fa')
+        if notes and story.get('source_scope') == 'coindesk_rss_summary':
+            text += '\n\n' + notes[0]
+        if isinstance(full, str) and full.strip() and full.strip() != story.get('summary_fa', '').strip():
+            text += '\n\nنسخه کوتاه خبر'
+        if reel_mode == 'trial':
+            text += '\n\n' + notes[-1]
+    else:
+        title = _safe_text(story.get('title_fa'), 500)
+        credits = [str(credit).strip() for credit in extra_credits if str(credit).strip()]
+        footer = '\n\n'.join([brand, source] + notes + credits)
+        budget = 2200 - len(title) - len(footer) - 4
+        body = _caption_summary(story, budget)
+        text = title + '\n\n' + body + '\n\n' + footer
     if len(text) > 2200:
         raise TrialReelError('Trial Reel caption exceeds Instagram’s length limit.')
     return text
@@ -384,9 +491,9 @@ def _article_allowed(origin, article_time, now):
 
 def _enforce_daily_limit(con, origin, day, reel_mode='trial'):
     if reel_mode == 'direct':
-        if origin not in {'admin_direct', 'daily_direct'}:
+        if origin != 'admin_direct':
             raise TrialReelError('Direct Reel origin is unsupported.')
-        maximum = DIRECT_ADMIN_PER_DAY if origin == 'admin_direct' else DIRECT_AUTO_PER_DAY
+        maximum = DIRECT_ADMIN_PER_DAY
     else:
         if origin not in {'admin_link', 'daily_top_story'}:
             raise TrialReelError('Trial Reel origin is unsupported.')
@@ -404,12 +511,113 @@ def check_admin_daily_limit(reel_mode='trial'):
         _enforce_daily_limit(con, 'admin_direct' if reel_mode == 'direct' else 'admin_link',
                              istanbul_day(), reel_mode)
 
+
+def _load_voice_modules():
+    import sys
+    path = Path(__file__).resolve().parent / 'voice_review'
+    if path.is_dir() and str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+
+def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
+    """Prepare aligned segments for the existing renderer when explicitly enabled."""
+    import wave
+    _load_voice_modules()
+    from reel_elevenlabs import VoiceError, synthesize_segment
+    import reel_voice_registry as voices
+    from reel_voice_credentials import CredentialError, get_secret
+    try:
+        key = get_secret('ELEVENLABS_API_KEY')
+    except CredentialError:
+        raise TrialReelError('The private Reel credentials file is unavailable or unsafe.') from None
+    if not key:
+        raise TrialReelError('ElevenLabs narration is enabled but its API key is not configured.')
+    try:
+        speed = float(os.environ.get('REEL_NARRATION_SPEED', '1.5'))
+        model = os.environ.get('ELEVENLABS_MODEL', voices.MODEL)
+        if speed != voices.SPEED or model != voices.MODEL:
+            raise ValueError('The selected voice has not been reviewed for these settings.')
+        title = _safe_text(story.get('title_fa'), 500)
+        summary = _safe_text(story.get('summary_fa'))
+        sections = [title] + _narrated_chunks(summary, asset_root, has_images=has_images)
+        from reel_persian_pronunciation import prepare as prepare_pronunciation
+        spoken, pronunciation_status = prepare_pronunciation(
+            sections, STATE / 'pronunciation-cache.sqlite3', context=story.get('title_original', ''),
+            word_updates=True, cache_only=os.environ.get('REEL_PRONUNCIATION_CACHE_ONLY', 'false') == 'true')
+        print('Persian pronunciation preparation:', pronunciation_status, flush=True)
+        if os.environ.get('REEL_PRONUNCIATION_CACHE_ONLY', 'false') == 'true' and pronunciation_status not in ('cached', 'recovered_cache'):
+            raise TrialReelError('No verified cached pronunciation is available; no audio was requested.')
+        max_seconds = {'short': 30, 'long': 90}.get(story.get('reel_length'), MAX_REEL_SECONDS)
+        output = []
+        for index, text in enumerate(sections):
+            result = synthesize_segment(
+                text, STATE / 'narration-cache.sqlite3', key, speed=speed,
+                voice_id=voice_id,
+                model=model,
+                spoken_script=spoken[index],
+                ffmpeg=shutil.which('ffmpeg') or 'ffmpeg', ffprobe=shutil.which('ffprobe') or 'ffprobe')
+            path = Path(folder) / ('section-' + str(index) + '.wav')
+            with path.open('xb') as stream:
+                stream.write(result['audio'])
+            os.chmod(path, 0o600)
+            with wave.open(str(path), 'rb') as voice:
+                duration = voice.getnframes() / voice.getframerate()
+            output.append({'path': path, 'duration': duration, 'word_starts': result['starts'],
+                           'cached': result.get('cached', False),
+                           'pronunciation_status': pronunciation_status,
+                           'spoken_script': result.get('script', spoken[index]),
+                           'submitted_characters': result.get('submitted_characters', 0)})
+            if sum(item['duration'] for item in output) + 3.6 > max_seconds:
+                raise TrialReelError('Narration is too long for the selected Reel duration; no Reel was published.')
+        return output
+    except (VoiceError, ValueError, OSError, wave.Error):
+        raise TrialReelError('Narration could not be prepared and verified; no Reel was published.') from None
+
+
+def _voice_registry_path():
+    return Path.home() / '.local/state/kiani-instagram-voice-review/voices.sqlite3'
+
+
+def _select_narrator(trial_id):
+    from contextlib import closing
+    _load_voice_modules()
+    import reel_voice_registry as voices
+    path = _voice_registry_path()
+    if path.is_symlink() or not path.is_file():
+        raise TrialReelError('The approved voice pool is not configured.')
+    try:
+        with closing(voices.connect(path)) as registry:
+            override = os.environ.get('REEL_VOICE_OVERRIDE', '').strip() or None
+            selected = voices.select(registry, trial_id, override=override)
+        return selected
+    except (voices.RegistryError, OSError, sqlite3.Error):
+        raise TrialReelError('No approved and available narration voice could be selected.') from None
+
+
+def _reconcile_published_voice_history(con):
+    """Recover confirmed media IDs without making any Meta requests."""
+    from contextlib import closing
+    _load_voice_modules()
+    import reel_voice_registry as voices
+    path = _voice_registry_path()
+    if path.is_symlink() or not path.is_file():
+        return
+    with closing(voices.connect(path)) as registry:
+        pending = registry.execute("SELECT job_id FROM selections WHERE status='reserved'").fetchall()
+        for item in pending:
+            row = con.execute("SELECT status,media_id FROM trial_reels WHERE trial_id=?", (item['job_id'],)).fetchone()
+            if row and row['status'] == 'published' and row['media_id']:
+                voices.mark_published(registry, item['job_id'], str(row['media_id']))
+            elif row and row['status'] == 'failed':
+                voices.mark_failed(registry, item['job_id'])
+
+
 def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submission_id=None, scheduled_slot=None,
                 public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE, _validated_image=None):
     """Render a direct or Trial Reel and persist its Meta container before polling."""
     allowed_origins = ({'daily_top_story', 'admin_link'} if reel_mode == 'trial'
-                       else {'daily_direct', 'admin_direct'})
-    if kind not in {'crypto', 'economy'} or origin not in allowed_origins:
+                       else {'admin_direct'})
+    if reel_mode not in {'trial', 'direct'} or kind not in {'crypto', 'economy'} or origin not in allowed_origins:
         raise TrialReelError('Reel category, mode or origin is unsupported.')
     allowed_slots = AUTO_SLOTS if reel_mode == 'trial' else DIRECT_AUTO_SLOTS
     if origin in {'daily_top_story', 'daily_direct'} and scheduled_slot not in allowed_slots:
@@ -427,11 +635,14 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     if normalized['story_type'] not in {'hard_news', 'opinion', 'forecast', 'roundup', 'promotional'}:
         raise TrialReelError('The selected story type is not eligible for Trial Reels.')
     source_key = _source_key(normalized['source_url'])
-    caption = _caption(normalized, kind, reel_mode)
+    caption = _caption(normalized, kind, reel_mode, include_summary=False)
+    caption_credits = []
     from instagram_reel_media import select as select_media, caption as media_caption
     media = select_media(normalized)
     if media:
-        caption += '\n\n' + media_caption(media)
+        initial_credit = media_caption(media)
+        caption += '\n\n' + initial_credit
+        caption_credits.append(initial_credit)
         if len(caption) > 2200:
             raise TrialReelError('Trial Reel caption with image credits is too long.')
     trial_id = uuid.uuid4().hex
@@ -473,6 +684,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
     extra_image_paths = []
     commons_temp = None
     stock_temp = None
+    voice_temp = None
     stock_used = []
     try:
         _live_guard()
@@ -520,7 +732,9 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                                 break
                 media = media[:8]
                 print('Reel images selected:', len(media), flush=True)
-                caption += '\n\nتصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
+                publisher_credit = 'تصویر: ' + normalized['source_name'] + ' · ' + normalized['source_url']
+                caption += '\n\n' + publisher_credit
+                caption_credits.append(publisher_credit)
                 if len(caption)>2200: raise TrialReelError('Caption with image credit is too long.')
                 _update(con, trial_id, caption=caption, updated_at=time.time())
             except TrialReelError:
@@ -548,6 +762,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                     if len(caption) + len(addition) > 1650:
                         continue
                     caption += addition
+                    caption_credits.append(addition.strip())
                     providers_credited.add(provider)
                     seen.add(digest)
                     media.append(item)
@@ -576,6 +791,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                         continue
                     seen.add(digest)
                     caption += credit
+                    caption_credits.append(credit.strip())
                     media.append(item)
                     commons_added = True
             except Exception as exc:
@@ -584,11 +800,13 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 _update(con, trial_id, caption=caption, updated_at=time.time())
         print('Total verified Reel images:', len(media), flush=True)
         if any(item.get('kind') == 'illustrative' for item in media):
-            caption = 'برخی تصاویر این ویدئو نمادین هستند.\n\n' + caption
+            disclosure = 'برخی تصاویر این ویدئو نمادین هستند.'
+            caption = disclosure + '\n\n' + caption
+            caption_credits.insert(0, disclosure)
             if len(caption) > 2200:
                 raise TrialReelError('Reel caption with image disclosure is too long.')
             _update(con, trial_id, caption=caption, updated_at=time.time())
-        from instagram_trial_music import select_order, retrieve_track, caption_credit
+        from instagram_trial_music import select_order, retrieve_track, caption_credit, classify_story
         previous = con.execute("SELECT music_json FROM trial_reels WHERE status IN ('published','container_processing','publishing','needs_review') AND music_json IS NOT NULL ORDER BY COALESCE(published_at,created_at) DESC LIMIT 50").fetchall()
         recent_titles = []
         for previous_row in previous:
@@ -609,20 +827,48 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             except Exception as exc:
                 print('Music source unavailable or unverified:', type(exc).__name__, flush=True)
         if music:
-            caption += '\n\n' + caption_credit(music)
+            music['content_mood'] = classify_story(normalized)
+            music_credit = caption_credit(music)
+            caption += '\n\n' + music_credit
+            caption_credits.append(music_credit)
             if len(caption) > 2200:
                 raise TrialReelError('Trial Reel caption with music credit is too long.')
             _update(con, trial_id, caption=caption, music_json=json.dumps(music, ensure_ascii=False), updated_at=time.time())
         else:
             print('Music unavailable; retaining the existing silent-audio fallback.', flush=True)
-        full_summary = normalized.get('full_summary_fa')
-        if isinstance(full_summary, str) and full_summary.strip() and full_summary.strip() != normalized['summary_fa'].strip():
-            addition = '\n\nخلاصه کامل خبر:\n' + full_summary.strip()
-            if len(caption) + len(addition) <= 2200:
-                caption += addition
-                _update(con, trial_id, caption=caption, updated_at=time.time())
+        caption = _caption(normalized, kind, reel_mode, extra_credits=caption_credits)
+        _update(con, trial_id, caption=caption, updated_at=time.time())
+        _load_voice_modules()
+        from reel_local_settings import load as load_local_voice_settings
+        load_local_voice_settings()
+        voice_setting = os.environ.get('REEL_ELEVENLABS_ENABLED', 'false').lower()
+        if voice_setting not in ('true', 'false'):
+            raise TrialReelError('Reel narration feature flag is invalid.')
+        narration = None
+        voice_metadata = None
+        if voice_setting == 'true':
+            distinct = {hashlib.sha256(Path(item['path']).read_bytes()).hexdigest() for item in media}
+            if len(distinct) < 2:
+                raise TrialReelError('Narrated Reels require two distinct relevant images before any voice request.')
+            voice_temp = tempfile.TemporaryDirectory(prefix='voice-' + trial_id + '-', dir=STATE)
+            selected_voice = _select_narrator(trial_id)
+            voice_metadata = {'name': selected_voice['voice_name'], 'voice_id': selected_voice['voice_id'],
+                              'model': 'eleven_v4', 'speed': 1.5, 'renderer': 'local', 'distinct_images': len(distinct)}
+            _update(con, trial_id, voice_json=json.dumps(voice_metadata), updated_at=time.time())
+            print('Narration voice selected:', selected_voice['voice_name'], flush=True)
+            narration = _prepare_narration(normalized, Path(voice_temp.name), selected_voice['voice_id'],
+                                           asset_root, has_images=bool(media))
+        render_started = time.monotonic()
         duration = render_video(normalized, kind, video_path, asset_root,
-                                music_path=music_path if music else None, media=media)
+                                music_path=music_path if music else None, media=media, narration=narration)
+        if voice_metadata is not None:
+            voice_metadata.update(render_seconds=round(time.monotonic() - render_started, 3),
+                                  music_volume=float(os.environ.get('REEL_MUSIC_VOLUME', '0.20')),
+                                  ducking=os.environ.get('REEL_AUDIO_DUCKING_ENABLED', 'true').lower() == 'true',
+                                  submitted_characters=sum(s['submitted_characters'] for s in narration),
+                                  cached_segments=sum(bool(s['cached']) for s in narration), segments=len(narration))
+            voice_metadata['pronunciation_status'] = narration[0].get('pronunciation_status') if narration else None
+            _update(con, trial_id, voice_json=json.dumps(voice_metadata), duration_seconds=duration, updated_at=time.time())
         if stock_used:
             try:
                 from instagram_reel_stock import mark_used
@@ -649,13 +895,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
         os.environ['INSTAGRAM_PUBLIC_MEDIA_BASE_URL'] = public_base
         # The renderer writes the finished cover as the first video frame.
         # Ask Meta to use that frame instead of selecting a partly typed title.
-        fields = {'media_type': 'REELS', 'video_url': public_url, 'caption': caption,
-                  'thumb_offset': '0'}
-        if reel_mode == 'trial':
-            fields.update(share_to_feed='false',
-                trial_params=json.dumps({'graduation_strategy': 'SS_PERFORMANCE'}, separators=(',', ':')))
-        else:
-            fields['share_to_feed'] = 'true'
+        fields = container_fields(public_url, caption, reel_mode)
         _update(con, trial_id, status='creating_container', updated_at=time.time())
         try:
             container_id = ig._create_container(fields)
@@ -688,12 +928,39 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
             commons_temp.cleanup()
         if stock_temp is not None:
             stock_temp.cleanup()
+        if voice_temp is not None:
+            voice_temp.cleanup()
 
 
 def create_trial(story, kind, *, origin, asset_root, submission_id=None, scheduled_slot=None,
                  public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE):
     return create_reel(story, kind, origin=origin, asset_root=asset_root, reel_mode='trial',
         submission_id=submission_id, scheduled_slot=scheduled_slot, public_root=public_root, public_base=public_base)
+
+
+def container_fields(public_url, caption, reel_mode):
+    if reel_mode not in {'trial', 'direct'}:
+        raise TrialReelError('Unsupported Reel publication mode.')
+    fields = {'media_type': 'REELS', 'video_url': public_url, 'caption': caption, 'thumb_offset': '0'}
+    if reel_mode == 'trial':
+        fields.update(share_to_feed='false',
+            trial_params=json.dumps({'graduation_strategy': 'SS_PERFORMANCE'}, separators=(',', ':')))
+    else:
+        fields['share_to_feed'] = 'true'
+    return fields
+
+
+def hold_legacy_scheduled_direct(con):
+    """Never reinterpret an existing direct Meta container as a Trial."""
+    rows = con.execute("""SELECT trial_id,submission_id,title_fa,origin FROM trial_reels
+        WHERE origin='daily_direct' AND status IN
+        ('rendering','creating_container','container_processing','publishing')""").fetchall()
+    results = []
+    for row in rows:
+        _update(con, row['trial_id'], status='needs_review', error_type='ScheduledDirectDisabled', updated_at=time.time())
+        _mark_daily_result(con, row['trial_id'], 'needs_review')
+        results.append(dict(row, status='needs_review'))
+    return results
 
 
 def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=None):
@@ -710,6 +977,14 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
     except Exception as exc:
         print('Direct Reel retention deferred safely:', type(exc).__name__, flush=True)
     with _connect() as con:
+        # Installation waits for old workers to finish. Containers left by
+        # their direct schedule remain reserved and are held, never published.
+        results.extend(hold_legacy_scheduled_direct(con))
+        try:
+            _reconcile_published_voice_history(con)
+        except Exception as exc:
+            # A local reporting problem must never retry an uncertain Meta request.
+            print('Voice history reconciliation deferred:', type(exc).__name__, flush=True)
         interrupted = con.execute("SELECT trial_id,status,submission_id,title_fa,origin FROM trial_reels WHERE status IN ('creating_container','publishing')").fetchall()
         for row in interrupted:
             current = con.execute('SELECT updated_at FROM trial_reels WHERE trial_id=?', (row['trial_id'],)).fetchone()
@@ -839,7 +1114,8 @@ def wait_for_scheduled_news_lock(factory, max_wait, *, sleeper=time.sleep, clock
 
 def scheduled_translation_error(exc):
     """Classify known translation errors without logging content or secrets."""
-    if type(exc).__name__ != 'NewsError':
+    from instagram_crypto_news import NewsError
+    if not isinstance(exc, NewsError):
         return 'unexpected_error'
     message = str(exc)
     exact = {
@@ -874,10 +1150,57 @@ def translate_scheduled_news(ranked, con, row):
         raise
 
 
+def record_scheduled_translation(day, slot, position, kind, row, status, code=None, unsupported=()):
+    with closing(_connect()) as con:
+        with con:
+            con.execute('''INSERT INTO scheduled_translation_attempts
+                (posted_day,slot,position,kind,source_url,status,error_code,unsupported_json,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)''', (day, slot, position, kind, row['source_url'], status, code,
+                json.dumps(list(unsupported)), time.time()))
+
+
+def choose_scheduled_translation(candidates, ranked, database, *, refill=None, record=None):
+    """Try at most three distinct verified candidates; never fall back after create/publish."""
+    recoverable = {'invalid_json_object','invalid_length','missing_persian_text',
+                   'disallowed_link_or_hashtag','unverified_number'}
+    queue, tried, attempts = list(candidates), set(), 0
+    while attempts < 3:
+        available = [(kind, row) for kind, row in queue if _source_key(row['source_url']) not in tried]
+        if not available:
+            if refill is None:
+                break
+            queue = list(refill(tried))
+            if not any(_source_key(row['source_url']) not in tried for _, row in queue):
+                break
+            continue
+        kind, row = max(available, key=lambda item: (item[1]['trial_score'], item[1]['article_published_at'], item[0] == 'crypto'))
+        tried.add(_source_key(row['source_url']))
+        attempts += 1
+        ranked.configure_engine(kind)
+        try:
+            with database(ranked.SOURCES[kind]) as con:
+                title, summary = translate_scheduled_news(ranked, con, row)
+        except Exception as exc:
+            code = scheduled_translation_error(exc)
+            if code not in recoverable:
+                raise
+            if record:
+                record(attempts, kind, row, 'rejected', code, getattr(exc, 'unsupported_numbers', ()))
+            print('Scheduled translation candidate rejected:', code, '| candidate', attempts,
+                  'of at most 3; checking another verified story.', flush=True)
+            continue
+        if record:
+            record(attempts, kind, row, 'prepared', None, ())
+        return kind, row, title, summary
+    raise TrialReelError('No scheduled candidate passed translation validation; no Reel was created.')
+
+
 def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
     """Choose and prepare the highest-ranked eligible story for one durable slot."""
-    origin = 'daily_top_story' if reel_mode == 'trial' else 'daily_direct'
-    slot_label = 'Trial Reel' if reel_mode == 'trial' else 'direct Reel'
+    if reel_mode != 'trial':
+        raise TrialReelError('Automatic direct Reels are disabled; use the Trial schedule.')
+    origin = 'daily_top_story'
+    slot_label = 'Trial Reel'
     import sys
     runtime_root = Path(runtime_root).resolve()
     sys.path[:0] = [str(runtime_root), str(runtime_root / 'selector_trial_runtime')]
@@ -944,7 +1267,7 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
             raise NewsError('No verified usable publisher image for automatic Reel.')
         import crypto_news_trial as engine
         import instagram_ranked_news as ranked
-        candidates = []
+        candidates, candidate_pools = [], {}
         with _connect() as reel_con:
             used_sources = {row['source_key'] for row in reel_con.execute('''SELECT source_key FROM trial_reels
                 WHERE status IN ('rendering','creating_container','container_processing','publishing','needs_review','published')''')}
@@ -963,6 +1286,7 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
                     rows, audit = rank_events(con, kind, now, trial_relaxed=True,
                                               material_filter=check_material_image)
                     rows = [item for item in rows if _source_key(item['source_url']) not in used_sources]
+                    candidate_pools[kind] = (rows, audit)
                     if rows:
                         selected = select_main_stories(con, rows, kind, 1, now, audit, lambda: None)
                         candidates.extend((kind, item) for item in selected)
@@ -971,11 +1295,26 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
                 con.execute("UPDATE scheduled_runs SET status='no_candidate',updated_at=? WHERE posted_day=? AND slot=?", (time.time(), day, slot))
             print(f'No verified fresh eligible story ranked today; no {slot_label} was prepared.', flush=True)
             return None
-        kind, row = max(candidates, key=lambda item: (item[1]['trial_score'], item[1]['article_published_at'], item[0] == 'crypto'))
-        configure_engine(kind)
-        import instagram_ranked_news as ranked
-        with database(ranked.SOURCES[kind]) as con:
-            title, summary = translate_scheduled_news(ranked, con, row)
+        def refill_translation_candidates(tried):
+            # Reuse this slot's already-ranked/source-verified pool. Extra
+            # main-story checks happen only after the initial winners fail.
+            more = []
+            wait_left = max(0, min(300, due + 540 - time.time()))
+            with wait_for_scheduled_news_lock(locks, wait_left):
+                for category, (pool, category_audit) in candidate_pools.items():
+                    remaining = [item for item in pool if _source_key(item['source_url']) not in tried]
+                    if not remaining:
+                        continue
+                    configure_engine(category)
+                    with database(ranked.SOURCES[category]) as con:
+                        selected = select_main_stories(con, remaining, category, 1,
+                                                       time.time(), category_audit, lambda: None)
+                    more.extend((category, item) for item in selected)
+            return more
+        kind, row, title, summary = choose_scheduled_translation(candidates, ranked, database,
+            refill=refill_translation_candidates,
+            record=lambda position, category, candidate, status, code, unsupported:
+                record_scheduled_translation(day, slot, position, category, candidate, status, code, unsupported))
         story = dict(source_url=row['source_url'], source_name=row['source_name'],
             title_original=row['title_original'], title_fa=title, summary_fa=summary,
             image_url=row.get('image_url'), image_urls=row.get('image_urls', []),
@@ -999,9 +1338,13 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
 def run_daily(runtime_root, asset_root, slot):
     return _run_scheduled(runtime_root, asset_root, slot, 'trial')
 
-@track_reel_usage('daily_direct')
+@track_reel_usage('daily_top_story')
 def run_direct_daily(runtime_root, asset_root, slot):
-    return _run_scheduled(runtime_root, asset_root, slot, 'direct')
+    """Compatibility for old 12:00/18:00 launchers: always submit a Trial."""
+    if slot not in LEGACY_DIRECT_AUTO_SLOTS:
+        raise TrialReelError('Unknown legacy automatic Reel slot.')
+    print('Legacy direct schedule redirected to a Trial Reel.', flush=True)
+    return _run_scheduled(runtime_root, asset_root, slot, 'trial')
 
 
 def main():
@@ -1009,7 +1352,7 @@ def main():
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--daily', action='store_true')
     modes.add_argument('--direct-daily', action='store_true')
-    parser.add_argument('--slot', choices=AUTO_SLOTS + DIRECT_AUTO_SLOTS, required=True)
+    parser.add_argument('--slot', choices=AUTO_SLOTS, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--assets', type=Path, required=True)
     args = parser.parse_args()
@@ -1019,12 +1362,12 @@ def main():
     try:
         result = run_direct_daily(args.runtime, args.assets, args.slot) if args.direct_daily else run_daily(args.runtime, args.assets, args.slot)
         if result:
-            print(('Daily direct Reel' if args.direct_daily else 'Daily Trial Reel') + ' container queued: ' + result, flush=True)
+            print('Daily Trial Reel container queued: ' + result, flush=True)
         return 0
     except Exception as exc:
         busy = (type(exc).__name__ == 'NewsError' and
                 str(exc) == 'A news selection/publisher is already running; retry after it finishes.')
-        print(('Daily direct Reel' if args.direct_daily else 'Daily Trial Reel') + ' stopped: ' +
+        print('Daily Trial Reel stopped: ' +
               ('news selection lock remained busy' if busy else
                str(exc) if isinstance(exc, TrialReelError) else type(exc).__name__), flush=True)
         return 1
@@ -1032,6 +1375,7 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 
 

@@ -31,7 +31,7 @@ TOPICS = (
     (r'\bethereum\b|\bether\b|\beth\b', ('ethereum cryptocurrency', 'blockchain technology')),
     (r'\busdt\b|\btether\b|\bstablecoin', ('cryptocurrency trading', 'digital currency')),
     (r'\bgold\b|\bsilver\b', ('gold bullion', 'precious metals')),
-    (r'\boil\b|\bbrent\b', ('oil industry', 'energy market')),
+    (r'\boil\b|\bbrent\b|\bpetroleum\b|\bwti\b', ('oil barrels', 'oil refinery', 'oil tanker')),
     (r'\b(?:asset|wealth|fund|investment|portfolio)[ -](?:management|manager)\b|\bfinancial services\b',
      ('investment finance', 'financial business', 'investment portfolio')),
     (r'\bcrypto|blockchain|defi\b', ('cryptocurrency trading', 'blockchain technology')),
@@ -50,7 +50,7 @@ RELEVANCE = (
     (r'\bethereum\b|\bether\b|\beth\b', ('ethereum', 'ether', 'cryptocurrency')),
     (r'\busdt\b|\btether\b|\bstablecoin', ('tether', 'stablecoin', 'cryptocurrency')),
     (r'\bgold\b|\bsilver\b', ('gold', 'silver', 'bullion', 'precious metal')),
-    (r'\boil\b|\bbrent\b', ('oil', 'crude', 'petroleum', 'energy market')),
+    (r'\boil\b|\bbrent\b|\bpetroleum\b|\bwti\b', ('oil', 'crude', 'petroleum', 'energy market')),
     (r'\b(?:asset|wealth|fund|investment|portfolio)[ -](?:management|manager)\b|\bfinancial services\b',
      ('finance', 'financial', 'investment', 'business', 'portfolio', 'fund management')),
     (r'\bcrypto|blockchain|defi\b', ('cryptocurrency', 'crypto', 'blockchain', 'defi')),
@@ -131,9 +131,14 @@ def queries(story):
     return selected
 
 def _matches_story_topic(story, item):
+    from instagram_reel_commons import rejected_image, oil_scene
+    if rejected_image(item):
+        return False
     text = _story_search_text(story)
     profile = next((anchors for pattern, anchors in RELEVANCE
                     if re.search(pattern, text)), None)
+    if profile == ('oil', 'crude', 'petroleum', 'energy market'):
+        return oil_scene(item)
     description = str(item.get('description', '')).casefold()
     return bool(profile and description and any(anchor in description for anchor in profile))
 
