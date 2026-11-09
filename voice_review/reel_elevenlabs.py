@@ -11,7 +11,7 @@ import tempfile
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
-from reel_narration_timing import TimingError, build_script, word_starts
+from reel_narration_timing import TimingError, apply_diacritics, build_script, word_starts
 
 
 class VoiceError(RuntimeError):
@@ -64,12 +64,15 @@ def _generate(script, key, voice_id, model, timeout):
 
 
 def synthesize_segment(display_text, cache_file, key, *, voice_id='TX3LPaxmHKxFdv7VOQHJ',
-                       model='eleven_v4', speed=1.5, ffmpeg='ffmpeg', ffprobe='ffprobe', timeout=60):
+                       model='eleven_v4', speed=1.5, ffmpeg='ffmpeg', ffprobe='ffprobe', timeout=60,
+                       spoken_script=None):
     """Return PCM WAV bytes and word start times; cache successful, verified results."""
     if not key or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', voice_id) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', model):
         raise VoiceError('Voice configuration is invalid.')
     try:
         script, tokens = build_script(display_text)
+        if spoken_script is not None:
+            script, tokens = apply_diacritics(script, tokens, spoken_script)
     except TimingError as exc:
         raise VoiceError(str(exc)) from None
     if len(script) > (10000 if model == 'eleven_v4' else 5000):
