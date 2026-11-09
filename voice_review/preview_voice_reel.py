@@ -49,6 +49,30 @@ def preview_candidates(rows, previous, limit_per_group=5):
         (row, True) for row in reused[:limit_per_group]]
 
 
+def refresh_translation(story, material, cache_file, request_fn=None):
+    """Private editorial comparison; never write to publication history."""
+    from economy_news_translation import translate, TRANSLATION_VERSION
+    path = Path(cache_file)
+    if path.is_symlink() or path.parent.is_symlink():
+        raise RuntimeError('Unsafe private translation cache.')
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    os.close(fd)
+    os.chmod(path, 0o600)
+    with closing(sqlite3.connect(path)) as con:
+        con.execute('''CREATE TABLE IF NOT EXISTS economy_translation_cache(
+            input_hash TEXT PRIMARY KEY, model TEXT, title_fa TEXT,
+            summary_fa TEXT, created_at REAL)''')
+        con.commit()
+        title, summary = translate(con, material, request_fn=request_fn)
+    updated = dict(story, title_fa=title, summary_fa=summary)
+    comparison = {'source_url': story['source_url'], 'title_original': material['title_original'],
+        'stored': {key: story[key] for key in ('title_fa', 'summary_fa')},
+        'revised': {'title_fa': title, 'summary_fa': summary},
+        'translation_version': TRANSLATION_VERSION,
+        'model': os.environ.get('DEEPSEEK_MODEL', 'deepseek-flash')}
+    return updated, comparison
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
@@ -56,8 +80,18 @@ def main():
     parser.add_argument('--send', action='store_true')
     parser.add_argument('--latest', action='store_true', help='Use only the newest saved published Reel for this private preview.')
     parser.add_argument('--reel-id', help='Use this exact saved published trial ID or media ID.')
+    parser.add_argument('--source-url', help='Use a saved published Reel with this exact source host/path, ignoring tracking parameters.')
+    parser.add_argument('--refresh-translation', action='store_true', help='Privately translate the source again with the current editorial prompt; model charges may apply.')
     parser.add_argument('--cached-pronunciation-only', action='store_true', help='Require cached pronunciation; never request DeepSeek for this preview.')
     args = parser.parse_args()
+    if args.reel_id and args.source_url:
+        parser.error('Choose either --reel-id or --source-url.')
+    if args.refresh_translation and not (args.reel_id or args.source_url):
+        parser.error('--refresh-translation requires an exact saved Reel or source URL.')
+    if args.refresh_translation and args.cached_pronunciation_only:
+        parser.error('Refreshed wording needs its own pronunciation check; omit --cached-pronunciation-only.')
+    if args.source_url and (urlsplit(args.source_url).scheme != 'https' or not all(article_key(args.source_url))):
+        parser.error('Use the HTTPS source URL of an already published Reel.')
     home = Path.home()
     source_root = (home / '.local/state/kiani-instagram-manual-news/source').resolve()
     runtime = args.runtime.resolve()
@@ -95,6 +129,10 @@ def main():
             if not re.fullmatch('[A-Za-z0-9_-]{1,80}', args.reel_id):
                 raise RuntimeError('Invalid saved Reel identity.')
             rows = [dict(row) for row in con.execute("SELECT * FROM trial_reels WHERE status='published' AND (trial_id=? OR media_id=?)", (args.reel_id, args.reel_id))]
+        elif args.source_url:
+            rows = [dict(row) for row in con.execute("SELECT * FROM trial_reels WHERE status='published' ORDER BY published_at DESC LIMIT 1000")
+                    if article_key(row['source_url']) == article_key(args.source_url)]
+            rows = rows[:1]
         else:
             rows = [dict(row) for row in con.execute('''SELECT * FROM trial_reels WHERE status='published'
                 AND article_published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 50''', (now - 7 * 86400, now))]
@@ -126,7 +164,14 @@ def main():
     folder = state / 'previews' / uuid.uuid4().hex
     folder.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.chmod(folder, 0o700)
+    if args.refresh_translation:
+        translation_env = home / 'sub/.env'
+        if not os.environ.get('DEEPSEEK_API_KEY') and translation_env.is_file():
+            from economy_news_translation import load_translation_env
+            load_translation_env(translation_env)
+        print('Private editorial translation requested; uncached DeepSeek requests may be charged.', flush=True)
     story, media = None, []
+    comparison = None
     attempted = 0
     reused_story = False
     for row, reused in preview_candidates(rows, previous):
@@ -135,9 +180,6 @@ def main():
         try:
             if reused:
                 print('Trying a previously previewed article with a new image search.', flush=True)
-            sections = [row['title_fa']] + trial._narrated_chunks(row['summary_fa'], assets, has_images=True)
-            for text in sections:
-                timing.build_script(text)
             stage = 'article retrieval'
             ranked.configure_engine(row['kind'])
             # This is a private preview of an already-published story, not
@@ -152,7 +194,14 @@ def main():
                 state=trial.STATE, stock_collector=stock.collect, commons_collector=commons.collect)
             print('Verified distinct images for candidate:', len(candidate_media), flush=True)
             if len(candidate_media) >= 2:
-                story = dict(row)
+                candidate_story = dict(row)
+                if args.refresh_translation:
+                    stage = 'editorial translation'
+                    candidate_story, comparison = refresh_translation(row, material, state / 'language-preview-cache.sqlite3')
+                stage = 'text layout'
+                for text in [candidate_story['title_fa']] + trial._narrated_chunks(candidate_story['summary_fa'], assets, has_images=True):
+                    timing.build_script(text)
+                story = candidate_story
                 story['reel_length'] = 'long'
                 media = candidate_media
                 reused_story = reused
@@ -162,6 +211,16 @@ def main():
             continue
     if story is None:
         raise RuntimeError('No eligible saved article supplied two distinct relevant images and a complete-sentence layout; no narration was requested.')
+    if comparison:
+        comparison_path = folder / 'language-comparison.json'
+        comparison_path.write_text(json.dumps(comparison, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        os.chmod(comparison_path, 0o600)
+        print('Source headline:', comparison['title_original'])
+        print('Stored Persian title:', comparison['stored']['title_fa'])
+        print('Revised Persian title:', story['title_fa'])
+        print('Stored Persian summary:', comparison['stored']['summary_fa'])
+        print('Revised Persian summary:', story['summary_fa'])
+        print('Private language comparison:', comparison_path)
     for text in [story['title_fa']] + trial._narrated_chunks(story['summary_fa'], assets, has_images=bool(media)):
         timing.build_script(text)
     track, music_file = None, folder / 'music.ogg'
@@ -227,6 +286,7 @@ def main():
                 'voice_name': voice['name'], 'voice_id': voice['voice_id'], 'model': voices.MODEL,
                 'speed': voices.SPEED, 'source_url': story['source_url'], 'title_fa': story['title_fa'],
                 'summary_fa': story['summary_fa'], 'music_credit': credit,
+                'language_comparison': comparison,
                 'reused_preview_article': reused_story,
                 'historical_preview_article': historical,
                 'music_match': match, 'music_track': track.get('title'),
