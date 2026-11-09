@@ -5,8 +5,43 @@ Unsupported numeric forms are rejected rather than guessed.
 """
 from dataclasses import dataclass
 from datetime import date
+from dataclasses import replace
 import math
 import re
+import unicodedata
+
+DIACRITICS = frozenset('\u064b\u064c\u064d\u064e\u064f\u0650\u0651\u0652\u0670')
+
+
+def apply_diacritics(script, tokens, marked):
+    """Only add speech marks; remap offsets while preserving visible words."""
+    if not isinstance(marked, str) or not script or len(marked) > len(script) * 3:
+        raise TimingError('Invalid pronunciation text')
+    offsets, position, base = {}, 0, None
+    marks = set()
+    vowels = DIACRITICS - {'\u0651'}
+    for index, char in enumerate(marked):
+        if char in DIACRITICS:
+            if (base is None or unicodedata.category(base) != 'Lo' or
+                    not unicodedata.name(base, '').startswith('ARABIC LETTER') or char in marks or
+                    char in vowels and marks.intersection(vowels)):
+                raise TimingError('Invalid pronunciation mark position')
+            marks.add(char)
+        else:
+            base, marks = char, set()
+        if position < len(script) and char == script[position]:
+            offsets[position] = index
+            position += 1
+        elif char not in DIACRITICS:
+            raise TimingError('Pronunciation text changed the verified words')
+    if position != len(script):
+        raise TimingError('Pronunciation text removed verified characters')
+    offsets[len(script)] = len(marked)
+    mapped = []
+    for token in tokens:
+        start, end = offsets[token.start], offsets[token.end]
+        mapped.append(replace(token, start=start, end=end, spoken=marked[start:end]))
+    return marked, mapped
 
 
 class TimingError(ValueError):
@@ -152,7 +187,13 @@ def word_starts(script, tokens, alignment, source_duration, speed=1.5):
     chars = alignment.get('characters')
     starts = alignment.get('character_start_times_seconds')
     ends = alignment.get('character_end_times_seconds')
-    if not isinstance(chars, list) or any(not isinstance(c, str) or len(c) != 1 for c in chars) or ''.join(chars) != script:
+    if not isinstance(chars, list) or any(not isinstance(c, str) or len(c) != 1 for c in chars):
+        raise TimingError('Alignment does not match the spoken script')
+    provider_text = ''.join(chars)
+    # Some TTS responses omit combining vowel marks from alignment characters.
+    # Only this difference is permitted; letters/numbers/punctuation stay exact.
+    plain = lambda value: ''.join(c for c in value if c not in DIACRITICS)
+    if plain(provider_text) != plain(script):
         raise TimingError('Alignment does not match the spoken script')
     if not isinstance(starts, list) or not isinstance(ends, list) or len(starts) != len(chars) or len(ends) != len(chars):
         raise TimingError('Alignment arrays are incomplete')
@@ -166,10 +207,15 @@ def word_starts(script, tokens, alignment, source_duration, speed=1.5):
         previous = start
     result = []
     last_end = 0
+    provider_base = [i for i, c in enumerate(chars) if c not in DIACRITICS]
+    plain_offsets = [0]
+    for char in script:
+        plain_offsets.append(plain_offsets[-1] + int(char not in DIACRITICS))
     for token in tokens:
-        if token.start < last_end or token.end > len(chars) or token.start >= token.end or script[token.start:token.end] != token.spoken:
+        if token.start < last_end or token.end > len(script) or token.start >= token.end or script[token.start:token.end] != token.spoken:
             raise TimingError('Display token mapping is invalid')
-        result.append(starts[token.start] / speed)
+        if plain_offsets[token.start] >= len(provider_base):
+            raise TimingError('Display token has no aligned spoken characters')
+        result.append(starts[provider_base[plain_offsets[token.start]]] / speed)
         last_end = token.end
     return result
-
