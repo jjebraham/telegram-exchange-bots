@@ -199,6 +199,12 @@ def main():
             os.environ.setdefault(name, local_settings[name])
     voice_dir = folder / 'narration'
     voice_dir.mkdir(mode=0o700)
+    # Only this explicit live-preview entry point loads the production
+    # translation key. The testable narration function never loads it itself.
+    translation_env = home / 'sub/.env'
+    if not os.environ.get('DEEPSEEK_API_KEY') and translation_env.is_file():
+        from economy_news_translation import load_translation_env
+        load_translation_env(translation_env)
     print('Generating narration for the private preview; ElevenLabs charges may apply.', flush=True)
     started = time.monotonic()
     segments = trial._prepare_narration(story, voice_dir, voice['voice_id'], assets, has_images=bool(media))
