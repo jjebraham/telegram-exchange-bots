@@ -485,8 +485,11 @@ def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
         sections = [title] + _narrated_chunks(summary, asset_root, has_images=has_images)
         from reel_persian_pronunciation import prepare as prepare_pronunciation
         spoken, pronunciation_status = prepare_pronunciation(
-            sections, STATE / 'pronunciation-cache.sqlite3', context=story.get('title_original', ''))
+            sections, STATE / 'pronunciation-cache.sqlite3', context=story.get('title_original', ''),
+            word_updates=True, cache_only=os.environ.get('REEL_PRONUNCIATION_CACHE_ONLY', 'false') == 'true')
         print('Persian pronunciation preparation:', pronunciation_status, flush=True)
+        if os.environ.get('REEL_PRONUNCIATION_CACHE_ONLY', 'false') == 'true' and pronunciation_status not in ('cached', 'recovered_cache'):
+            raise TrialReelError('No verified cached pronunciation is available; no audio was requested.')
         max_seconds = {'short': 30, 'long': 90}.get(story.get('reel_length'), MAX_REEL_SECONDS)
         output = []
         for index, text in enumerate(sections):
