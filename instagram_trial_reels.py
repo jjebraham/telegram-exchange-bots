@@ -483,6 +483,18 @@ def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
         title = _safe_text(story.get('title_fa'), 500)
         summary = _safe_text(story.get('summary_fa'))
         sections = [title] + _narrated_chunks(summary, asset_root, has_images=has_images)
+        from reel_persian_pronunciation import prepare as prepare_pronunciation
+        if not os.environ.get('DEEPSEEK_API_KEY'):
+            try:
+                translation_env = Path.home() / 'sub/.env'
+                if translation_env.is_file():
+                    from economy_news_translation import load_translation_env
+                    load_translation_env(translation_env)
+            except (ImportError, OSError, ValueError, RuntimeError):
+                pass
+        spoken, pronunciation_status = prepare_pronunciation(
+            sections, STATE / 'pronunciation-cache.sqlite3', context=story.get('title_original', ''))
+        print('Persian pronunciation preparation:', pronunciation_status, flush=True)
         max_seconds = {'short': 30, 'long': 90}.get(story.get('reel_length'), MAX_REEL_SECONDS)
         output = []
         for index, text in enumerate(sections):
@@ -490,6 +502,7 @@ def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
                 text, STATE / 'narration-cache.sqlite3', key, speed=speed,
                 voice_id=voice_id,
                 model=model,
+                spoken_script=spoken[index],
                 ffmpeg=shutil.which('ffmpeg') or 'ffmpeg', ffprobe=shutil.which('ffprobe') or 'ffprobe')
             path = Path(folder) / ('section-' + str(index) + '.wav')
             with path.open('xb') as stream:
@@ -499,6 +512,8 @@ def _prepare_narration(story, folder, voice_id, asset_root, *, has_images):
                 duration = voice.getnframes() / voice.getframerate()
             output.append({'path': path, 'duration': duration, 'word_starts': result['starts'],
                            'cached': result.get('cached', False),
+                           'pronunciation_status': pronunciation_status,
+                           'spoken_script': result.get('script', spoken[index]),
                            'submitted_characters': result.get('submitted_characters', 0)})
             if sum(item['duration'] for item in output) + 3.6 > max_seconds:
                 raise TrialReelError('Narration is too long for the selected Reel duration; no Reel was published.')
@@ -793,6 +808,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                                   ducking=os.environ.get('REEL_AUDIO_DUCKING_ENABLED', 'true').lower() == 'true',
                                   submitted_characters=sum(s['submitted_characters'] for s in narration),
                                   cached_segments=sum(bool(s['cached']) for s in narration), segments=len(narration))
+            voice_metadata['pronunciation_status'] = narration[0].get('pronunciation_status') if narration else None
             _update(con, trial_id, voice_json=json.dumps(voice_metadata), duration_seconds=duration, updated_at=time.time())
         if stock_used:
             try:
