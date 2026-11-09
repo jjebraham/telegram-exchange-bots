@@ -38,7 +38,7 @@ def report(home, now=None):
                 routes.append({'slots': match.group(1).split('|'), 'launcher_mode': mode})
     result = {'checked_istanbul': now.isoformat(timespec='seconds'), 'active_revision': revision,
               'configured_policy': constants, 'installed_routes': routes,
-              'today_slots': [], 'successful_publications': []}
+              'today_slots': [], 'successful_publications': [], 'translation_attempts': []}
     path = home / '.local/state/kiani-instagram-trial-reels/trial_reels.sqlite3'
     if not path.is_file() or path.is_symlink():
         result['database'] = 'unavailable'
@@ -70,6 +70,16 @@ def report(home, now=None):
                 'scheduled_direct': counts[date, 'scheduled', 'direct'],
                 'manual_trial': counts[date, 'manual', 'trial'],
                 'manual_direct': counts[date, 'manual', 'direct']})
+        tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'scheduled_translation_attempts' in tables:
+            for row in con.execute('''SELECT slot,position,kind,source_url,status,error_code,unsupported_json
+                FROM scheduled_translation_attempts WHERE posted_day=? ORDER BY slot,position''', (day,)):
+                item = dict(row)
+                try:
+                    item['unsupported_numbers'] = json.loads(item.pop('unsupported_json'))
+                except (ValueError, TypeError):
+                    item['unsupported_numbers'] = 'unreadable_saved_diagnostic'
+                result['translation_attempts'].append(item)
     return result
 
 
@@ -82,5 +92,8 @@ if __name__ == '__main__':
         print(json.dumps(row, ensure_ascii=False))
     print('\nRECORDED SUCCESSFUL PUBLICATIONS')
     for row in data['successful_publications']:
+        print(json.dumps(row, ensure_ascii=False))
+    print('\nTODAY TRANSLATION ATTEMPTS (new diagnostic records only)')
+    for row in data['translation_attempts']:
         print(json.dumps(row, ensure_ascii=False))
     print('Read-only check complete; no service contacted or publication changed.')
