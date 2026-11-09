@@ -32,13 +32,14 @@ DB = STATE / 'trial_reels.sqlite3'
 PUBLIC_ROOT = Path('/var/www/peerexo.com/public/instagram-rates/trial-reels')
 PUBLIC_BASE = 'https://peerexo.com/instagram-rates/trial-reels'
 ZONE = ZoneInfo('Europe/Istanbul')
-MAX_PER_DAY = 5
+MAX_PER_DAY = 7
 MAX_REEL_SECONDS = 180
 MAX_ADMIN_PER_DAY = 5
-AUTO_SLOTS = ('11:00', '13:00', '15:00', '17:00', '20:30')
+AUTO_SLOTS = ('11:00', '12:00', '13:00', '15:00', '17:00', '18:00', '20:30')
 DIRECT_ADMIN_PER_DAY = 10
-DIRECT_AUTO_PER_DAY = 2
-DIRECT_AUTO_SLOTS = ('12:00', '18:00')
+DIRECT_AUTO_PER_DAY = 0
+DIRECT_AUTO_SLOTS = ()
+LEGACY_DIRECT_AUTO_SLOTS = ('12:00', '18:00')
 PENDING = {'rendering', 'creating_container', 'container_processing', 'publishing', 'needs_review'}
 DECISIVE = {'published', 'needs_review', 'container_processing', 'publishing', 'creating_container'}
 SEGMENT_SECONDS = 5.0
@@ -434,9 +435,9 @@ def _article_allowed(origin, article_time, now):
 
 def _enforce_daily_limit(con, origin, day, reel_mode='trial'):
     if reel_mode == 'direct':
-        if origin not in {'admin_direct', 'daily_direct'}:
+        if origin != 'admin_direct':
             raise TrialReelError('Direct Reel origin is unsupported.')
-        maximum = DIRECT_ADMIN_PER_DAY if origin == 'admin_direct' else DIRECT_AUTO_PER_DAY
+        maximum = DIRECT_ADMIN_PER_DAY
     else:
         if origin not in {'admin_link', 'daily_top_story'}:
             raise TrialReelError('Trial Reel origin is unsupported.')
@@ -559,8 +560,8 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
                 public_root=PUBLIC_ROOT, public_base=PUBLIC_BASE, _validated_image=None):
     """Render a direct or Trial Reel and persist its Meta container before polling."""
     allowed_origins = ({'daily_top_story', 'admin_link'} if reel_mode == 'trial'
-                       else {'daily_direct', 'admin_direct'})
-    if kind not in {'crypto', 'economy'} or origin not in allowed_origins:
+                       else {'admin_direct'})
+    if reel_mode not in {'trial', 'direct'} or kind not in {'crypto', 'economy'} or origin not in allowed_origins:
         raise TrialReelError('Reel category, mode or origin is unsupported.')
     allowed_slots = AUTO_SLOTS if reel_mode == 'trial' else DIRECT_AUTO_SLOTS
     if origin in {'daily_top_story', 'daily_direct'} and scheduled_slot not in allowed_slots:
@@ -831,13 +832,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
         os.environ['INSTAGRAM_PUBLIC_MEDIA_BASE_URL'] = public_base
         # The renderer writes the finished cover as the first video frame.
         # Ask Meta to use that frame instead of selecting a partly typed title.
-        fields = {'media_type': 'REELS', 'video_url': public_url, 'caption': caption,
-                  'thumb_offset': '0'}
-        if reel_mode == 'trial':
-            fields.update(share_to_feed='false',
-                trial_params=json.dumps({'graduation_strategy': 'SS_PERFORMANCE'}, separators=(',', ':')))
-        else:
-            fields['share_to_feed'] = 'true'
+        fields = container_fields(public_url, caption, reel_mode)
         _update(con, trial_id, status='creating_container', updated_at=time.time())
         try:
             container_id = ig._create_container(fields)
@@ -880,6 +875,31 @@ def create_trial(story, kind, *, origin, asset_root, submission_id=None, schedul
         submission_id=submission_id, scheduled_slot=scheduled_slot, public_root=public_root, public_base=public_base)
 
 
+def container_fields(public_url, caption, reel_mode):
+    if reel_mode not in {'trial', 'direct'}:
+        raise TrialReelError('Unsupported Reel publication mode.')
+    fields = {'media_type': 'REELS', 'video_url': public_url, 'caption': caption, 'thumb_offset': '0'}
+    if reel_mode == 'trial':
+        fields.update(share_to_feed='false',
+            trial_params=json.dumps({'graduation_strategy': 'SS_PERFORMANCE'}, separators=(',', ':')))
+    else:
+        fields['share_to_feed'] = 'true'
+    return fields
+
+
+def hold_legacy_scheduled_direct(con):
+    """Never reinterpret an existing direct Meta container as a Trial."""
+    rows = con.execute("""SELECT trial_id,submission_id,title_fa,origin FROM trial_reels
+        WHERE origin='daily_direct' AND status IN
+        ('rendering','creating_container','container_processing','publishing')""").fetchall()
+    results = []
+    for row in rows:
+        _update(con, row['trial_id'], status='needs_review', error_type='ScheduledDirectDisabled', updated_at=time.time())
+        _mark_daily_result(con, row['trial_id'], 'needs_review')
+        results.append(dict(row, status='needs_review'))
+    return results
+
+
 def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=None):
     """Advance at most one saved Meta container without ever blind-retrying publish."""
     publisher_root = Path(publisher_root).resolve()
@@ -894,6 +914,9 @@ def poll_pending(*, publisher_root, intake_con=None, send_message=None, token=No
     except Exception as exc:
         print('Direct Reel retention deferred safely:', type(exc).__name__, flush=True)
     with _connect() as con:
+        # Installation waits for old workers to finish. Containers left by
+        # their direct schedule remain reserved and are held, never published.
+        results.extend(hold_legacy_scheduled_direct(con))
         try:
             _reconcile_published_voice_history(con)
         except Exception as exc:
@@ -1065,8 +1088,10 @@ def translate_scheduled_news(ranked, con, row):
 
 def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
     """Choose and prepare the highest-ranked eligible story for one durable slot."""
-    origin = 'daily_top_story' if reel_mode == 'trial' else 'daily_direct'
-    slot_label = 'Trial Reel' if reel_mode == 'trial' else 'direct Reel'
+    if reel_mode != 'trial':
+        raise TrialReelError('Automatic direct Reels are disabled; use the Trial schedule.')
+    origin = 'daily_top_story'
+    slot_label = 'Trial Reel'
     import sys
     runtime_root = Path(runtime_root).resolve()
     sys.path[:0] = [str(runtime_root), str(runtime_root / 'selector_trial_runtime')]
@@ -1188,9 +1213,13 @@ def _run_scheduled(runtime_root, asset_root, slot, reel_mode):
 def run_daily(runtime_root, asset_root, slot):
     return _run_scheduled(runtime_root, asset_root, slot, 'trial')
 
-@track_reel_usage('daily_direct')
+@track_reel_usage('daily_top_story')
 def run_direct_daily(runtime_root, asset_root, slot):
-    return _run_scheduled(runtime_root, asset_root, slot, 'direct')
+    """Compatibility for old 12:00/18:00 launchers: always submit a Trial."""
+    if slot not in LEGACY_DIRECT_AUTO_SLOTS:
+        raise TrialReelError('Unknown legacy automatic Reel slot.')
+    print('Legacy direct schedule redirected to a Trial Reel.', flush=True)
+    return _run_scheduled(runtime_root, asset_root, slot, 'trial')
 
 
 def main():
@@ -1198,7 +1227,7 @@ def main():
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--daily', action='store_true')
     modes.add_argument('--direct-daily', action='store_true')
-    parser.add_argument('--slot', choices=AUTO_SLOTS + DIRECT_AUTO_SLOTS, required=True)
+    parser.add_argument('--slot', choices=AUTO_SLOTS, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--assets', type=Path, required=True)
     args = parser.parse_args()
@@ -1208,12 +1237,12 @@ def main():
     try:
         result = run_direct_daily(args.runtime, args.assets, args.slot) if args.direct_daily else run_daily(args.runtime, args.assets, args.slot)
         if result:
-            print(('Daily direct Reel' if args.direct_daily else 'Daily Trial Reel') + ' container queued: ' + result, flush=True)
+            print('Daily Trial Reel container queued: ' + result, flush=True)
         return 0
     except Exception as exc:
         busy = (type(exc).__name__ == 'NewsError' and
                 str(exc) == 'A news selection/publisher is already running; retry after it finishes.')
-        print(('Daily direct Reel' if args.direct_daily else 'Daily Trial Reel') + ' stopped: ' +
+        print('Daily Trial Reel stopped: ' +
               ('news selection lock remained busy' if busy else
                str(exc) if isinstance(exc, TrialReelError) else type(exc).__name__), flush=True)
         return 1
