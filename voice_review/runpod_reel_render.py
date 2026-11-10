@@ -90,7 +90,9 @@ def command(args,timeout=30):
                              ('libnvidia-encode','nvenc_driver_missing'),('cannot load libcuda','cuda_driver_missing'),
                              ('no module named','render_dependency_missing'),('error reinitializing filters','video_filter_failed')):
             if needle in stderr: category=label;break
-        raise RenderError('Render command failed: '+category)
+        error=RenderError('Render command failed: '+category)
+        error.diagnostic=stderr[-4000:]
+        raise error
     return result.stdout
 
 
@@ -139,18 +141,29 @@ def remote_work(pod,lease,root,home):
     identity=json.loads(command(ssh+['python3 -c '+shlex.quote(check)],timeout=15))
     if identity.get('pod')!=pod['id']: raise RenderError('SSH endpoint is not the expected Pod')
     print('GPU render stage: SSH identity verified',flush=True)
+    def remote_command(script,timeout):
+        # Restore only execution paths from Docker's environment. sshd starts
+        # with a minimal PATH, which can select Ubuntu's system Python instead
+        # of the image's prepared Python environment.
+        bridge=('import os;from pathlib import Path;'
+                'items=Path("/proc/1/environ").read_bytes().split(b"\\x00");'
+                'values=dict(x.split(b"=",1) for x in items if b"=" in x);'
+                'env=os.environ.copy();'
+                'env.update({k:values[k.encode()].decode() for k in ("PATH","LD_LIBRARY_PATH","VIRTUAL_ENV") if k.encode() in values});'
+                'os.execvpe("bash",["bash","-c",'+repr(script)+'],env)')
+        return command(ssh+['python3 -c '+shlex.quote(bridge)],timeout=timeout)
     bootstrap="set -eu; command -v ffmpeg >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg); python3 -c 'import PIL,arabic_reshaper,bidi' 2>/dev/null || python3 -m pip install --disable-pip-version-check --quiet Pillow arabic-reshaper python-bidi"
     started=time.monotonic()
-    command(ssh+[bootstrap],timeout=150)
+    remote_command(bootstrap,150)
     print('GPU render stage: dependencies ready',flush=True)
-    gpu=command(ssh+['nvidia-smi --query-gpu=name --format=csv,noheader'],timeout=15).decode().strip()
+    gpu=remote_command('nvidia-smi --query-gpu=name --format=csv,noheader',15).decode().strip()
     if pod['gpu']['id'] not in gpu: raise RenderError('Allocated GPU was not verified')
     remote='/tmp/kiani-reel-'+lease
     if not re.fullmatch(r'/tmp/kiani-reel-[a-f0-9]{32}',remote): raise RenderError('Invalid render job identity')
-    command(ssh+['mkdir -m 700 '+remote],timeout=15)
+    remote_command('mkdir -m 700 '+remote,15)
     command(['scp',*options,'-P',str(port),str(root/'bundle.tgz'),address+':'+remote+'/bundle.tgz'],timeout=60)
     print('GPU render stage: encoding verified input bundle',flush=True)
-    command(ssh+['tar -xzf '+remote+'/bundle.tgz -C '+remote+' && python3 '+remote+'/code/runpod_remote_render.py '+remote],timeout=240)
+    remote_command('tar -xzf '+remote+'/bundle.tgz -C '+remote+' && python3 '+remote+'/code/runpod_remote_render.py '+remote,240)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/output.mp4',str(root/'output.mp4')],timeout=60)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/result.json',str(root/'remote-result.json')],timeout=15)
     result=json.loads((root/'remote-result.json').read_text())

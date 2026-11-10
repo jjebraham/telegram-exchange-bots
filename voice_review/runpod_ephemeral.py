@@ -205,7 +205,8 @@ def worker(home,root):
         if not public.startswith('ssh-ed25519 ') or '\n' in public: raise RenderError('Rendering public key unavailable')
         for gpu in candidates(home):
             body={'name':session['name'],'image':IMAGE,'cloud':'SECURE','gpu':{'id':gpu['id'],'count':1},
-                  'disk':50,'mounts':{},'ports':['22/tcp'],'startSsh':True,'env':{'PUBLIC_KEY':public}}
+                  'disk':50,'mounts':{},'ports':['22/tcp'],'startSsh':True,
+                  'env':{'PUBLIC_KEY':public,'NVIDIA_DRIVER_CAPABILITIES':'compute,utility,video'}}
             try: pod=http(home,'/v2/pods',body)
             except HTTPError as exc:
                 if exc.code in (400,403): continue
@@ -226,7 +227,8 @@ def worker(home,root):
             session['create_rejected']=True;private_write(root/'session.json',session)
             raise RenderError('No approved GPU capacity available')
     except Exception as exc:
-        private_write(root/'error.json',{'category':type(exc).__name__,'detail':str(exc) if isinstance(exc,RenderError) else None})
+        private_write(root/'error.json',{'category':type(exc).__name__,'detail':str(exc) if isinstance(exc,RenderError) else None,
+                                        'diagnostic':getattr(exc,'diagnostic',None)})
     finally:
         cleanup(home,root,force=True)
 
