@@ -79,6 +79,10 @@ class DisposableTests(unittest.TestCase):
             with self.assertRaises(OSError):gpu.submit(self.home,fresh)
         with closing(leases.connect(self.state/'leases.sqlite3')) as con:
             self.assertEqual(con.execute('SELECT COUNT(*) FROM render_spend').fetchone()[0],0)
+    def test_first_transaction_crash_without_spend_table_is_recoverable(self):
+        with closing(leases.connect(self.state/'leases.sqlite3')) as con:con.execute('DROP TABLE render_spend')
+        private_write(self.root/'session.json',dict(self.session,state='PREPARING',created_at=time.time()-60))
+        self.assertEqual(self.cleanup(),'NO_CAPACITY')
 
 
 if __name__=='__main__':unittest.main()

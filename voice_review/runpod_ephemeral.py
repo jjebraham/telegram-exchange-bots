@@ -17,7 +17,7 @@ import runpod_lease_store as leases
 import runpod_secrets
 import runpod_watchdog_service as service
 from runpod_systemd_guard import validate_properties
-from runpod_reel_render import RenderError, command, private_write, remote_work, spend_guard
+from runpod_reel_render import RenderError, SPEND_SCHEMA, command, private_write, remote_work, spend_guard
 
 TIMER='kiani-runpod-render-watchdog.timer'
 SERVICE='kiani-runpod-render-watchdog.service'
@@ -111,6 +111,7 @@ def owned(pod,session):
 def close_budget(home,root,session,state):
     cost=0.0 if state=='NO_CAPACITY' else max(0,time.time()-session['created_at'])*session.get('rate',1)/3600
     with closing(leases.connect(paths(home)/'leases.sqlite3')) as con:
+        con.execute(SPEND_SCHEMA)
         con.execute('UPDATE render_spend SET estimate_usd=?,state=? WHERE job_id=?',(cost,state,root.name))
     session.update(state=state,stopped_at=time.time(),estimated_compute_usd=round(cost,6),shutdown_confirmed=True)
     private_write(root/'session.json',session)

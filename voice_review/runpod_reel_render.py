@@ -21,6 +21,9 @@ class RenderError(RuntimeError):
         super().__init__(message); self.fallback_safe=fallback_safe
 
 
+SPEND_SCHEMA='CREATE TABLE IF NOT EXISTS render_spend(job_id TEXT PRIMARY KEY,month_utc TEXT NOT NULL,lease_id TEXT,estimate_usd REAL NOT NULL,state TEXT NOT NULL)'
+
+
 def private_write(path,data):
     path=Path(path)
     fd,name=tempfile.mkstemp(prefix='.render-',dir=path.parent)
@@ -74,7 +77,7 @@ def spend_guard(con,now=None,*,monthly_cap=10.0,reserve=.5):
     """Reserve the full possible session before starting; no monthly reset edits."""
     now=datetime.now(timezone.utc) if now is None else now
     month=now.strftime('%Y-%m')
-    con.execute('CREATE TABLE IF NOT EXISTS render_spend(job_id TEXT PRIMARY KEY,month_utc TEXT NOT NULL,lease_id TEXT,estimate_usd REAL NOT NULL,state TEXT NOT NULL)')
+    con.execute(SPEND_SCHEMA)
     total=con.execute('SELECT COALESCE(SUM(estimate_usd),0) FROM render_spend WHERE month_utc=?',(month,)).fetchone()[0]
     if total+reserve>monthly_cap+1e-9: raise RenderError('Monthly GPU budget exhausted',fallback_safe=True)
     return month
