@@ -422,7 +422,12 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         cmd += encoder_arguments(os.environ.get('REEL_VIDEO_ENCODER', 'libx264'))
         cmd += ['-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
-        except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
+        except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError) as exc:
+            if os.environ.get('REEL_VIDEO_ENCODER') == 'h264_nvenc':
+                diagnostic = Path(t.STATE) / 'ffmpeg-error.txt'
+                diagnostic.write_bytes((getattr(exc, 'stderr', None) or b'')[-6000:])
+                diagnostic.chmod(0o600)
+            raise t.TrialReelError('Animated Reel rendering failed.') from None
 
 
 

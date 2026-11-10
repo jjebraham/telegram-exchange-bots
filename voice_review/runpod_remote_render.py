@@ -21,8 +21,13 @@ def render(root):
     media=[dict(item,path=root/item['path']) for item in data['media']]
     narration=[dict(item,path=root/item['path']) for item in data['narration']] if data['narration'] else None
     started=time.monotonic()
-    duration=trial.render_video(data['story'],data['kind'],root/'output.mp4',root/'assets',
-             media=media,narration=narration,music_path=root/data['music'] if data['music'] else None)
+    try:
+        duration=trial.render_video(data['story'],data['kind'],root/'output.mp4',root/'assets',
+                 media=media,narration=narration,music_path=root/data['music'] if data['music'] else None)
+    except trial.TrialReelError:
+        diagnostic=trial.STATE/'ffmpeg-error.txt'
+        if diagnostic.is_file(): print(diagnostic.read_text(errors='replace')[-6000:],file=sys.stderr)
+        raise
     result={'duration_seconds':duration,'render_seconds':round(time.monotonic()-started,3),
             'encoder':os.environ['REEL_VIDEO_ENCODER'],'sha256':hashlib.sha256((root/'output.mp4').read_bytes()).hexdigest()}
     (root/'result.json').write_text(json.dumps(result,indent=2)+'\n')

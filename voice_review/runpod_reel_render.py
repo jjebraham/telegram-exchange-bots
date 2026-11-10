@@ -149,7 +149,7 @@ def remote_work(pod,lease,root,home):
                 'items=Path("/proc/1/environ").read_bytes().split(b"\\x00");'
                 'values=dict(x.split(b"=",1) for x in items if b"=" in x);'
                 'env=os.environ.copy();'
-                'env.update({k:values[k.encode()].decode() for k in ("PATH","LD_LIBRARY_PATH","VIRTUAL_ENV") if k.encode() in values});'
+                'env.update({k:values[k.encode()].decode() for k in ("PATH","LD_LIBRARY_PATH","VIRTUAL_ENV","CUDA_VISIBLE_DEVICES","NVIDIA_VISIBLE_DEVICES","NVIDIA_DRIVER_CAPABILITIES") if k.encode() in values});'
                 'os.execvpe("bash",["bash","-c",'+repr(script)+'],env)')
         return command(ssh+['python3 -c '+shlex.quote(bridge)],timeout=timeout)
     bootstrap=("set -eu; if ! command -v ffmpeg >/dev/null 2>&1 || ! python3 -m venv /tmp/kiani-render-venv >/dev/null 2>&1; then "
@@ -162,6 +162,8 @@ def remote_work(pod,lease,root,home):
     print('GPU render stage: dependencies ready',flush=True)
     gpu=remote_command('nvidia-smi --query-gpu=name --format=csv,noheader',15).decode().strip()
     if pod['gpu']['id'] not in gpu: raise RenderError('Allocated GPU was not verified')
+    remote_command('ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=black:s=1080x1920:r=30 -t 0.5 -an -c:v h264_nvenc -preset p4 -pix_fmt yuv420p /tmp/kiani-nvenc-check.mp4',30)
+    print('GPU render stage: NVENC hardware encoder verified',flush=True)
     remote='/tmp/kiani-reel-'+lease
     if not re.fullmatch(r'/tmp/kiani-reel-[a-f0-9]{32}',remote): raise RenderError('Invalid render job identity')
     remote_command('mkdir -m 700 '+remote,15)
