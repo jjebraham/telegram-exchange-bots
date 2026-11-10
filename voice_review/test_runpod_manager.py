@@ -81,6 +81,12 @@ class ManagerTests(unittest.TestCase):
         with self.assertRaises(manager.ManagerError): self.run_job()
         self.assertEqual(self.api.actions, [])
 
+    def test_direct_endpoint_can_be_derived_from_one_verified_runtime_port(self):
+        pod={'id':'pod-1','ssh':{'direct':None},'runtime':{'ports':[{'private':22,'public':2345,'ip':'203.0.113.7','type':'tcp'}]}}
+        self.assertEqual(manager.render_target(pod)['ssh_port'],2345)
+        pod['runtime']['ports'].append(dict(pod['runtime']['ports'][0]))
+        with self.assertRaises(manager.ManagerError):manager.render_target(pod)
+
     def test_unusable_ssh_stops_before_remote_work(self):
         self.api.bad_ssh = True
         with self.assertRaises(manager.ManagerError): self.run_job()

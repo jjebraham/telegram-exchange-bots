@@ -22,6 +22,12 @@ def render_target(pod):
     """Return only connection metadata; never pass provider env to the Pod."""
     ssh = pod.get('ssh') if isinstance(pod.get('ssh'), dict) else {}
     direct = ssh.get('direct') if isinstance(ssh.get('direct'), dict) else {}
+    if not direct:
+        runtime = pod.get('runtime') if isinstance(pod.get('runtime'), dict) else {}
+        ports = runtime.get('ports') if isinstance(runtime.get('ports'), list) else []
+        matches = [p for p in ports if isinstance(p, dict) and p.get('private') == 22 and p.get('type') == 'tcp']
+        if len(matches) == 1:
+            direct = {'host': matches[0].get('ip'), 'port': matches[0].get('public'), 'username': 'root'}
     host, port, username = direct.get('host'), direct.get('port'), direct.get('username')
     if (not isinstance(host, str) or not re.fullmatch(r'[A-Za-z0-9.:-]{1,253}', host) or
             isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 or

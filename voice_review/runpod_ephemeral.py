@@ -21,8 +21,10 @@ from runpod_reel_render import RenderError, command, private_write, remote_work,
 TIMER='kiani-runpod-render-watchdog.timer'
 SERVICE='kiani-runpod-render-watchdog.service'
 TERMINAL={'COMPLETE','FAILED_STOPPED','NO_CAPACITY'}
-GPUS=('NVIDIA L4','NVIDIA RTX A6000','NVIDIA GeForce RTX 4090')
-IMAGE='runpod/pytorch:1.5.0-cu1281-torch280-ubuntu2404'
+GPUS=('NVIDIA RTX A6000','NVIDIA GeForce RTX 4090','NVIDIA L4')
+# Official Runpod base 2.0.0 / Ubuntu 24.04, verified registry digest. Video
+# encoding needs the host driver, not a multi-gigabyte PyTorch/CUDA toolkit.
+IMAGE='runpod/base@sha256:4e92edb0d7c90f5bc4e9fc8cdd1a4c9e0e330d4bc58c18bbfc677090af92be90'
 
 
 def paths(home): return home/'.local/state/kiani-instagram-runpod'
@@ -205,7 +207,7 @@ def worker(home,root):
         if not public.startswith('ssh-ed25519 ') or '\n' in public: raise RenderError('Rendering public key unavailable')
         for gpu in candidates(home):
             body={'name':session['name'],'image':IMAGE,'cloud':'SECURE','gpu':{'id':gpu['id'],'count':1},
-                  'disk':50,'mounts':{},'ports':['22/tcp'],'startSsh':True,
+                  'disk':20,'mounts':{},'ports':['22/tcp'],'startSsh':True,
                   'env':{'PUBLIC_KEY':public,'NVIDIA_DRIVER_CAPABILITIES':'compute,utility,video'}}
             try: pod=http(home,'/v2/pods',body)
             except HTTPError as exc:
