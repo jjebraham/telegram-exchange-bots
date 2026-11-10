@@ -130,7 +130,12 @@ def remote_work(pod,lease,root,home):
     address=user+'@'+host
     ssh=['ssh',*options,'-p',str(port),address]
     # SSH port publication can precede sshd readiness.
-    check='import os,json;print(json.dumps({"pod":os.environ.get("RUNPOD_POD_ID")}))'
+    # sshd does not inherit Docker's environment. Read only the Pod identity
+    # from PID 1; never serialize the rest of that environment to Selenium.
+    check=('import os,json;from pathlib import Path;'
+           'items=Path("/proc/1/environ").read_bytes().split(b"\\x00");'
+           'pod=next((x.split(b"=",1)[1].decode() for x in items if x.startswith(b"RUNPOD_POD_ID=")),None);'
+           'print(json.dumps({"pod":os.environ.get("RUNPOD_POD_ID") or pod}))')
     identity=json.loads(command(ssh+['python3 -c '+shlex.quote(check)],timeout=15))
     if identity.get('pod')!=pod['id']: raise RenderError('SSH endpoint is not the expected Pod')
     print('GPU render stage: SSH identity verified',flush=True)
