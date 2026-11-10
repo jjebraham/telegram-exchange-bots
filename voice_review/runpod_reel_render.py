@@ -152,7 +152,11 @@ def remote_work(pod,lease,root,home):
                 'env.update({k:values[k.encode()].decode() for k in ("PATH","LD_LIBRARY_PATH","VIRTUAL_ENV") if k.encode() in values});'
                 'os.execvpe("bash",["bash","-c",'+repr(script)+'],env)')
         return command(ssh+['python3 -c '+shlex.quote(bridge)],timeout=timeout)
-    bootstrap="set -eu; command -v ffmpeg >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg); python3 -c 'import PIL,arabic_reshaper,bidi' 2>/dev/null || python3 -m pip install --disable-pip-version-check --quiet Pillow arabic-reshaper python-bidi"
+    bootstrap=("set -eu; if ! command -v ffmpeg >/dev/null 2>&1 || ! python3 -m venv /tmp/kiani-render-venv >/dev/null 2>&1; then "
+               "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg python3-venv; "
+               "python3 -m venv /tmp/kiani-render-venv; fi; "
+               "/tmp/kiani-render-venv/bin/python -m pip install --disable-pip-version-check --quiet "
+               "Pillow==12.3.0 arabic-reshaper==3.0.1 python-bidi==0.6.11")
     started=time.monotonic()
     remote_command(bootstrap,150)
     print('GPU render stage: dependencies ready',flush=True)
@@ -163,7 +167,7 @@ def remote_work(pod,lease,root,home):
     remote_command('mkdir -m 700 '+remote,15)
     command(['scp',*options,'-P',str(port),str(root/'bundle.tgz'),address+':'+remote+'/bundle.tgz'],timeout=60)
     print('GPU render stage: encoding verified input bundle',flush=True)
-    remote_command('tar -xzf '+remote+'/bundle.tgz -C '+remote+' && python3 '+remote+'/code/runpod_remote_render.py '+remote,240)
+    remote_command('tar -xzf '+remote+'/bundle.tgz -C '+remote+' && /tmp/kiani-render-venv/bin/python '+remote+'/code/runpod_remote_render.py '+remote,240)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/output.mp4',str(root/'output.mp4')],timeout=60)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/result.json',str(root/'remote-result.json')],timeout=15)
     result=json.loads((root/'remote-result.json').read_text())
