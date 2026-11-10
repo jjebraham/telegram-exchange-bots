@@ -3,6 +3,7 @@
 from contextlib import closing
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -20,7 +21,13 @@ def main():
     config = json.loads((home / '.config/kiani-instagram-manual-news/config.json').read_text())
     print('Active Reel revision:', config['installed_revision'])
     print('Staged voice code:', Path(__file__).resolve().parent.parent.name)
-    print('Renderer: local CPU; no RunPod operations')
+    local = settings.read()
+    gpu_enabled = os.environ.get('REEL_RUNPOD_ENABLED', local.get('REEL_RUNPOD_ENABLED', 'false')) == 'true'
+    print('Renderer:', 'managed on-demand Runpod GPU' if gpu_enabled else 'local CPU')
+    print('CPU fallback:', local.get('REEL_LOCAL_RENDER_FALLBACK', 'true'))
+    if gpu_enabled:
+        from runpod_ephemeral import report
+        print('Managed GPU compute:', json.dumps(report(home)))
     print('FFmpeg available:', bool(shutil.which('ffmpeg')))
     print('ffprobe available:', bool(shutil.which('ffprobe')))
     print('ElevenLabs key configured:', bool(credentials.get_secret('ELEVENLABS_API_KEY')))

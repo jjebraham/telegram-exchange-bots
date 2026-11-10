@@ -17,7 +17,7 @@ import tempfile
 import time
 import uuid
 
-from runpod_api_client import ActionOutcomeUnknown, RunpodAPI, RunpodAPIError
+from runpod_api_client import ActionOutcomeUnknown, ActionRejected, RunpodAPI, RunpodAPIError
 from runpod_guard import GuardError, may_start
 import install_runpod_watchdog as installer
 import runpod_lease_store as leases
@@ -102,8 +102,8 @@ def verify_locked_watchdog(home):
 
 
 def run_worker(home, lease_id, unit, *, api_factory=RunpodAPI, wait=time.sleep,
-               monotonic=time.monotonic):
-    """Run only in a verified time-limited systemd process; no remote assets."""
+               monotonic=time.monotonic, work=None):
+    """Run in a verified time-limited process; optional work is reproducible."""
     runpod_supervision_probe.validate_with_retry(unit)
     config_dir = home / '.config/kiani-instagram-runpod'
     state = home / '.local/state/kiani-instagram-runpod'
@@ -122,13 +122,13 @@ def run_worker(home, lease_id, unit, *, api_factory=RunpodAPI, wait=time.sleep,
                 verify_locked_watchdog(home)
                 if service.private_json(config_dir / 'config.json') != cfg_raw:
                     raise ProbeError('Runpod settings changed; the Pod was not started.')
-                return _worker_locked(state, cfg, api, lease_id, wait=wait, monotonic=monotonic)
+                return _worker_locked(state, cfg, api, lease_id, wait=wait, monotonic=monotonic, work=work)
         if monotonic() >= lock_deadline:
             raise ProbeError('The probe could not acquire the managed Pod lock.')
         wait(1)
 
 
-def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
+def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic, work=None):
     pod_id, limits = cfg['pod_id'], cfg['limits']
     with closing(leases.connect(state / 'leases.sqlite3')) as con:
         row = con.execute('SELECT * FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
@@ -142,6 +142,14 @@ def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
         try:
             try:
                 pod = api.transition(pod_id, 'start')
+            except ActionRejected as exc:
+                stopped = api.status(pod_id)
+                if stopped.get('id') != pod_id:
+                    raise ProbeError('Rejected start identity was not confirmed.')
+                leases.start_rejected(con, lease_id, pod_id=pod_id,
+                                      provider_status=stopped.get('status'), rejection=exc)
+                print('Start refused:', exc.category, '| HTTP', exc.http_status, flush=True)
+                return 'start_rejected'
             except ActionOutcomeUnknown as exc:
                 print('Start request response:',
                       'HTTP ' + str(exc.http_status) if exc.http_status is not None else 'no verified response',
@@ -161,6 +169,11 @@ def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
             leases.start_confirmed(con, lease_id, pod_id=pod_id, provider_status='RUNNING',
                                    provider_started_at=pod.get('startedAt'),
                                    max_start_delay_seconds=limits.max_uptime_seconds)
+            # Render inputs must already be saved on Selenium. This callback
+            # must be reproducible: a killed worker leaves no irreplaceable
+            # remote output, so the independent watchdog may stop the Pod.
+            if work is not None:
+                work(pod, lease_id)
             result = runpod_watchdog.tick(con, api, lease_id, expected_pod_id=pod_id, exclusive=True,
                 worker_lock_held=True, worker_active=False, output_pending=False, job_done=True, limits=limits)
             if result == 'closed':
@@ -170,6 +183,9 @@ def _worker_locked(state, cfg, api, lease_id, *, wait, monotonic):
             row = con.execute('SELECT state FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
             if row and row['state'] == 'START_REQUESTED':
                 leases.action_uncertain(con, lease_id)
+            elif row and row['state'] == 'START_CONFIRMED':
+                runpod_watchdog.tick(con, api, lease_id, expected_pod_id=pod_id, exclusive=True,
+                    worker_lock_held=True, worker_active=False, output_pending=False, job_done=True, limits=limits)
 
 
 def begin(home, *, api_factory=RunpodAPI, runtime=None, runner=subprocess.run,
@@ -253,11 +269,13 @@ def finalize(home, lease_id, *, api_factory=RunpodAPI):
             row = con.execute('SELECT pod_id,state FROM leases WHERE lease_id=?', (lease_id,)).fetchone()
             active = con.execute("SELECT COUNT(*) FROM leases WHERE pod_id=? AND state IN "
                 "('RESERVED','START_REQUESTED','START_CONFIRMED','ACTION_UNCERTAIN','STOP_REQUESTED')", (cfg['pod_id'],)).fetchone()[0]
-            if not row or row['pod_id'] != cfg['pod_id'] or row['state'] not in ('CLOSED', 'CANCELLED') or active:
+            if not row or row['pod_id'] != cfg['pod_id'] or row['state'] not in ('CLOSED', 'CANCELLED', 'START_REJECTED') or active:
                 return 'lease unresolved'
             if api.status(cfg['pod_id']).get('status') != 'EXITED':
                 return 'Pod not confirmed stopped'
             set_enabled(config_path, expected=config, enabled=False)
+            if row['state'] == 'START_REJECTED':
+                return 'start rejected; Pod stopped and watchdog returned to disabled mode'
             return 'stopped and watchdog returned to disabled mode'
 
 
@@ -285,6 +303,8 @@ def main():
         if result == 'stopped and watchdog returned to disabled mode':
             print('Probe passed:', result, flush=True)
             return
+        if result.startswith('start rejected;'):
+            raise ProbeError(result)
         if time.monotonic() >= next_update:
             print('Probe status:', result, '| watchdog remains enabled', flush=True)
             next_update = time.monotonic() + 30

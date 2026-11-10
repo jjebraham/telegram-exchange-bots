@@ -21,6 +21,33 @@ class ActionOutcomeUnknown(RunpodAPIError):
         self.http_status = http_status if isinstance(http_status, int) and 100 <= http_status <= 599 else None
 
 
+class ActionRejected(RunpodAPIError):
+    """An explicit client-error response refused a start; no automatic retry."""
+    def __init__(self, *, http_status, category):
+        super().__init__('Runpod start rejected: ' + category)
+        self.http_status, self.category = http_status, category
+
+
+def rejected_start(error):
+    # A timeout, throttling or server failure can have an uncertain outcome.
+    # Inspect a bounded body only to categorize it; never retain or log it.
+    if error.code not in (400, 401, 403, 404, 409, 422):
+        return None
+    try:
+        body = error.read(32769)
+    except (OSError, ValueError):
+        body = b''
+    if not isinstance(body, bytes): body = b''
+    message = body[:32768].decode('utf-8', errors='replace').lower()
+    category = 'request_rejected'
+    if error.code == 401: category = 'authentication_failed'
+    elif error.code == 403: category = 'permission_denied'
+    elif error.code == 404: category = 'pod_not_found'
+    elif re.search(r'(no|not enough|insufficient|unavailable|not available).{0,65}(gpu|capacity|resources)|(gpu|capacity|resources).{0,65}(unavailable|not available|insufficient)', message):
+        category = 'capacity_unavailable'
+    return ActionRejected(http_status=error.code, category=category)
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -60,6 +87,10 @@ class RunpodAPI:
             return result
         except HTTPError as exc:
             if action:
+                if action == 'start':
+                    rejected = rejected_start(exc)
+                    if rejected is not None:
+                        raise rejected from None
                 raise ActionOutcomeUnknown('Runpod action outcome is unknown; reconcile manually before retrying.',
                                            http_status=exc.code) from None
             raise RunpodAPIError('Runpod Pod status is unavailable.') from None

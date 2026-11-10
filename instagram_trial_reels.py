@@ -304,7 +304,25 @@ def render_video(story, kind, destination, asset_root, *, ffmpeg=None, ffprobe=N
     if length not in (None, 'short', 'long'):
         raise TrialReelError('Unknown Reel length.')
     max_seconds = {'short': 30, 'long': 90}.get(length, MAX_REEL_SECONDS)
-    render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg, narration=narration, max_seconds=max_seconds, min_seconds=15 if length == 'short' else 12)
+    gpu_rendered = False
+    flag = os.environ.get('REEL_RUNPOD_ENABLED', 'false').lower()
+    fallback = os.environ.get('REEL_LOCAL_RENDER_FALLBACK', 'true').lower()
+    if flag not in ('true', 'false') or fallback not in ('true', 'false'):
+        raise TrialReelError('Invalid GPU rendering feature flag.')
+    if flag == 'true':
+        _load_voice_modules()
+        from runpod_reel_render import RenderError, render as render_gpu
+        try:
+            render_gpu(story, kind, destination, asset_root, media=media or [],
+                       narration=narration, music_path=music_path)
+            gpu_rendered = True
+        except RenderError as exc:
+            if fallback != 'true' or not exc.fallback_safe:
+                raise TrialReelError('GPU rendering needs recovery; no Reel was published.') from None
+            print('GPU rendering unavailable within its budget and safety limits; using local CPU.', flush=True)
+            story['_rendering'] = {'renderer': 'local', 'gpu_fallback': True}
+    if not gpu_rendered:
+        render(sys.modules[__name__], title, source, kind, story_type, chunks, destination, asset_root, media or [], music_path, ffmpeg, narration=narration, max_seconds=max_seconds, min_seconds=15 if length == 'short' else 12)
     if destination.is_symlink() or not destination.is_file() or not 100_000 <= destination.stat().st_size <= 250_000_000:
         raise TrialReelError('The rendered Reel is missing or has an invalid file size.')
     os.chmod(destination, 0o644)
@@ -862,6 +880,7 @@ def create_reel(story, kind, *, origin, asset_root, reel_mode='trial', submissio
         duration = render_video(normalized, kind, video_path, asset_root,
                                 music_path=music_path if music else None, media=media, narration=narration)
         if voice_metadata is not None:
+            voice_metadata.update(normalized.get('_rendering', {}))
             voice_metadata.update(render_seconds=round(time.monotonic() - render_started, 3),
                                   music_volume=float(os.environ.get('REEL_MUSIC_VOLUME', '0.20')),
                                   ducking=os.environ.get('REEL_AUDIO_DUCKING_ENABLED', 'true').lower() == 'true',

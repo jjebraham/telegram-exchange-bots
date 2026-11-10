@@ -1,8 +1,9 @@
 import json
+import io
 import unittest
 from urllib.error import HTTPError, URLError
 
-from runpod_api_client import ActionOutcomeUnknown, RunpodAPI, RunpodAPIError
+from runpod_api_client import ActionOutcomeUnknown, ActionRejected, RunpodAPI, RunpodAPIError
 
 
 class Response:
@@ -55,11 +56,21 @@ class APITests(unittest.TestCase):
 
     def test_http_error_exposes_only_status_not_provider_message(self):
         error = HTTPError('https://api.runpod.io', 403, 'secret body', {}, None)
-        with self.assertRaises(ActionOutcomeUnknown) as caught:
+        with self.assertRaises(ActionRejected) as caught:
             RunpodAPI('private-key', opener=Opener(error)).transition('pod-1', 'start')
         self.assertEqual(caught.exception.http_status, 403)
         self.assertNotIn('secret', str(caught.exception))
         self.assertNotIn('private-key', str(caught.exception))
+
+    def test_capacity_rejection_does_not_leak_body_and_server_errors_remain_uncertain(self):
+        for code in (400, 409, 422, 500, 503):
+            error = HTTPError('https://api.runpod.io', code, 'private', {},
+                              io.BytesIO(b'{"error":"No GPU available on machine", "env":"secret"}'))
+            expected = ActionRejected if code < 500 else ActionOutcomeUnknown
+            with self.subTest(code=code), self.assertRaises(expected) as caught:
+                RunpodAPI('secret', opener=Opener(error)).transition('pod-1', 'start')
+            self.assertNotIn('secret', str(caught.exception))
+            if code < 500: self.assertEqual(caught.exception.category, 'capacity_unavailable')
 
 
 if __name__ == '__main__': unittest.main()

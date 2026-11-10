@@ -8,6 +8,7 @@ ALLOWED = {
     'REEL_ELEVENLABS_ENABLED', 'ELEVENLABS_MODEL', 'REEL_NARRATION_SPEED',
     'REEL_MUSIC_VOLUME', 'REEL_AUDIO_DUCKING_ENABLED', 'REEL_ELEVENLABS_MONTHLY_CHAR_LIMIT',
     'REEL_PRONUNCIATION_ENABLED',
+    'REEL_RUNPOD_ENABLED', 'REEL_LOCAL_RENDER_FALLBACK',
 }
 
 
@@ -33,7 +34,8 @@ def read(location=None):
         if not separator or name not in ALLOWED or name in result:
             raise ValueError('Invalid local narration setting.')
         result[name] = value
-    for name in ('REEL_ELEVENLABS_ENABLED', 'REEL_AUDIO_DUCKING_ENABLED', 'REEL_PRONUNCIATION_ENABLED'):
+    for name in ('REEL_ELEVENLABS_ENABLED', 'REEL_AUDIO_DUCKING_ENABLED', 'REEL_PRONUNCIATION_ENABLED',
+                 'REEL_RUNPOD_ENABLED', 'REEL_LOCAL_RENDER_FALLBACK'):
         if name in result and result[name] not in ('true', 'false'):
             raise ValueError('Invalid narration feature flag.')
     if result.get('ELEVENLABS_MODEL', 'eleven_v4') != 'eleven_v4' or result.get('REEL_NARRATION_SPEED', '1.5') != '1.5':

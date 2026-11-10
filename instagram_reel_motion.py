@@ -12,6 +12,15 @@ import wave
 from PIL import Image, ImageDraw, ImageOps
 
 
+def encoder_arguments(name):
+    """Keep local encoding unchanged; NVENC is explicitly selected remotely."""
+    if name == 'libx264':
+        return ['-c:v','libx264','-preset','veryfast','-crf','25']
+    if name == 'h264_nvenc':
+        return ['-c:v','h264_nvenc','-preset','p4','-rc','vbr','-cq','25','-b:v','0']
+    raise ValueError('Unsupported Reel video encoder.')
+
+
 def validated_word_starts(segment, expected_words):
     """Return optional reviewed timings; never guess when timings are supplied."""
     starts = segment.get('word_starts')
@@ -409,9 +418,16 @@ def render(t, title, source, kind, story_type, chunks, destination, asset_root, 
         else:
             filters=f'[1:a]volume=0.22,afade=t=in:st=0:d=0.8,afade=t=out:st={max(0,elapsed-1):.2f}:d=1[m];[2:a]volume=.7[k];[m][k]amix=inputs=2:duration=first:normalize=0[a]'
         cmd+=['-filter_complex',filters,
-              '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p','-c:v','libx264','-preset','veryfast','-crf','25','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
+              '-map','0:v:0','-map','[a]','-t',f'{elapsed:.3f}','-r','30','-vf','scale=in_range=full:out_range=tv,format=yuv420p']
+        cmd += encoder_arguments(os.environ.get('REEL_VIDEO_ENCODER', 'libx264'))
+        cmd += ['-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart',str(destination)]
         try: subprocess.run(cmd,capture_output=True,timeout=300,check=True)
-        except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError): raise t.TrialReelError('Animated Reel rendering failed.') from None
+        except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError) as exc:
+            if os.environ.get('REEL_VIDEO_ENCODER') == 'h264_nvenc':
+                diagnostic = Path(t.STATE) / 'ffmpeg-error.txt'
+                diagnostic.write_bytes((getattr(exc, 'stderr', None) or b'')[-6000:])
+                diagnostic.chmod(0o600)
+            raise t.TrialReelError('Animated Reel rendering failed.') from None
 
 
 
