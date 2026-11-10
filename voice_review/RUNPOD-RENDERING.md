@@ -13,6 +13,12 @@ fallback is allowed for capacity or budget failures and after a failed GPU job
 has confirmed shutdown. An uncertain resource outcome retains recovery and
 budget reservations instead of creating another paid worker.
 
+Successful jobs discard their generated input copies after the final verified
+video has been copied to the publisher. Failed-job copies are retained for
+48 hours, then pruned only after confirmed resource cleanup. Timing, session,
+cost and diagnostic metadata remain available; source media and narration
+caches are not deleted by this pruning.
+
 The shared UTC calendar-month compute limit is $10. Each new session reserves
 $0.50 before launch, and replaces that reservation with a conservative elapsed
 compute estimate after cleanup. All pages using this manager share the ledger.

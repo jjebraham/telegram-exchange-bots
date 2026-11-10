@@ -198,6 +198,19 @@ def submit(root,*,home=None):
     return submit_disposable(Path.home() if home is None else Path(home),Path(root).resolve())
 
 
+def cleanup_inputs(root):
+    """Remove generated copies only; keep session, timing and cost metadata."""
+    root=Path(root)
+    if root.is_symlink() or not root.is_dir():raise RenderError('Unsafe render cleanup root')
+    for name in ('code','assets','media','narration','music','bundle.tgz','output.mp4'):
+        path=root/name
+        if path.is_symlink():path.unlink()
+        elif path.exists():
+            if path.resolve().parent!=root.resolve():raise RenderError('Render cleanup escaped its job')
+            if path.is_dir():shutil.rmtree(path)
+            else:path.unlink()
+
+
 def render(story,kind,destination,asset_root,*,media,narration,music_path):
     home=Path.home(); state=home/'.local/state/kiani-instagram-runpod'
     root=state/('render-'+uuid.uuid4().hex)
@@ -207,7 +220,13 @@ def render(story,kind,destination,asset_root,*,media,narration,music_path):
     duration=trial._probe_video(root/'output.mp4',shutil.which('ffprobe') or 'ffprobe')
     target=Path(destination); target.parent.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(root/'output.mp4',target); target.chmod(0o644)
+    if hashlib.sha256(target.read_bytes()).hexdigest()!=result['sha256']:
+        raise RenderError('Final video copy checksum mismatch',fallback_safe=True)
     story['_rendering']={'renderer':'runpod','encoder':'h264_nvenc','estimated_gpu_compute_usd':result['estimated_compute_usd'],'gpu_session':result['lease_id']}
+    try:
+        cleanup_inputs(root)
+        session=service.private_json(root/'session.json');session['inputs_pruned']=True;private_write(root/'session.json',session)
+    except (OSError,ValueError,RenderError):print('GPU temporary input cleanup deferred to the watchdog.',flush=True)
     return duration
 
 

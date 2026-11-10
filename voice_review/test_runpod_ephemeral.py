@@ -83,6 +83,11 @@ class DisposableTests(unittest.TestCase):
         with closing(leases.connect(self.state/'leases.sqlite3')) as con:con.execute('DROP TABLE render_spend')
         private_write(self.root/'session.json',dict(self.session,state='PREPARING',created_at=time.time()-60))
         self.assertEqual(self.cleanup(),'NO_CAPACITY')
+    def test_retention_never_discards_active_inputs(self):
+        with patch.object(gpu,'cleanup_inputs') as prune:
+            self.assertFalse(gpu.prune_session(self.root,now=time.time()+200000));prune.assert_not_called()
+            private_write(self.root/'session.json',dict(self.session,state='FAILED_STOPPED',stopped_at=time.time()-200000))
+            self.assertTrue(gpu.prune_session(self.root));prune.assert_called_once_with(self.root)
 
 
 if __name__=='__main__':unittest.main()

@@ -52,5 +52,15 @@ class RenderTests(unittest.TestCase):
         self.assertIn('h264_nvenc',motion.encoder_arguments('h264_nvenc'))
         with self.assertRaises(ValueError): motion.encoder_arguments('injected; command')
 
+    def test_cleanup_removes_only_job_copies_and_retains_metadata_and_source_audio(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'job';root.mkdir(mode=0o700)
+            original=Path(tmp)/'original.wav';original.write_bytes(b'original')
+            directory=root/'narration';directory.mkdir();(directory/'0.wav').write_bytes(original.read_bytes())
+            (root/'session.json').write_text('{}');(root/'output.mp4').write_bytes(b'video')
+            render.cleanup_inputs(root)
+            self.assertEqual(original.read_bytes(),b'original')
+            self.assertTrue((root/'session.json').is_file());self.assertFalse(directory.exists());self.assertFalse((root/'output.mp4').exists())
+
 
 if __name__=='__main__': unittest.main()

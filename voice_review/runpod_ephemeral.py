@@ -17,7 +17,7 @@ import runpod_lease_store as leases
 import runpod_secrets
 import runpod_watchdog_service as service
 from runpod_systemd_guard import validate_properties
-from runpod_reel_render import RenderError, SPEND_SCHEMA, command, private_write, remote_work, spend_guard
+from runpod_reel_render import RenderError, SPEND_SCHEMA, cleanup_inputs, command, private_write, remote_work, spend_guard
 
 TIMER='kiani-runpod-render-watchdog.timer'
 SERVICE='kiani-runpod-render-watchdog.service'
@@ -170,8 +170,21 @@ def sweep(home):
             result=cleanup(home,path.parent)
             if result not in TERMINAL|{'watching','queued','cleanup_busy','stop_requested'}: failures+=1
         except Exception: failures+=1
+    # Recover active jobs first; prune only stopped jobs after the review window.
+    for path in sorted(root.glob('render-*/session.json')):
+        try:prune_session(path.parent)
+        except (OSError,ValueError,RenderError):pass
     private_write(root/'render-watchdog-heartbeat.json',{'time':time.time(),'recovery_needed':failures})
     return failures
+
+
+def prune_session(root,*,now=None):
+    session=service.private_json(root/'session.json')
+    now=time.time() if now is None else now
+    if session['state'] not in TERMINAL or session.get('inputs_pruned') or now-session.get('stopped_at',now)<172800:
+        return False
+    cleanup_inputs(root);session['inputs_pruned']=True;private_write(root/'session.json',session)
+    return True
 
 
 def candidates(home):
