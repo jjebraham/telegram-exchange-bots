@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, build_opener
 from urllib.error import HTTPError
-import json, os, re, subprocess, sys, time, uuid
+import json, os, re, sqlite3, subprocess, sys, time, uuid
+from zoneinfo import ZoneInfo
 
 from runpod_api_client import RunpodAPI, NoRedirect
 import runpod_lease_store as leases
@@ -142,6 +143,8 @@ def cleanup(home,root,*,force=False):
         private_write(root/'session.json',session)
         if pod['status']!='EXITED':
             if pod.get('locked') is not False or 'stop' not in pod.get('actions',[]): return 'stop_not_available'
+            session['stop_requested_by']='selenium'
+            private_write(root/'session.json',session)
             try: api(home).transition(pod['id'],'stop')
             except Exception: return 'stop_response_unconfirmed'
             pod=api(home).status(pod['id'])
@@ -247,10 +250,12 @@ def submit(home,root):
             if con.execute("SELECT COUNT(*) FROM render_spend WHERE state='RESERVED'").fetchone()[0]:
                 raise RenderError('A GPU session is already reserved; using local rendering',fallback_safe=True)
             con.execute('INSERT INTO render_spend VALUES(?,?,?,?,?)',(root.name,month,nonce,.5,'RESERVED'))
+            # Persist recovery identity before committing the reservation. A
+            # crash between reservation and worker launch is then recoverable.
+            private_write(root/'session.json',session)
             con.execute('COMMIT')
         except Exception:
             con.execute('ROLLBACK');raise
-    private_write(root/'session.json',session)
     try:
         command(['systemd-run','--user','--quiet','--collect','--no-block','--unit='+session['unit'],
                  '--property=Type=exec','--property=RuntimeMaxSec=420s','--property=TimeoutStopSec=10s',
@@ -270,13 +275,40 @@ def submit(home,root):
     raise RenderError('GPU session needs recovery; watchdog and budget reservation retained')
 
 
+def report(home):
+    month=datetime.now(timezone.utc).strftime('%Y-%m');state=paths(home)
+    result={'month_utc':month,'monthly_compute_limit_usd':10,'max_hourly_compute_usd':1,
+            'worker_time_limit_seconds':420,'pod_local_cutoff_seconds':480,
+            'estimated_compute_usd':0,'reserved_compute_usd':0,'days_istanbul':{}}
+    db=state/'leases.sqlite3'
+    if not db.is_file():return result
+    with sqlite3.connect(db.resolve().as_uri()+'?mode=ro',uri=True) as con:
+        con.row_factory=sqlite3.Row
+        try:rows=con.execute('SELECT job_id,state,estimate_usd FROM render_spend WHERE month_utc=?',(month,)).fetchall()
+        except sqlite3.OperationalError:return result
+    for row in rows:
+        field='reserved_compute_usd' if row['state']=='RESERVED' else 'estimated_compute_usd'
+        result[field]+=row['estimate_usd']
+        file=state/row['job_id']/'session.json'
+        if file.is_file():
+            data=service.private_json(file)
+            day=datetime.fromtimestamp(data['created_at'],ZoneInfo('Europe/Istanbul')).date().isoformat()
+            result['days_istanbul'].setdefault(day,{'estimated_compute_usd':0,'sessions':0})
+            result['days_istanbul'][day]['sessions']+=1
+            if row['state']!='RESERVED':result['days_istanbul'][day]['estimated_compute_usd']+=row['estimate_usd']
+    for key in ('estimated_compute_usd','reserved_compute_usd'):result[key]=round(result[key],6)
+    result['billing_note']='Conservative compute estimates, including startup and cleanup; not an invoice. Taxes are excluded.'
+    return result
+
+
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--install',action='store_true');parser.add_argument('--sweep',action='store_true');parser.add_argument('--worker');parser.add_argument('--job')
+    parser=argparse.ArgumentParser();parser.add_argument('--install',action='store_true');parser.add_argument('--sweep',action='store_true');parser.add_argument('--report',action='store_true');parser.add_argument('--worker');parser.add_argument('--job')
     args=parser.parse_args();home=Path.home()
     try:
         if args.install: install(home)
         elif args.sweep: raise SystemExit(1 if sweep(home) else 0)
+        elif args.report:print(json.dumps(report(home),indent=2),flush=True)
         else:
             root=Path(args.worker or args.job).resolve()
             if root.parent!=paths(home) or not re.fullmatch(r'render-[a-z0-9-]+',root.name): raise RenderError('Invalid job path')

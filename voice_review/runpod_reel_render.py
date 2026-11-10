@@ -47,7 +47,7 @@ def bundle(story,kind,asset_root,media,narration,music_path,root,*,runtime=None)
         return name
     for name in ('instagram_trial_reels.py','instagram_reel_motion.py','instagram_reel_usage.py'):
         copy(runtime/name,'code/'+name)
-    for name in ('reel_audio_mix.py','runpod_remote_render.py'):
+    for name in ('reel_audio_mix.py','runpod_remote_render.py','runpod_native_guard.py'):
         copy(runtime/'voice_review'/name,'code/'+name)
     for name in ('fonts/Vazirmatn-Regular.ttf','fonts/Vazirmatn-Bold.ttf','assets/instagram/kiani-logo.svg'):
         copy(Path(asset_root)/name,'assets/'+name)
@@ -158,18 +158,26 @@ def remote_work(pod,lease,root,home):
                "/tmp/kiani-render-venv/bin/python -m pip install --disable-pip-version-check --quiet "
                "Pillow==12.3.0 arabic-reshaper==3.0.1 python-bidi==0.6.11")
     started=time.monotonic()
+    remote='/tmp/kiani-reel-'+lease
+    if not re.fullmatch(r'/tmp/kiani-reel-[a-f0-9]{32}',remote): raise RenderError('Invalid render job identity')
+    remote_command('mkdir -m 700 '+remote,15)
+    command(['scp',*options,'-P',str(port),str(root/'bundle.tgz'),address+':'+remote+'/bundle.tgz'],timeout=60)
+    remote_command('tar -xzf '+remote+'/bundle.tgz -C '+remote,15)
+    deadline=datetime.fromisoformat(pod['startedAt'].replace('Z','+00:00')).timestamp()+480
+    guard=json.loads(remote_command('python3 '+remote+'/code/runpod_native_guard.py --arm --pod '+pod['id']+
+                                   ' --deadline '+str(deadline)+' --marker '+remote+'/native-guard.json',25))
+    session=service.private_json(root/'session.json')
+    session.update(native_guard={'deadline':guard['deadline'],'armed':True})
+    private_write(root/'session.json',session)
+    print('GPU render stage: Pod-local deadline guard armed',flush=True)
     remote_command(bootstrap,150)
     print('GPU render stage: dependencies ready',flush=True)
     gpu=remote_command('nvidia-smi --query-gpu=name --format=csv,noheader',15).decode().strip()
     if pod['gpu']['id'] not in gpu: raise RenderError('Allocated GPU was not verified')
     remote_command('ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=black:s=1080x1920:r=30 -t 0.5 -an -c:v h264_nvenc -preset p4 -pix_fmt yuv420p /tmp/kiani-nvenc-check.mp4',30)
     print('GPU render stage: NVENC hardware encoder verified',flush=True)
-    remote='/tmp/kiani-reel-'+lease
-    if not re.fullmatch(r'/tmp/kiani-reel-[a-f0-9]{32}',remote): raise RenderError('Invalid render job identity')
-    remote_command('mkdir -m 700 '+remote,15)
-    command(['scp',*options,'-P',str(port),str(root/'bundle.tgz'),address+':'+remote+'/bundle.tgz'],timeout=60)
     print('GPU render stage: encoding verified input bundle',flush=True)
-    remote_command('tar -xzf '+remote+'/bundle.tgz -C '+remote+' && /tmp/kiani-render-venv/bin/python '+remote+'/code/runpod_remote_render.py '+remote,240)
+    remote_command('/tmp/kiani-render-venv/bin/python '+remote+'/code/runpod_remote_render.py '+remote,240)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/output.mp4',str(root/'output.mp4')],timeout=60)
     command(['scp',*options,'-P',str(port),address+':'+remote+'/result.json',str(root/'remote-result.json')],timeout=15)
     result=json.loads((root/'remote-result.json').read_text())

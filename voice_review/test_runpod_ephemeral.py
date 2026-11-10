@@ -72,6 +72,13 @@ class DisposableTests(unittest.TestCase):
             if len(calls)==2: private_write(self.root/'watchdog.json',{'time':time.time(),'result':'watching'})
         with patch.object(gpu,'command',side_effect=start): gpu.acknowledge_watchdog(self.root,wait=lambda _:None)
         self.assertEqual(len(calls),2)
+    def test_failed_recovery_journal_write_cannot_leave_a_committed_budget_reservation(self):
+        fresh=self.state/('render-'+'b'*32);fresh.mkdir(mode=0o700)
+        with closing(leases.connect(self.state/'leases.sqlite3')) as con:con.execute('DELETE FROM render_spend')
+        with patch.object(gpu,'verify_watchdog'),patch.object(gpu,'private_write',side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):gpu.submit(self.home,fresh)
+        with closing(leases.connect(self.state/'leases.sqlite3')) as con:
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM render_spend').fetchone()[0],0)
 
 
 if __name__=='__main__':unittest.main()

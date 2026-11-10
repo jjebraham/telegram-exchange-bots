@@ -19,7 +19,7 @@ class RenderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); runtime=root/'source'; assets=root/'assets'
             for base,names in ((runtime,('instagram_trial_reels.py','instagram_reel_motion.py','instagram_reel_usage.py',
-                                        'voice_review/reel_audio_mix.py','voice_review/runpod_remote_render.py',
+                                        'voice_review/reel_audio_mix.py','voice_review/runpod_remote_render.py','voice_review/runpod_native_guard.py',
                                         'credentials.env','production.sqlite3')),
                                (assets,('fonts/Vazirmatn-Regular.ttf','fonts/Vazirmatn-Bold.ttf','assets/instagram/kiani-logo.svg'))):
                 for name in names:
