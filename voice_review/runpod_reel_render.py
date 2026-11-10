@@ -97,7 +97,7 @@ def command(args,timeout=30):
 def remote_work(pod,lease,root,home):
     """Use only API-bound SSH metadata, a pinned host key, and this job's bundle."""
     from runpod_manager import render_target, ManagerError
-    deadline=time.monotonic()+75
+    deadline=time.monotonic()+180
     while True:
         try:
             target=render_target(pod);break

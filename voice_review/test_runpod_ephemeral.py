@@ -65,6 +65,13 @@ class DisposableTests(unittest.TestCase):
         self.assertEqual(self.cleanup(matching_pod=Mock(return_value=stopped),http=Mock(side_effect=OSError())),'stopped_cleanup_pending')
         saved=json.loads((self.root/'session.json').read_text());self.assertTrue(saved['shutdown_confirmed']);self.assertTrue(saved['delete_requested'])
         self.assertEqual(self.cleanup(matching_pod=Mock(return_value=None)),'FAILED_STOPPED')
+    def test_watchdog_acknowledgement_waits_for_a_pass_after_worker_start(self):
+        calls=[]
+        def start(*args):
+            calls.append(True)
+            if len(calls)==2: private_write(self.root/'watchdog.json',{'time':time.time(),'result':'watching'})
+        with patch.object(gpu,'command',side_effect=start): gpu.acknowledge_watchdog(self.root,wait=lambda _:None)
+        self.assertEqual(len(calls),2)
 
 
 if __name__=='__main__':unittest.main()

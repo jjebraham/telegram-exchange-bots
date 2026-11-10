@@ -174,6 +174,19 @@ def candidates(home):
             g.get('availability') in ('LOW','MEDIUM','HIGH') and 0<g.get('price',{}).get('secure',999)<=1]
 
 
+def acknowledge_watchdog(root,*,wait=time.sleep):
+    # A timer pass may already be finishing when this worker starts. Require
+    # this job's own fresh acknowledgement; do not mistake a queued pass for it.
+    for attempt in range(15):
+        command(['systemctl','--user','start',SERVICE],45)
+        try:
+            beat=service.private_json(root/'watchdog.json')
+            if beat.get('result')=='watching' and time.time()-beat['time']<=10: return
+        except (OSError,ValueError): pass
+        wait(.5)
+    raise RenderError('Independent render watchdog did not observe worker')
+
+
 def worker(home,root):
     session=service.private_json(root/'session.json');unit=session['unit']
     for attempt in range(10):
@@ -183,9 +196,7 @@ def worker(home,root):
             if attempt==9: raise
             time.sleep(.3)
     verify_watchdog(home)
-    command(['systemctl','--user','start',SERVICE],45)
-    beat=service.private_json(root/'watchdog.json')
-    if beat.get('result')!='watching' or time.time()-beat['time']>10: raise RenderError('Independent render watchdog did not observe worker')
+    acknowledge_watchdog(root)
     try:
         inventory=http(home,'/v2/pods?limit=1000')
         if inventory.get('pagination',{}).get('hasNextPage'): raise RenderError('Placement inventory incomplete')
