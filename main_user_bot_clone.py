@@ -153,6 +153,20 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS exchange_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                exchange_type TEXT,
+                amount TEXT,
+                rate REAL,
+                details TEXT,
+                status TEXT DEFAULT 'submitted',
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
         conn.commit()
     logging.debug("Database initialized for main bot.")
 
@@ -371,6 +385,87 @@ def is_valid_card_number(card_number: str) -> bool:
 def round_to_nearest_10(x: float) -> int:
     return int(round(x / 10.0) * 10)
 
+EXCHANGE_STATUS_LABELS = {
+    "submitted": "ثبت شد",
+    "under_process": "در حال انجام",
+    "rejected": "رد شد",
+    "canceled": "لغو توسط ادمین",
+    "under_review": "در حال بررسی",
+    "done": "انجام شد",
+    "waiting_user_payment": "در انتظار پرداخت کاربر",
+    "waiting_admin_payment": "در انتظار پرداخت ادمین"
+}
+
+EXCHANGE_STATUS_OPTIONS = [
+    ("under_process", "✅ پذیرش (در حال انجام)"),
+    ("rejected", "❌ رد"),
+    ("canceled", "🚫 لغو توسط ادمین"),
+    ("under_review", "🕵️ در حال بررسی"),
+    ("done", "✅ انجام شد"),
+    ("waiting_user_payment", "💳 انتظار پرداخت کاربر"),
+    ("waiting_admin_payment", "💸 انتظار پرداخت ادمین")
+]
+
+def normalize_amount(text: str) -> str:
+    cleaned = convert_persian_digits_to_english(text).replace(",", ".").strip()
+    cleaned = cleaned.replace(" ", "")
+    if not re.match(r"^\d+(\.\d+)?$", cleaned):
+        return ""
+    return cleaned
+
+def build_exchange_status_keyboard(request_id: int) -> InlineKeyboardMarkup:
+    buttons = []
+    row = []
+    for idx, (status_code, label) in enumerate(EXCHANGE_STATUS_OPTIONS, start=1):
+        row.append(InlineKeyboardButton(text=label, callback_data=f"exch|{status_code}|{request_id}"))
+        if idx % 2 == 0:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+async def send_exchange_request_to_admin(request_id: int, user_id: int, exchange_type: str,
+                                         amount: str, rate: float, details: str):
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        row = c.execute("SELECT first_name, last_name, phone_number, national_id FROM users WHERE id=?",
+                        (user_id,)).fetchone()
+    name = f"{row['first_name']} {row['last_name']}" if row else "Unknown"
+    phone = row["phone_number"] if row else "N/A"
+    nid = row["national_id"] if row else "N/A"
+    status_label = EXCHANGE_STATUS_LABELS["submitted"]
+    text_info = (
+        f"🧾 Exchange Request #{request_id}\n"
+        f"Status: {status_label}\n\n"
+        f"User ID: {user_id}\n"
+        f"Name: {name}\n"
+        f"Phone: {phone}\n"
+        f"National ID: {nid}\n\n"
+        f"Type: {exchange_type}\n"
+        f"Amount: {amount}\n"
+        f"Rate: {rate:,.2f}\n"
+        f"Details: {details or '—'}"
+    )
+    try:
+        await admin_bot.send_message(
+            ADMIN_CHAT_ID,
+            text_info,
+            reply_markup=build_exchange_status_keyboard(request_id)
+        )
+    except Exception as e:
+        logging.error(f"Failed to send exchange request to admin: {e}")
+
+async def start_exchange_request(message: types.Message, state: FSMContext, exchange_type: str,
+                                 rate: float, amount_label: str):
+    await state.set_state(ExchangeRequestState.amount)
+    await state.update_data(exchange_type=exchange_type, rate=rate, amount_label=amount_label)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="لغو درخواست")]],
+        resize_keyboard=True
+    )
+    await message.answer(f"برای ثبت درخواست، {amount_label} را وارد کنید:", reply_markup=kb)
+
 ###############################################################################
 # FSM STATES
 ###############################################################################
@@ -406,6 +501,10 @@ class LoginState(StatesGroup):
 class ReuploadState(StatesGroup):
     front_id = State()
     back_id = State()
+
+class ExchangeRequestState(StatesGroup):
+    amount = State()
+    details = State()
 
 ###############################################################################
 # MENUS - CORRECTED AND STANDARDIZED
@@ -947,13 +1046,55 @@ async def back_to_user_menu(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("بازگشت...", reply_markup=user_menu)
 
+@dp.message(F.text=="لغو درخواست", ExchangeRequestState)
+async def cancel_exchange_request(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("درخواست لغو شد.", reply_markup=user_menu)
+
+@dp.message(ExchangeRequestState.amount)
+async def exchange_request_amount(message: types.Message, state: FSMContext):
+    amount = normalize_amount(message.text)
+    if not amount:
+        await message.answer("مقدار نامعتبر است. لطفاً فقط عدد وارد کنید.")
+        return
+    await state.update_data(amount=amount)
+    await state.set_state(ExchangeRequestState.details)
+    await message.answer("توضیحات/آدرس/شبکه را وارد کنید (در صورت نیاز). اگر توضیحی ندارید «ندارم» بنویسید:")
+
+@dp.message(ExchangeRequestState.details)
+async def exchange_request_details(message: types.Message, state: FSMContext):
+    details = message.text.strip()
+    data = await state.get_data()
+    exchange_type = data.get("exchange_type", "Unknown")
+    rate = data.get("rate", 0.0)
+    amount = data.get("amount", "")
+    user_id = message.from_user.id
+    now = datetime.now().isoformat()
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            """
+            INSERT INTO exchange_requests (user_id, exchange_type, amount, rate, details, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, exchange_type, amount, rate, details, "submitted", now, now)
+        )
+        request_id = c.lastrowid
+        conn.commit()
+    await send_exchange_request_to_admin(request_id, user_id, exchange_type, amount, rate, details)
+    await message.answer(
+        f"✅ درخواست شما ثبت شد.\nکد پیگیری: {request_id}\nوضعیت: {EXCHANGE_STATUS_LABELS['submitted']}",
+        reply_markup=user_menu
+    )
+    await state.clear()
+
 ###############################################################################
 # USER & MAIN MENU HANDLERS (Corrected and Standardized)
 ###############################################################################
 
 # --- Lira Handlers ---
 @dp.message(F.text == "خرید لیر از ما\n🇮🇷 ➡️ 🇹🇷")
-async def buy_lira_user(message: types.Message):
+async def buy_lira_user(message: types.Message, state: FSMContext):
     wait1 = await message.answer("در حال دریافت آخرین نرخ... ⏳")
     usdt_irr = await price_cache.get_usdt_irr()
     usdt_try = await price_cache.get_usdt_try()
@@ -967,6 +1108,7 @@ async def buy_lira_user(message: types.Message):
     pdf_path = "buy_lira.pdf"
     if os.path.exists(pdf_path):
         await message.answer_document(FSInputFile(pdf_path), caption="لطفاً فرم را پر کنید و برای پشتیبانی ارسال کنید: @TL905411603664")
+    await start_exchange_request(message, state, "خرید لیر", rate, "مقدار لیر")
 
 @dp.message(F.text == "نرخ خرید لیر از ما\n🇮🇷 ➡️ 🇹🇷")
 async def main_menu_buy_lira_rate(message: types.Message):
@@ -982,7 +1124,7 @@ async def main_menu_buy_lira_rate(message: types.Message):
     await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
-async def sell_lira_user(message: types.Message):
+async def sell_lira_user(message: types.Message, state: FSMContext):
     wait1 = await message.answer("در حال دریافت آخرین نرخ... ⏳")
     usdt_irr = await price_cache.get_usdt_irr()
     usdt_try = await price_cache.get_usdt_try()
@@ -992,10 +1134,11 @@ async def sell_lira_user(message: types.Message):
         return
     eff_toman = usdt_irr / 10
     rate = round_to_nearest_10((eff_toman / usdt_try) * 0.97)
-    await message.answer(f"هر واحد لیر ترکیه ��🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
+    await message.answer(f"هر واحد لیر ترکیه 🇹🇷 برای فروش: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
     pdf_path = "sell_lira.pdf"
     if os.path.exists(pdf_path):
         await message.answer_document(FSInputFile(pdf_path), caption="لطفاً فرم را پر کنید و برای پشتیبانی ارسال کنید: @TL905411603664")
+    await start_exchange_request(message, state, "فروش لیر", rate, "مقدار لیر")
 
 @dp.message(F.text == "نرخ فروش لیر به ما\n🇹🇷 ➡️ 🇮🇷")
 async def main_menu_sell_lira_rate(message: types.Message):
@@ -1013,7 +1156,7 @@ async def main_menu_sell_lira_rate(message: types.Message):
 
 # --- Tether Handlers ---
 @dp.message(F.text == "خرید تتر از ما\n🇮🇷 ➡️ 💰")
-async def buy_tether_user(message: types.Message):
+async def buy_tether_user(message: types.Message, state: FSMContext):
     wait = await message.answer("در حال دریافت آخرین نرخ... ⏳")
     usdt_irr = await price_cache.get_usdt_irr()
     await wait.delete()
@@ -1033,6 +1176,7 @@ async def buy_tether_user(message: types.Message):
         parse_mode="Markdown"
     )
     await message.answer("اولین واریز 72 ساعت نزد ما به امانت می‌ماند و پس از آن به حساب شما واریز می‌شود.")
+    await start_exchange_request(message, state, "خرید تتر", rate, "مقدار تتر")
 
 @dp.message(F.text == "نرخ خرید تتر از ما\n🇮🇷 ➡️ 💰")
 async def main_menu_buy_tether_rate(message: types.Message):
@@ -1047,7 +1191,7 @@ async def main_menu_buy_tether_rate(message: types.Message):
     await message.answer(f"هر واحد تتر 💰 برای خرید: **{rate:,} تومان** می‌باشد.", parse_mode="Markdown")
 
 @dp.message(F.text == "فروش تتر به ما\n💰 ➡️ 🇮🇷")
-async def sell_tether_user(message: types.Message):
+async def sell_tether_user(message: types.Message, state: FSMContext):
     wait = await message.answer("در حال دریافت آخرین نرخ... ⏳")
     usdt_irr = await price_cache.get_usdt_irr()
     await wait.delete()
@@ -1062,6 +1206,7 @@ async def sell_tether_user(message: types.Message):
         InlineKeyboardButton(text="BEP20", callback_data="bep20_selltether")
     ]])
     await message.answer("شبکه را انتخاب کنید:", reply_markup=kb)
+    await start_exchange_request(message, state, "فروش تتر", rate, "مقدار تتر")
 
 @dp.message(F.text == "نرخ فروش تتر به ما\n💰 ➡️ 🇮🇷")
 async def main_menu_sell_tether_rate(message: types.Message):
@@ -1089,7 +1234,7 @@ async def bep20_selltether_cb(cb: types.CallbackQuery):
 
 # --- Lira/Tether Conversion Handlers (FINAL FIX) ---
 @dp.message(F.text.startswith("تبدیل لیر به تتر"))
-async def lira_to_tether_user(message: types.Message):
+async def lira_to_tether_user(message: types.Message, state: FSMContext):
     wait1 = await message.answer("در حال دریافت آخرین نرخ... ⏳")
     usdt_try = await price_cache.get_usdt_try()
     await wait1.delete()
@@ -1098,6 +1243,7 @@ async def lira_to_tether_user(message: types.Message):
         return
     rate = usdt_try * 1.02
     await message.answer(f"هر **1 تتر** = **{rate:.2f} لیر**\n(نرخ تبدیل لیر به تتر)", parse_mode="Markdown")
+    await start_exchange_request(message, state, "تبدیل لیر به تتر", rate, "مقدار لیر")
     await message.answer("لطفاً قبل از واریز هماهنگ کنید.")
     await message.answer(
         "Bank name: VAKIF BANK\n"
@@ -1120,7 +1266,7 @@ async def main_menu_lira_to_tether_rate(message: types.Message):
 
 
 @dp.message(F.text.startswith("تبدیل تتر به لیر"))
-async def tether_to_lira_user(message: types.Message):
+async def tether_to_lira_user(message: types.Message, state: FSMContext):
     wait = await message.answer("در حال دریافت آخرین نرخ... ⏳")
     usdt_try = await price_cache.get_usdt_try()
     await wait.delete()
@@ -1134,6 +1280,7 @@ async def tether_to_lira_user(message: types.Message):
         InlineKeyboardButton(text="BEP20", callback_data="bep20_tether2lira")
     ]])
     await message.answer("شبکه را انتخاب کنید:", reply_markup=kb)
+    await start_exchange_request(message, state, "تبدیل تتر به لیر", rate, "مقدار تتر")
 
 @dp.message(F.text.startswith("نرخ تبدیل تتر به لیر"))
 async def main_menu_tether_to_lira_rate(message: types.Message):
